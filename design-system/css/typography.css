@@ -1,9 +1,10 @@
 /* ─── Kullina Typography Scale ───────────────────────────────────
    17 tokens from the style guide. Import after tokens.css.
-   Usage: <h1 class="type-display-xl">Page Title</h1>
+   Usage: <h1 class="type-display-xl"> or <h1 class="typography-display-xl">
    ─────────────────────────────────────────────────────────────── */
 
-.type-rating-display {
+.type-rating-display,
+.typography-rating-display {
   font-family: var(--font-display);
   font-size: 64px;
   font-weight: 700;
@@ -11,14 +12,16 @@
   letter-spacing: -1px;
 }
 
-.type-display-xl {
+.type-display-xl,
+.typography-display-xl {
   font-family: var(--font-display);
   font-size: 28px;
   font-weight: 700;
   line-height: 1.43;
 }
 
-.type-display-lg {
+.type-display-lg,
+.typography-display-lg {
   font-family: var(--font-display);
   font-size: 22px;
   font-weight: 500;
@@ -26,14 +29,16 @@
   letter-spacing: -0.44px;
 }
 
-.type-display-md {
+.type-display-md,
+.typography-display-md {
   font-family: var(--font-display);
   font-size: 21px;
   font-weight: 700;
   line-height: 1.43;
 }
 
-.type-display-sm {
+.type-display-sm,
+.typography-display-sm {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 600;
@@ -41,63 +46,72 @@
   letter-spacing: -0.18px;
 }
 
-.type-title-md {
+.type-title-md,
+.typography-title-md {
   font-family: var(--font-display);
   font-size: 16px;
   font-weight: 600;
   line-height: 1.25;
 }
 
-.type-title-sm {
+.type-title-sm,
+.typography-title-sm {
   font-family: var(--font-display);
   font-size: 16px;
   font-weight: 500;
   line-height: 1.25;
 }
 
-.type-body-md {
+.type-body-md,
+.typography-body-md {
   font-family: var(--font-body);
   font-size: 16px;
   font-weight: 400;
   line-height: 1.5;
 }
 
-.type-body-sm {
+.type-body-sm,
+.typography-body-sm {
   font-family: var(--font-body);
   font-size: 14px;
   font-weight: 400;
   line-height: 1.43;
 }
 
-.type-caption {
+.type-caption,
+.typography-caption {
   font-family: var(--font-body);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.29;
 }
 
-.type-caption-sm {
+.type-caption-sm,
+.typography-caption-sm {
   font-family: var(--font-body);
   font-size: 13px;
   font-weight: 400;
   line-height: 1.23;
 }
 
-.type-badge {
+.type-badge,
+.typography-badge {
   font-family: var(--font-body);
   font-size: 11px;
   font-weight: 600;
   line-height: 1.18;
 }
 
-.type-micro-label {
+.type-micro-label,
+.typography-micro-label {
   font-family: var(--font-body);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.33;
 }
 
-.type-uppercase-tag {
+.type-uppercase-tag,
+.typography-uppercase-tag {
   font-family: var(--font-body);
   font-size: 8px;
   font-weight: 700;
@@ -106,28 +120,32 @@
   text-transform: uppercase;
 }
 
-.type-button-md {
+.type-button-md,
+.typography-button-md {
   font-family: var(--font-body);
   font-size: 16px;
   font-weight: 500;
   line-height: 1.25;
 }
 
-.type-button-sm {
+.type-button-sm,
+.typography-button-sm {
   font-family: var(--font-body);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.29;
 }
 
-.type-link {
+.type-link,
+.typography-link {
   font-family: var(--font-body);
   font-size: 14px;
   font-weight: 400;
   line-height: 1.43;
 }
 
-.type-nav-link {
+.type-nav-link,
+.typography-nav-link {
   font-family: var(--font-body);
   font-size: 16px;
   font-weight: 600;

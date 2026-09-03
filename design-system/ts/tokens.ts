@@ -54,8 +54,24 @@ export const colors = {
   infoBg: '#f0f6ff',
   infoBorder: '#3b9eff',
 
+  // Semantic — Status Groups
+  statusGreenBg: '#f0fff4',
+  statusGreenText: '#1a7a3a',
+  statusGreenBorder: '#2ecc5f',
+  statusAmberBg: '#fff8e1',
+  statusAmberText: '#a06800',
+  statusAmberBorder: '#f0a500',
+  statusBlueBg: '#f0f6ff',
+  statusBlueText: '#1a5fc2',
+  statusBlueBorder: '#3b9eff',
+  statusRustBg: '#fff0f0',
+  statusRustText: '#c13515',
+  statusRustBorder: '#ff3b3b',
+
   // Semantic — Primary tint (for status badges using brand color)
   primaryBg: '#fff5f2',
+  primaryErrorText: '#c13515',
+  primaryErrorTextHover: '#b32505',
 
   // Scrim
   scrim: '#000000',
@@ -92,6 +108,7 @@ export const radii = {
 export const shadows = {
   flat: 'none',
   card: 'rgba(0,0,0,0.02) 0 0 0 1px, rgba(0,0,0,0.04) 0 2px 6px 0, rgba(0,0,0,0.10) 0 4px 8px 0',
+  cardFloat: 'rgba(0,0,0,0.02) 0 0 0 1px, rgba(0,0,0,0.04) 0 2px 6px 0, rgba(0,0,0,0.10) 0 4px 8px 0',
 } as const;
 
 // ─── Typography ─────────────────────────────────────────────────
@@ -99,6 +116,7 @@ export const shadows = {
 export const fonts = {
   display: "'Cabinet Grotesk', sans-serif",
   body: "'Instrument Sans', sans-serif",
+  mono: "'JetBrains Mono', monospace",
 } as const;
 
 export const typography = {

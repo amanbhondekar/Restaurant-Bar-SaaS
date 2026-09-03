@@ -15,6 +15,7 @@
   /* ── Typography Families ── */
   --font-display: 'Cabinet Grotesk', system-ui, -apple-system, sans-serif;
   --font-body: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, Menlo, Consolas, monospace;
 
   /* ── Brand & Accent ── */
   --color-primary: #ff5722;
@@ -49,6 +50,8 @@
   --color-error-text-hover: #b32505;
   --color-error-bg: #fff0f0;
   --color-error-border: #ff3b3b;
+  --color-primary-error-text: var(--color-error-text);
+  --color-primary-error-text-hover: var(--color-error-text-hover);
 
   /* ── Semantic — Success ── */
   --color-success-text: #1a7a3a;
@@ -64,6 +67,32 @@
   --color-info-text: #1a5fc2;
   --color-info-bg: #f0f6ff;
   --color-info-border: #3b9eff;
+
+  /* ── Semantic — Status Aliases & Softened Palettes ── */
+  --status-green-bg: var(--color-success-bg);
+  --status-green-text: var(--color-success-text);
+  --status-green-border: var(--color-success-border);
+
+  --status-amber-bg: var(--color-warning-bg);
+  --status-amber-text: var(--color-warning-text);
+  --status-amber-border: var(--color-warning-border);
+
+  --status-blue-bg: var(--color-info-bg);
+  --status-blue-text: var(--color-info-text);
+  --status-blue-border: var(--color-info-border);
+
+  --status-rust-bg: var(--color-error-bg);
+  --status-rust-text: var(--color-error-text);
+  --status-rust-border: var(--color-error-border);
+
+  /* Legacy Direct Color Mapping Aliases */
+  --green: var(--status-green-text);
+  --green-bg: var(--status-green-bg);
+  --rust: var(--status-rust-text);
+  --rust-bg: var(--status-rust-bg);
+  --blue: var(--status-blue-text);
+  --blue-bg: var(--status-blue-bg);
+  --amber-bg: var(--status-amber-bg);
 
   /* ── Semantic — Primary Tint ── */
   --color-primary-bg: #fff5f2;
@@ -94,6 +123,7 @@
   /* ── Elevation (single shadow tier) ── */
   --shadow-flat: none;
   --shadow-card: 0 0 0 1px rgba(0,0,0,0.02), 0 2px 6px 0 rgba(0,0,0,0.04), 0 4px 8px 0 rgba(0,0,0,0.10);
+  --shadow-card-float: var(--shadow-card);
 
   /* ── Breakpoints (reference — use in @media queries) ── */
   --bp-mobile: 480px;
