@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { usePos } from '../context/PosContext';
 import { ChefHat, Clock, CheckCircle2, AlertCircle, Flame, Timer } from 'lucide-react';
 
-const URGENT_MINS = 12;
+const DEFAULT_URGENT_MINS = 12;
 
-const Ticker = ({ isoTime }) => {
+const Ticker = ({ isoTime, urgentMins = DEFAULT_URGENT_MINS }) => {
   const [elapsed, setElapsed] = useState('0s');
   const [mins, setMins] = useState(0);
 
@@ -21,12 +21,13 @@ const Ticker = ({ isoTime }) => {
     return () => clearInterval(i);
   }, [isoTime]);
 
-  const urgent = mins >= URGENT_MINS;
+  const warnMins = Math.floor(urgentMins * 0.67);
+  const urgent = mins >= urgentMins;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: '5px',
       fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700,
-      color: urgent ? 'var(--status-rust-text)' : mins >= 8 ? 'var(--status-amber-text)' : 'var(--status-green-text)',
+      color: urgent ? 'var(--status-rust-text)' : mins >= warnMins ? 'var(--status-amber-text)' : 'var(--status-green-text)',
     }}>
       {urgent ? <Flame size={14} /> : <Timer size={14} />}
       {elapsed}
@@ -44,7 +45,8 @@ export const KdsTicketSkeleton = () => (
 );
 
 export const KitchenKdsView = ({ isLoading = false }) => {
-  const { tickets, markTicketReady, cloudQueue } = usePos();
+  const { tickets, markTicketReady, cloudQueue, currentRestaurant } = usePos();
+  const currency = currentRestaurant?.currency || '₹';
   const [checkedItems, setCheckedItems] = useState({});
 
   const activeTickets = tickets.filter(t => t.status === 'in_progress');
@@ -191,7 +193,7 @@ export const KitchenKdsView = ({ isLoading = false }) => {
                   {/* Total + Mark Ready */}
                   <div style={{ borderTop: '1px solid var(--color-hairline)', paddingTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 700, color: 'var(--color-ink)' }}>
-                      ₹{ticket.items.reduce((s,i) => s + i.price * i.qty, 0)}
+                      {currency}{ticket.items.reduce((s,i) => s + i.price * i.qty, 0)}
                     </span>
                     <button
                       onClick={() => markTicketReady(ticket.id, ticket.tableId)}
@@ -231,7 +233,7 @@ export const KitchenKdsView = ({ isLoading = false }) => {
                 <div>
                   <div className="typography-title-md" style={{ color: 'var(--status-green-text)' }}>{t.tableName}</div>
                   <div className="typography-body-sm" style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: '2px' }}>
-                    {t.items.reduce((s,i) => s+i.qty, 0)} items · ₹{t.items.reduce((s,i) => s+i.price*i.qty, 0)}
+                    {t.items.reduce((s,i) => s+i.qty, 0)} items · {currency}{t.items.reduce((s,i) => s+i.price*i.qty, 0)}
                   </div>
                 </div>
               </div>

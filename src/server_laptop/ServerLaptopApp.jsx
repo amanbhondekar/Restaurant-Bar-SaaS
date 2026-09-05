@@ -3,6 +3,7 @@ import { KitchenKdsView } from './KitchenKdsView';
 import { WaitlistView } from './WaitlistView';
 import { SelfServeAdminView } from './SelfServeAdminView';
 import { SalesAnalyticsView } from './SalesAnalyticsView';
+import { LiveClock } from '../components/LiveClock';
 import { usePos } from '../context/PosContext';
 import {
   ChefHat, Users, Settings, BarChart3, LayoutGrid, Clock,
@@ -16,22 +17,6 @@ const TABS = [
   { id: 'analytics', icon: BarChart3,  label: 'Analytics',    color: 'var(--status-green-text)', module: 'analytics' },
   { id: 'admin',     icon: Settings,   label: 'Admin Setup',  color: 'var(--color-primary)', module: 'admin' },
 ];
-
-const LiveClock = () => {
-  const [t, setT] = useState(new Date());
-  useEffect(() => { const i = setInterval(() => setT(new Date()), 1000); return () => clearInterval(i); }, []);
-  return (
-    <div style={{ textAlign: 'right' }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '22px', fontWeight: 700, color: 'var(--color-primary)', letterSpacing: '-0.5px' }}>
-        {t.getHours().toString().padStart(2,'0')}:{t.getMinutes().toString().padStart(2,'0')}
-        <span style={{ fontSize: '13px', color: 'var(--color-muted)', marginLeft: '4px' }}>:{t.getSeconds().toString().padStart(2,'0')}</span>
-      </div>
-      <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', textTransform: 'uppercase' }}>
-        {t.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-      </div>
-    </div>
-  );
-};
 
 const FloorOverview = () => {
   const { tables, currentRestaurant } = usePos();
@@ -185,10 +170,9 @@ export const ServerLaptopApp = () => {
     }}>
       {/* Uninitialized Cache Warning Banner */}
       {isMenuUninitialized && (
-        <div style={{
-          background: 'rgba(245, 158, 11, 0.2)', borderBottom: '1px solid rgba(245, 158, 11, 0.4)',
-          padding: '12px 24px', display: 'flex', alignItems: 'center', gap: '10px',
-          fontSize: '13px', color: '#fbbf24', fontWeight: 600
+        <div className="banner banner-warning" style={{
+          borderBottom: '1px solid var(--color-warning-border)',
+          display: 'flex', alignItems: 'center', gap: '10px'
         }}>
           <span style={{ fontSize: '18px' }}>⚠️</span>
           <span>No menu data available — connect this hub to the internet once to complete setup.</span>

@@ -4,27 +4,7 @@ import {
   CheckCircle2, AlertTriangle, ShieldCheck, RefreshCw, LayoutGrid, DollarSign
 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-
-const LiveClock = () => {
-  const [t, setT] = useState(new Date());
-  useEffect(() => {
-    const i = setInterval(() => setT(new Date()), 1000);
-    return () => clearInterval(i);
-  }, []);
-  return (
-    <div style={{ textAlign: 'right' }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '20px', fontWeight: 700, color: 'var(--color-primary)' }}>
-        {t.getHours().toString().padStart(2, '0')}:{t.getMinutes().toString().padStart(2, '0')}
-        <span style={{ fontSize: '13px', color: 'var(--color-muted)', marginLeft: '4px' }}>
-          :{t.getSeconds().toString().padStart(2, '0')}
-        </span>
-      </div>
-      <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', textTransform: 'uppercase' }}>
-        {t.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-      </div>
-    </div>
-  );
-};
+import { LiveClock } from '../components/LiveClock';
 
 export const HubDashboardView = () => {
   const defaultHub = typeof window !== 'undefined'
@@ -140,11 +120,8 @@ export const HubDashboardView = () => {
           <div>
             <div className="typography-display-sm" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               {restaurant.name || 'Hotel Mejwani'} Live Operational Dashboard
-              <span className="typography-uppercase-tag" style={{
-                background: 'rgba(16, 185, 129, 0.12)', color: '#10b981',
-                padding: '2px 8px', borderRadius: 'var(--radius-full)', border: '1px solid #10b981'
-              }}>
-                HUB ONLINE
+              <span className={`conn-pill ${lastFetchErr ? 'conn-pill-off' : 'conn-pill-ok'}`}>
+                {lastFetchErr ? 'HUB OFFLINE' : 'HUB ONLINE'}
               </span>
             </div>
             <div className="typography-body-sm" style={{ color: 'var(--color-muted)', marginTop: '2px' }}>
@@ -155,9 +132,9 @@ export const HubDashboardView = () => {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-            <Smartphone size={16} style={{ color: '#3b82f6' }} />
+            <Smartphone size={16} style={{ color: 'var(--status-blue-text)' }} />
             <span style={{ color: 'var(--color-muted)' }}>Connected Staff Handsets:</span>
-            <strong style={{ color: '#3b82f6', fontFamily: 'var(--font-mono)' }}>{connectedDevices} Active</strong>
+            <strong style={{ color: 'var(--status-blue-text)', fontFamily: 'var(--font-mono)' }}>{connectedDevices} Active</strong>
           </div>
           <div style={{ width: '1px', height: '36px', background: 'var(--color-hairline)' }} />
           <LiveClock />
@@ -166,20 +143,18 @@ export const HubDashboardView = () => {
 
       {/* Connection Failure Banner */}
       {lastFetchErr && (
-        <div style={{
-          background: 'rgba(239, 68, 68, 0.15)', borderBottom: '1px solid rgba(239, 68, 68, 0.3)',
-          padding: '10px 24px', color: '#f87171', fontSize: '12px', fontWeight: 600,
+        <div className="banner banner-error" style={{
+          borderBottom: '1px solid var(--color-error-border)',
           display: 'flex', alignItems: 'center', gap: '8px'
         }}>
-          <AlertTriangle size={16} /> ⚠️ {lastFetchErr}. Re-connecting to hub server...
+          <AlertTriangle size={16} /> {lastFetchErr}. Re-connecting to hub server...
         </div>
       )}
 
       {/* Uninitialized Cache Failure Banner */}
       {(hubData?.uninitialized || hubData?.tables?.uninitialized) && (
-        <div style={{
-          background: 'rgba(245, 158, 11, 0.2)', borderBottom: '1px solid rgba(245, 158, 11, 0.4)',
-          padding: '12px 24px', color: '#fbbf24', fontSize: '13px', fontWeight: 600,
+        <div className="banner banner-warning" style={{
+          borderBottom: '1px solid var(--color-warning-border)',
           display: 'flex', alignItems: 'center', gap: '10px'
         }}>
           <AlertTriangle size={18} /> No menu data available — connect this hub to the internet once to complete setup.

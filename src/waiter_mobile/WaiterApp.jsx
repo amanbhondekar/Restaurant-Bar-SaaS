@@ -353,7 +353,7 @@ export const WaiterApp = () => {
       paddingLeft: 'env(safe-area-inset-left, 0px)',
       paddingRight: 'env(safe-area-inset-right, 0px)'
     }}>
-      <div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {/* App Header & Pairing Status */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -363,7 +363,7 @@ export const WaiterApp = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
               width: '32px', height: '32px', borderRadius: '50%',
-              background: '#3b82f6', color: '#ffffff', fontWeight: 800, fontSize: '12px',
+              background: 'var(--color-primary)', color: 'var(--color-on-primary)', fontWeight: 800, fontSize: '12px',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
               W1
@@ -380,14 +380,8 @@ export const WaiterApp = () => {
 
           <button
             onClick={() => setShowPairModal(true)}
-            style={{
-              fontSize: '10px', fontWeight: 700,
-              color: connStatus === 'connected' ? '#10b981' : connStatus === 'connecting' ? '#94a3b8' : '#ef4444',
-              background: connStatus === 'connected' ? 'rgba(16, 185, 129, 0.12)' : connStatus === 'connecting' ? 'rgba(148, 163, 184, 0.15)' : 'rgba(239, 68, 68, 0.12)',
-              padding: '4px 10px', borderRadius: '999px',
-              border: `1px solid ${connStatus === 'connected' ? '#10b981' : connStatus === 'connecting' ? '#64748b' : '#ef4444'}`,
-              display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer'
-            }}
+            className={`conn-pill conn-pill-${connStatus === 'connected' ? 'ok' : connStatus === 'connecting' ? 'connecting' : 'off'}`}
+            style={{ cursor: 'pointer' }}
           >
             {connStatus === 'connected' ? (
               <ShieldCheck size={12} />
@@ -400,12 +394,11 @@ export const WaiterApp = () => {
           </button>
         </div>
 
-        {/* Unreachable Hub Offline Banner (Bug 2 Fix) */}
+        {/* Unreachable Hub Offline Banner */}
         {connStatus === 'disconnected' && (
-          <div style={{
-            background: 'rgba(239, 68, 68, 0.15)', borderBottom: '1px solid rgba(239, 68, 68, 0.3)',
-            padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            fontSize: '11px', color: '#f87171', fontWeight: 600
+          <div className="banner banner-error" style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            borderBottom: '1px solid var(--color-error-border)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <WifiOff size={16} style={{ flexShrink: 0 }} />
@@ -413,7 +406,7 @@ export const WaiterApp = () => {
             </div>
             <button
               onClick={() => setShowPairModal(true)}
-              style={{ background: '#ef4444', color: '#ffffff', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 700, cursor: 'pointer' }}
+              className="btn btn-danger btn-sm banner-connect-btn"
             >
               Connect
             </button>
@@ -422,10 +415,9 @@ export const WaiterApp = () => {
 
         {/* Uninitialized Cache & Offline Failure Banner */}
         {(hubMenuUninitialized || posMenuUninitialized) && (
-          <div style={{
-            background: 'rgba(245, 158, 11, 0.2)', borderBottom: '1px solid rgba(245, 158, 11, 0.4)',
-            padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px',
-            fontSize: '12px', color: '#fbbf24', fontWeight: 600
+          <div className="banner banner-warning" style={{
+            borderBottom: '1px solid var(--color-warning-border)',
+            display: 'flex', alignItems: 'center', gap: '10px'
           }}>
             <span style={{ fontSize: '16px' }}>⚠️</span>
             <span>No menu data available — connect this hub to the internet once to complete setup.</span>
@@ -434,28 +426,27 @@ export const WaiterApp = () => {
 
         {/* Pairing Modal Flow */}
         {showPairModal && (
-          <div style={{
-            position: 'absolute', inset: 0, zIndex: 100, background: 'rgba(9, 13, 22, 0.95)',
+          <div className="modal-overlay" style={{
+            position: 'absolute', inset: 0, zIndex: 100,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
           }}>
-            <div style={{
-              background: '#111827', border: '1px solid #1f2937', borderRadius: '16px',
-              padding: '24px', width: '100%', maxWidth: '340px'
+            <div className="modal-content" style={{
+              width: '100%', maxWidth: '340px'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                <Server size={22} style={{ color: '#3b82f6' }} />
-                <h3 style={{ margin: 0, fontSize: '16px', color: '#f8fafc', fontWeight: 700 }}>
+                <Server size={22} style={{ color: 'var(--color-primary)' }} />
+                <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--color-ink)', fontWeight: 700, fontFamily: 'var(--font-display)' }}>
                   Connect to Kitchen Hub
                 </h3>
               </div>
 
-              <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: 0, marginBottom: '16px' }}>
+              <p style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: 0, marginBottom: '16px' }}>
                 Scan the QR code displayed on the Kitchen Display screen, or enter the hub's LAN IP address below.
               </p>
 
               <form onSubmit={handlePairSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '11px', fontWeight: 700, color: '#cbd5e1', textTransform: 'uppercase' }}>
+                  <label className="form-label">
                     Hub LAN IP or URL
                   </label>
                   <input
@@ -463,16 +454,13 @@ export const WaiterApp = () => {
                     value={manualIpInput}
                     onChange={e => setManualIpInput(e.target.value)}
                     placeholder="e.g. 192.168.1.50:4000"
-                    style={{
-                      width: '100%', marginTop: '4px', padding: '10px 12px',
-                      background: '#1e293b', border: '1px solid #374151', borderRadius: '8px',
-                      color: '#ffffff', fontSize: '13px', fontFamily: 'var(--font-mono)'
-                    }}
+                    className="input"
+                    style={{ fontFamily: 'var(--font-mono)' }}
                   />
                 </div>
 
                 {pairError && (
-                  <div style={{ color: '#f87171', fontSize: '11px', fontWeight: 600 }}>
+                  <div style={{ color: 'var(--color-error-text)', fontSize: '11px', fontWeight: 600 }}>
                     ⚠️ {pairError}
                   </div>
                 )}
@@ -481,14 +469,16 @@ export const WaiterApp = () => {
                   <button
                     type="button"
                     onClick={() => setShowPairModal(false)}
-                    style={{ flex: 1, padding: '10px', background: '#1e293b', color: '#94a3b8', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
+                    className="btn btn-ghost"
+                    style={{ flex: 1 }}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isTestingConn}
-                    style={{ flex: 1, padding: '10px', background: '#3b82f6', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                    className="btn btn-primary"
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   >
                     {isTestingConn ? <RefreshCw size={14} className="spin" /> : 'Connect'}
                   </button>
@@ -505,11 +495,15 @@ export const WaiterApp = () => {
               <p className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>
                 Select Table → Add Items → Send to Kitchen
               </p>
-              <FloorGrid 
-                selectedTable={selectedTableId} 
-                onSelectTable={setSelectedTableId} 
+              <FloorGrid
+                selectedTable={selectedTableId}
+                onSelectTable={setSelectedTableId}
                 tables={liveTables}
                 onClearTableBill={handleClearTableBill}
+                isLoading={connStatus === 'connecting' && liveTables.length === 0}
+                drafts={drafts}
+                onOpenPairing={() => setShowPairModal(true)}
+                hubConnected={hubConnected}
               />
               <OrderDraftDrawer
                 selectedTableId={selectedTableId}
@@ -567,20 +561,27 @@ export const WaiterApp = () => {
               onClick={() => setActiveTab(nav.id)}
               style={{
                 flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-                padding: '8px 4px', borderRadius: 'var(--radius-full)',
-                color: activeTab === nav.id ? '#ffffff' : 'var(--color-muted)',
-                background: activeTab === nav.id ? 'var(--color-primary)' : 'transparent',
-                fontSize: '11px', fontWeight: 500, position: 'relative',
+                padding: '8px 4px', borderRadius: 'var(--radius-sm)',
+                color: activeTab === nav.id ? 'var(--color-primary)' : 'var(--color-muted)',
+                background: 'transparent',
+                fontSize: '11px', fontWeight: activeTab === nav.id ? 700 : 500, position: 'relative',
                 transition: 'all 0.15s ease', border: 'none', cursor: 'pointer'
               }}
             >
-              <nav.icon size={18} strokeWidth={activeTab === nav.id ? 2.5 : 1.8} />
+              <nav.icon size={20} strokeWidth={activeTab === nav.id ? 2.5 : 1.8} />
               {nav.label}
+              {activeTab === nav.id && (
+                <span style={{
+                  position: 'absolute', bottom: '0', left: '50%', transform: 'translateX(-50%)',
+                  width: '20px', height: '3px', borderRadius: '2px',
+                  background: 'var(--color-primary)'
+                }} />
+              )}
               {nav.badge > 0 && (
                 <span style={{
                   position: 'absolute', top: '2px', right: '14px',
-                  background: activeTab === nav.id ? 'var(--color-primary-active)' : 'var(--color-primary)',
-                  color: '#ffffff', fontSize: '9px', fontWeight: 700, borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-primary)',
+                  color: 'var(--color-on-primary)', fontSize: '9px', fontWeight: 700, borderRadius: 'var(--radius-full)',
                   padding: '1px 6px', fontFamily: 'var(--font-mono)'
                 }}>
                   {nav.badge}

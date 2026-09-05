@@ -24,14 +24,13 @@ export const FloorGridSkeleton = () => (
   </div>
 );
 
-export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, onClearTableBill, isLoading = false }) => {
+export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, onClearTableBill, isLoading = false, drafts = {}, onOpenPairing, hubConnected }) => {
   const contextPos = usePos() || {};
   const tables = propTables || contextPos.tables || [];
   const clearTableBill = onClearTableBill || contextPos.clearTableBill;
   const [selectedSection, setSelectedSection] = React.useState('All');
   const sections = ['All', 'Main Hall', 'AC Room', 'Family Room'];
   const shown = selectedSection === 'All' ? tables : tables.filter(t => t.section === selectedSection);
-
 
   const [clearedTableIds, setClearedTableIds] = React.useState({});
 
@@ -42,6 +41,7 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
   const handleClearClick = async (e, tableId) => {
     e.stopPropagation();
     if (clearedTableIds[tableId]) return;
+    if (!window.confirm(`Clear the bill for this table? This cannot be undone.`)) return;
     setClearedTableIds(prev => ({ ...prev, [tableId]: true }));
     try {
       await clearTableBill(tableId);
@@ -71,11 +71,34 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
       </div>
 
       {/* Table Grid */}
+      {shown.length === 0 && !isLoading && (
+        <div style={{
+          textAlign: 'center', padding: '32px 16px', color: 'var(--color-muted)', fontSize: '13px',
+          border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-md)',
+          background: 'var(--color-canvas)'
+        }}>
+          <div style={{ fontSize: '32px', marginBottom: '8px' }}>🪑</div>
+          <div style={{ fontWeight: 700, color: 'var(--color-ink)', marginBottom: '4px', fontFamily: 'var(--font-display)' }}>
+            {hubConnected === false ? 'No tables loaded' : 'No tables in this section'}
+          </div>
+          <div className="typography-body-sm" style={{ color: 'var(--color-muted)', marginBottom: hubConnected === false ? '12px' : '0' }}>
+            {hubConnected === false
+              ? 'Connect to the kitchen hub to load your floor plan.'
+              : 'Try selecting a different section above.'}
+          </div>
+          {hubConnected === false && onOpenPairing && (
+            <button onClick={onOpenPairing} className="btn btn-primary btn-sm">
+              Connect to Hub
+            </button>
+          )}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
         {shown.map(t => {
           const st = STATUS[t.status] || STATUS.available;
           const sel = selectedTable === t.id;
           const mins = elapsed(t.occupiedSince);
+          const draftCount = drafts[t.id] ? Object.values(drafts[t.id]).reduce((s, q) => s + q, 0) : 0;
 
           return (
             <div
@@ -89,6 +112,18 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
                 width: '7px', height: '7px', borderRadius: '50%',
                 background: st.color,
               }} />
+
+              {/* Draft Indicator */}
+              {draftCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: '6px', left: '6px',
+                  background: 'var(--color-primary)', color: 'var(--color-on-primary)',
+                  fontSize: '8px', fontWeight: 700, borderRadius: 'var(--radius-full)',
+                  padding: '1px 5px', fontFamily: 'var(--font-mono)'
+                }}>
+                  {draftCount}
+                </span>
+              )}
 
               {/* Table Name (title-md: Cabinet Grotesk 16px/600) */}
               <div className="typography-title-md" style={{ color: 'var(--color-ink)', letterSpacing: '-0.3px' }}>

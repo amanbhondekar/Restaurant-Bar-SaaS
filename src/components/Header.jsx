@@ -43,7 +43,7 @@ export const Header = () => {
         flexWrap: 'wrap',
         gap: '16px',
         padding: '0 24px',
-        height: '80px',
+        minHeight: '80px',
         background: 'var(--color-canvas)',
         borderBottom: '1px solid var(--color-hairline)',
         position: 'sticky',
@@ -141,25 +141,27 @@ export const Header = () => {
             <QrCode size={15} style={{ color: 'var(--color-primary)' }} /> Pair KDS
           </button>
 
-          {/* Role Switcher */}
-          <div style={{ display: 'flex', alignItems: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-full)', padding: '3px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--color-muted)', padding: '0 8px', fontWeight: 700, textTransform: 'uppercase' }}>ROLE:</span>
-            {['owner', 'manager', 'waiter'].map(role => (
-              <button
-                key={role}
-                onClick={() => setCurrentRole(role)}
-                style={{
-                  padding: '4px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px', fontWeight: 500,
-                  textTransform: 'capitalize', border: 'none', cursor: 'pointer',
-                  background: currentRole === role ? 'var(--color-primary)' : 'transparent',
-                  color: currentRole === role ? '#ffffff' : 'var(--color-muted)',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                {role}
-              </button>
-            ))}
-          </div>
+          {/* Role Switcher (owner/manager only) */}
+          {currentRole !== 'waiter' && (
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-full)', padding: '3px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--color-muted)', padding: '0 8px', fontWeight: 700, textTransform: 'uppercase' }}>ROLE:</span>
+              {['owner', 'manager', 'waiter'].map(role => (
+                <button
+                  key={role}
+                  onClick={() => setCurrentRole(role)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px', fontWeight: 500,
+                    textTransform: 'capitalize', border: 'none', cursor: 'pointer',
+                    background: currentRole === role ? 'var(--color-primary)' : 'transparent',
+                    color: currentRole === role ? 'var(--color-on-primary)' : 'var(--color-muted)',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {role}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Device View Mode Switcher */}
           <div className="pill-group">
@@ -186,28 +188,30 @@ export const Header = () => {
             </button>
           </div>
 
-          {/* Outage Simulator */}
-          <button
-            onClick={toggleCloudOutage}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '8px 14px', borderRadius: 'var(--radius-sm)',
-              fontSize: '12px', fontWeight: 500,
-              background: !cloudOnline ? 'var(--status-rust-bg)' : 'var(--color-surface-soft)',
-              color: !cloudOnline ? 'var(--status-rust-text)' : 'var(--color-ink)',
-              border: `1px solid ${!cloudOnline ? 'var(--status-rust-border)' : 'var(--color-hairline)'}`,
-              transition: 'all 0.15s ease', cursor: 'pointer'
-            }}
-          >
-            {!cloudOnline ? <WifiOff size={14} /> : <Wifi size={14} />}
-            {!cloudOnline ? 'Restore Internet' : 'Simulate Outage'}
-            {!cloudOnline && cloudQueue.length > 0 && (
-              <span style={{
-                background: 'var(--status-rust-text)', color: '#ffffff', fontSize: '10px',
-                fontWeight: 700, padding: '1px 6px', borderRadius: 'var(--radius-full)'
-              }}>{cloudQueue.length}</span>
-            )}
-          </button>
+          {/* Outage Simulator (owner/manager only) */}
+          {currentRole !== 'waiter' && (
+            <button
+              onClick={toggleCloudOutage}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '8px 14px', borderRadius: 'var(--radius-sm)',
+                fontSize: '12px', fontWeight: 500,
+                background: !cloudOnline ? 'var(--status-rust-bg)' : 'var(--color-surface-soft)',
+                color: !cloudOnline ? 'var(--status-rust-text)' : 'var(--color-ink)',
+                border: `1px solid ${!cloudOnline ? 'var(--status-rust-border)' : 'var(--color-hairline)'}`,
+                transition: 'all 0.15s ease', cursor: 'pointer'
+              }}
+            >
+              {!cloudOnline ? <WifiOff size={14} /> : <Wifi size={14} />}
+              {!cloudOnline ? 'Restore Internet' : 'Simulate Outage'}
+              {!cloudOnline && cloudQueue.length > 0 && (
+                <span style={{
+                  background: 'var(--status-rust-text)', color: 'var(--color-on-primary)', fontSize: '10px',
+                  fontWeight: 700, padding: '1px 6px', borderRadius: 'var(--radius-full)'
+                }}>{cloudQueue.length}</span>
+              )}
+            </button>
+          )}
         </div>
       </header>
 

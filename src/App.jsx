@@ -38,9 +38,9 @@ const AppContent = () => {
             <div>
               <div style={{
                 textAlign: 'center',
-                fontFamily: 'var(--mono)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: '11px',
-                color: 'var(--amber)',
+                color: 'var(--status-amber-text)',
                 textTransform: 'uppercase',
                 letterSpacing: '1.2px',
                 marginBottom: '10px',
@@ -54,9 +54,9 @@ const AppContent = () => {
             <div>
               <div style={{
                 textAlign: 'center',
-                fontFamily: 'var(--mono)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: '11px',
-                color: 'var(--amber)',
+                color: 'var(--status-amber-text)',
                 textTransform: 'uppercase',
                 letterSpacing: '1.2px',
                 marginBottom: '10px',

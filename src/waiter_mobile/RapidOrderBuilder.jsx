@@ -80,9 +80,9 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       </div>
 
       {/* Dish List */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
         {menu.length === 0 ? (
-          <div style={{ padding: '24px', textAlign: 'center', color: '#f59e0b', fontSize: '13px', background: 'rgba(245, 158, 11, 0.1)', border: '1px dashed rgba(245, 158, 11, 0.3)', borderRadius: '8px' }}>
+          <div className="banner banner-warning" style={{ textAlign: 'center' }}>
             ⚠️ No menu data available — connect this hub to the internet once to complete setup.
           </div>
         ) : filtered.length === 0 ? (

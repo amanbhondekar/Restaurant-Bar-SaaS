@@ -53,6 +53,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
         setSent(true);
         onClearDraft();
         setNote('');
+        if (navigator.vibrate) navigator.vibrate(200);
         setTimeout(() => {
           setSent(false);
           setSentTicket(null);
@@ -127,7 +128,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           )}
         </div>
         {hasItems && (
-          <button onClick={onClearDraft} style={{ color: 'var(--status-rust-text)', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <button onClick={() => { if (window.confirm('Clear all items from this draft?')) onClearDraft(); }} style={{ color: 'var(--status-rust-text)', background: 'none', border: 'none', cursor: 'pointer' }}>
             <Trash2 size={15} />
           </button>
         )}
@@ -179,7 +180,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           </div>
 
           {sendError && (
-            <div style={{ color: '#ef4444', fontSize: '11px', fontWeight: 600, marginTop: '4px' }}>
+            <div style={{ color: 'var(--color-error-text)', fontSize: '11px', fontWeight: 600, marginTop: '4px' }}>
               ⚠️ {sendError}
             </div>
           )}
