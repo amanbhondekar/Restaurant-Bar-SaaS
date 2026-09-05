@@ -97,6 +97,32 @@
   /* ── Semantic — Primary Tint ── */
   --color-primary-bg: #fff5f2;
 
+  /* ── Status — Restaurant Domain Aliases ──
+     Semantic tokens mapped to operational states.
+     green = available/success, amber = in-kitchen/waiting,
+     rust = occupied/urgent, blue = bill-ready/info */
+  --status-green-text: var(--color-success-text);
+  --status-green-bg: var(--color-success-bg);
+  --status-green-border: var(--color-success-border);
+
+  --status-amber-text: var(--color-warning-text);
+  --status-amber-bg: var(--color-warning-bg);
+  --status-amber-border: var(--color-warning-border);
+
+  --status-rust-text: var(--color-error-text);
+  --status-rust-bg: var(--color-error-bg);
+  --status-rust-border: var(--color-error-border);
+
+  --status-blue-text: var(--color-info-text);
+  --status-blue-bg: var(--color-info-bg);
+  --status-blue-border: var(--color-info-border);
+
+  /* ── Elevated Shadow (floating panels, modals) ── */
+  --shadow-card-float: 0 4px 24px -4px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04);
+
+  /* ── Monospace (data, timers, prices) ── */
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+
   /* ── Scrim ── */
   --color-scrim: #000000;
 
