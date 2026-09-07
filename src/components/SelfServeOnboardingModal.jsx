@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
-import { Sparkles, Building2, LayoutGrid, Utensils, Users, CheckCircle2, ArrowRight, ArrowLeft, X, QrCode } from 'lucide-react';
+import { Sparkles, Building2, LayoutGrid, Utensils, Users, CheckCircle2, ArrowRight, ArrowLeft, QrCode } from 'lucide-react';
 import { VegBadge } from './VegBadge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 
 export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
   const { onboardNewRestaurant } = usePos();
   const [step, setStep] = useState(1);
   const [validationError, setValidationError] = useState('');
 
-  // Step 1: Restaurant Profile
   const [profile, setProfile] = useState({
     name: '',
     cuisine: 'Multi-Cuisine',
@@ -18,7 +21,6 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
     plan: 'pro'
   });
 
-  // Step 2: Floor Layout Config
   const [tables, setTables] = useState([
     { name: 'T1', section: 'Main Hall', capacity: 4 },
     { name: 'T2', section: 'Main Hall', capacity: 2 },
@@ -27,7 +29,6 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
   ]);
   const [newTable, setNewTable] = useState({ name: '', section: 'Main Hall', capacity: 4 });
 
-  // Step 3: Menu Setup
   const [menuItems, setMenuItems] = useState([
     { name: 'Paneer Butter Masala', price: 240, category: 'Main Course', isVeg: true },
     { name: 'Chicken Biryani', price: 280, category: 'Biryani', isVeg: false },
@@ -35,13 +36,10 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
   ]);
   const [newItem, setNewItem] = useState({ name: '', price: '', category: 'Main Course', isVeg: true });
 
-  // Step 4: Staff Setup
-  const [staffMembers, setStaffMembers] = useState([
+  const [staffMembers] = useState([
     { name: 'Manager Account', role: 'manager', pin: '1234' },
     { name: 'Waiter (W1)', role: 'waiter', pin: '1111' },
   ]);
-
-  if (!isOpen) return null;
 
   const handleAddTable = () => {
     if (!newTable.name) return;
@@ -72,40 +70,25 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'var(--color-scrim)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
-    }}>
-      <div className="card" style={{
-        background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)',
-        borderRadius: 'var(--radius-md)', width: '100%', maxWidth: '640px',
-        overflow: 'hidden', boxShadow: 'var(--shadow-modal)',
-        display: 'flex', flexDirection: 'column', maxHeight: '90vh'
-      }}>
-        {/* Modal Header */}
-        <div style={{
-          padding: '20px 24px', background: 'var(--color-surface-soft)',
-          borderBottom: '1px solid var(--color-hairline)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '40px', height: '40px', borderRadius: 'var(--radius-full)',
-              background: 'var(--color-primary)',
-              color: 'var(--color-on-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}>
-              <Sparkles size={20} />
-            </div>
-            <div>
-              <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>Self-Serve Restaurant Onboarding</div>
-              <div className="typography-body-sm" style={{ color: 'var(--color-muted)' }}>Zero-Developer Setup · Ready in 60 Seconds</div>
-            </div>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="sm:max-w-[640px] p-0 gap-0 max-h-[90vh] flex flex-col"
+        style={{ display: 'flex', flexDirection: 'column' }}
+      >
+        {/* Header */}
+        <DialogHeader className="flex flex-row items-center gap-3 p-5 bg-muted border-b">
+          <div style={{
+            width: '40px', height: '40px', borderRadius: 'var(--radius-full)',
+            background: 'var(--color-primary)', color: 'var(--color-on-primary)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+          }}>
+            <Sparkles size={20} />
           </div>
-          <button onClick={onClose} style={{ color: 'var(--color-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
-            <X size={20} />
-          </button>
-        </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <DialogTitle>Self-Serve Restaurant Onboarding</DialogTitle>
+            <DialogDescription>Zero-Developer Setup · Ready in 60 Seconds</DialogDescription>
+          </div>
+        </DialogHeader>
 
         {/* Step Indicator */}
         <div style={{
@@ -129,58 +112,54 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
           ))}
         </div>
 
-        {/* Step Content Body */}
+        {/* Body */}
         <div style={{ padding: '24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* STEP 1: RESTAURANT PROFILE */}
           {step === 1 && (
             <>
-              <div>
-                <label className="typography-caption-sm" style={{ fontWeight: 600, color: validationError && !profile.name ? 'var(--color-primary-error-text)' : 'var(--color-muted)' }}>
-                  Restaurant Name *
-                </label>
-                <input
-                  type="text"
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rest-name">Restaurant Name *</Label>
+                <Input
+                  id="rest-name"
                   placeholder="e.g. Royal Curry House"
                   value={profile.name}
                   onChange={e => { setProfile({ ...profile, name: e.target.value }); setValidationError(''); }}
-                  className={`input ${validationError && !profile.name ? 'input-error' : ''}`}
-                  style={{ marginTop: '4px' }}
+                  aria-invalid={!!(validationError && !profile.name)}
+                  className="h-10"
                 />
                 {validationError && !profile.name && (
-                  <div className="form-error-helper">Restaurant name is required</div>
+                  <div className="text-xs text-destructive">Restaurant name is required</div>
                 )}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label className="typography-caption-sm" style={{ fontWeight: 600, color: validationError && !profile.city ? 'var(--color-primary-error-text)' : 'var(--color-muted)' }}>City *</label>
-                  <input
-                    type="text"
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="rest-city">City *</Label>
+                  <Input
+                    id="rest-city"
                     placeholder="e.g. Nagpur / Pune"
                     value={profile.city}
                     onChange={e => { setProfile({ ...profile, city: e.target.value }); setValidationError(''); }}
-                    className={`input ${validationError && !profile.city ? 'input-error' : ''}`}
-                    style={{ marginTop: '4px' }}
+                    aria-invalid={!!(validationError && !profile.city)}
+                    className="h-10"
                   />
                   {validationError && !profile.city && (
-                    <div className="form-error-helper">City is required</div>
+                    <div className="text-xs text-destructive">City is required</div>
                   )}
                 </div>
-                <div>
-                  <label className="typography-caption-sm" style={{ fontWeight: 600, color: 'var(--color-muted)' }}>Cuisine Type</label>
-                  <input
-                    type="text"
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="rest-cuisine">Cuisine Type</Label>
+                  <Input
+                    id="rest-cuisine"
                     placeholder="e.g. North Indian & Saoji"
                     value={profile.cuisine}
                     onChange={e => setProfile({ ...profile, cuisine: e.target.value })}
-                    className="input"
-                    style={{ marginTop: '4px' }}
+                    className="h-10"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="typography-caption-sm" style={{ fontWeight: 600, color: 'var(--color-muted)' }}>Subscription Plan Tier</label>
+                <Label>Subscription Plan Tier</Label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginTop: '6px' }}>
                   {[
                     { id: 'starter', name: 'Starter Tier', desc: 'Core POS & KDS' },
@@ -208,7 +187,6 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
             </>
           )}
 
-          {/* STEP 2: FLOOR LAYOUT */}
           {step === 2 && (
             <>
               <div className="typography-title-md">Configured Dining Tables ({tables.length})</div>
@@ -228,39 +206,30 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
                 background: 'var(--color-surface-soft)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-hairline)',
                 display: 'grid', gridTemplateColumns: '1fr 1fr 80px auto', gap: '10px', alignItems: 'center'
               }}>
-                <input
+                <Input
                   placeholder="Table (T5)"
                   value={newTable.name}
                   onChange={e => setNewTable({ ...newTable, name: e.target.value })}
-                  className="input"
-                  style={{ height: '44px', fontSize: '13px' }}
+                  className="h-11"
                 />
-                <input
+                <Input
                   placeholder="Section (AC)"
                   value={newTable.section}
                   onChange={e => setNewTable({ ...newTable, section: e.target.value })}
-                  className="input"
-                  style={{ height: '44px', fontSize: '13px' }}
+                  className="h-11"
                 />
-                <input
+                <Input
                   type="number"
                   placeholder="Seats"
                   value={newTable.capacity}
                   onChange={e => setNewTable({ ...newTable, capacity: Number(e.target.value) })}
-                  className="input"
-                  style={{ height: '44px', fontSize: '13px', fontFamily: 'var(--font-mono)' }}
+                  className="h-11 font-mono"
                 />
-                <button
-                  type="button"
-                  onClick={handleAddTable}
-                  className="btn btn-primary"
-                  style={{ height: '44px', padding: '0 16px' }}
-                >+ Add</button>
+                <Button type="button" size="lg" className="h-11" onClick={handleAddTable}>+ Add</Button>
               </div>
             </>
           )}
 
-          {/* STEP 3: MENU SETUP */}
           {step === 3 && (
             <>
               <div className="typography-title-md">Initial Menu Items ({menuItems.length})</div>
@@ -285,26 +254,23 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
                 background: 'var(--color-surface-soft)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-hairline)',
                 display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr auto', gap: '10px', alignItems: 'center'
               }}>
-                <input
+                <Input
                   placeholder="Dish Name"
                   value={newItem.name}
                   onChange={e => setNewItem({ ...newItem, name: e.target.value })}
-                  className="input"
-                  style={{ height: '44px', fontSize: '13px' }}
+                  className="h-11"
                 />
-                <input
+                <Input
                   type="number"
                   placeholder="Price"
                   value={newItem.price}
                   onChange={e => setNewItem({ ...newItem, price: e.target.value })}
-                  className="input"
-                  style={{ height: '44px', fontSize: '13px', fontFamily: 'var(--font-mono)' }}
+                  className="h-11 font-mono"
                 />
                 <select
                   value={newItem.category}
                   onChange={e => setNewItem({ ...newItem, category: e.target.value })}
-                  className="input"
-                  style={{ height: '44px', fontSize: '12px' }}
+                  className="h-11 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <option value="Starters">Starters</option>
                   <option value="Main Course">Main Course</option>
@@ -312,17 +278,11 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
                   <option value="Breads">Breads</option>
                   <option value="Beverages">Beverages</option>
                 </select>
-                <button
-                  type="button"
-                  onClick={handleAddMenuItem}
-                  className="btn btn-primary"
-                  style={{ height: '44px', padding: '0 16px' }}
-                >+ Add</button>
+                <Button type="button" size="lg" className="h-11" onClick={handleAddMenuItem}>+ Add</Button>
               </div>
             </>
           )}
 
-          {/* STEP 4: STAFF & LAUNCH */}
           {step === 4 && (
             <>
               <div style={{
@@ -352,24 +312,20 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
           )}
         </div>
 
-        {/* Modal Footer Controls */}
+        {/* Footer */}
         <div style={{
-          padding: '20px 24px', background: 'var(--color-surface-soft)',
+          padding: '16px 24px', background: 'var(--color-surface-soft)',
           borderTop: '1px solid var(--color-hairline)',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center'
         }}>
           {step > 1 ? (
-            <button
-              onClick={() => setStep(step - 1)}
-              className="btn btn-ghost"
-              style={{ padding: '0 20px' }}
-            >
-              <ArrowLeft size={16} /> Back
-            </button>
+            <Button variant="ghost" onClick={() => setStep(step - 1)}>
+              <ArrowLeft /> Back
+            </Button>
           ) : <div />}
 
           {step < 4 ? (
-            <button
+            <Button
               onClick={() => {
                 if (step === 1 && (!profile.name || !profile.city)) {
                   setValidationError('Please enter restaurant name and city');
@@ -378,21 +334,16 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
                 setValidationError('');
                 setStep(step + 1);
               }}
-              className="btn btn-primary"
             >
-              Continue <ArrowRight size={16} />
-            </button>
+              Continue <ArrowRight />
+            </Button>
           ) : (
-            <button
-              onClick={handleFinishOnboarding}
-              className="btn btn-primary"
-              style={{ background: 'var(--status-green-text)' }}
-            >
-              <CheckCircle2 size={18} /> Launch Tenant POS Now!
-            </button>
+            <Button onClick={handleFinishOnboarding} className="bg-[var(--status-green-text)] hover:bg-[var(--status-green-text)]/90">
+              <CheckCircle2 /> Launch Tenant POS Now!
+            </Button>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };

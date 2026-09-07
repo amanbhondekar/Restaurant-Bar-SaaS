@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { usePos } from '../context/PosContext';
 import { ChefHat, Clock, CheckCircle2, AlertCircle, Flame, Timer, StickyNote, Check } from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
 
 const DEFAULT_URGENT_MINS = 12;
 
@@ -191,20 +193,15 @@ export const KitchenKdsView = ({ isLoading = false }) => {
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 700, color: 'var(--color-ink)' }}>
                       {currency}{ticket.items.reduce((s,i) => s + i.price * i.qty, 0)}
                     </span>
-                    <button
+                    <Button
                       onClick={() => markTicketReady(ticket.id, ticket.tableId)}
                       disabled={!canMark}
-                      className="typography-button-sm"
-                      style={{
-                        padding: '8px 14px', borderRadius: 'var(--radius-sm)',
-                        background: canMark ? 'var(--status-green-text)' : 'var(--color-surface-soft)',
-                        color: canMark ? 'var(--color-on-primary)' : 'var(--color-muted)',
-                        cursor: canMark ? 'pointer' : 'not-allowed',
-                        border: 'none', transition: 'all 0.15s ease',
-                      }}
+                      size="sm"
+                      className={canMark ? 'bg-[var(--status-green-text)] text-[var(--color-on-primary)] hover:bg-[var(--status-green-text)]/85' : ''}
+                      variant={canMark ? 'default' : 'outline'}
                     >
-                      {canMark ? <><Check size={14} /> Mark Ready</> : 'Tick All Items'}
-                    </button>
+                      {canMark ? <><Check /> Mark Ready</> : 'Tick All Items'}
+                    </Button>
                   </div>
                 </div>
               </div>

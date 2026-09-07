@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
 import { SelfServeOnboardingModal } from './SelfServeOnboardingModal';
 import { DevicePairingModal } from './DevicePairingModal';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
 import {
-  Wifi, WifiOff, Smartphone, Laptop, Sparkles, RefreshCw,
-  Building2, QrCode, Shield, Zap, PlusCircle, Crown
+  Wifi, WifiOff, Smartphone, Laptop, Sparkles,
+  QrCode, PlusCircle
 } from 'lucide-react';
 
 export const Header = () => {
@@ -18,7 +20,6 @@ export const Header = () => {
     cloudOnline,
     toggleCloudOutage,
     cloudQueue,
-    isSyncing,
     deviceMode,
     setDeviceMode,
     changeRestaurantPlan
@@ -28,9 +29,9 @@ export const Header = () => {
   const [isPairingOpen, setIsPairingOpen] = useState(false);
 
   const planColors = {
-    starter: { bg: 'var(--status-blue-bg)', text: 'var(--status-blue-text)', border: 'var(--status-blue-border)', label: 'STARTER TIER' },
-    pro: { bg: 'var(--status-amber-bg)', text: 'var(--status-amber-text)', border: 'var(--status-amber-border)', label: 'PRO TIER' },
-    enterprise: { bg: 'var(--status-rust-bg)', text: 'var(--status-rust-text)', border: 'var(--status-rust-border)', label: 'ENTERPRISE' }
+    starter: { bg: 'var(--status-blue-bg)', text: 'var(--status-blue-text)', border: 'var(--status-blue-border)' },
+    pro:     { bg: 'var(--status-amber-bg)', text: 'var(--status-amber-text)', border: 'var(--status-amber-border)' },
+    enterprise: { bg: 'var(--status-rust-bg)', text: 'var(--status-rust-text)', border: 'var(--status-rust-border)' }
   };
   const currentPlan = planColors[currentRestaurant?.plan] || planColors.starter;
 
@@ -52,7 +53,6 @@ export const Header = () => {
       }}>
         {/* Brand & Tenant Switcher */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {/* Logo Asset */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <img
               src="/logos/Logo-Default.svg"
@@ -82,7 +82,6 @@ export const Header = () => {
                 ))}
               </select>
 
-              {/* Plan Tier Badge */}
               <select
                 value={currentRestaurant?.plan || 'pro'}
                 onChange={e => changeRestaurantPlan(currentRestaurantId, e.target.value)}
@@ -110,40 +109,21 @@ export const Header = () => {
 
         {/* Action Controls & Role Switcher */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          {/* Onboard New Restaurant Button */}
-          <button
-            onClick={() => setIsOnboardingOpen(true)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '8px 14px', borderRadius: 'var(--radius-sm)',
-              fontSize: '13px', fontWeight: 500,
-              background: 'var(--color-primary)',
-              color: 'var(--color-on-primary)', border: 'none', cursor: 'pointer',
-              transition: 'background-color 0.15s ease'
-            }}
-            onMouseDown={e => e.currentTarget.style.backgroundColor = 'var(--color-primary-active)'}
-            onMouseUp={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
-          >
-            <PlusCircle size={15} /> + Onboard Restaurant
-          </button>
+          <Button size="sm" onClick={() => setIsOnboardingOpen(true)}>
+            <PlusCircle /> Onboard Restaurant
+          </Button>
 
-          {/* Device Pairing Button */}
-          <button
-            onClick={() => setIsPairingOpen(true)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '8px 14px', borderRadius: 'var(--radius-sm)',
-              fontSize: '13px', fontWeight: 500,
-              background: 'var(--color-surface-soft)', color: 'var(--color-ink)',
-              border: '1px solid var(--color-hairline)', cursor: 'pointer'
-            }}
-          >
-            <QrCode size={15} style={{ color: 'var(--color-primary)' }} /> Pair KDS
-          </button>
+          <Button variant="outline" size="sm" onClick={() => setIsPairingOpen(true)}>
+            <QrCode className="text-primary" /> Pair KDS
+          </Button>
 
-          {/* Role Switcher (owner/manager only) */}
           {currentRole !== 'waiter' && (
-            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-full)', padding: '3px' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              background: 'var(--color-surface-soft)',
+              border: '1px solid var(--color-hairline)',
+              borderRadius: 'var(--radius-full)', padding: '3px'
+            }}>
               <span style={{ fontSize: '10px', color: 'var(--color-muted)', padding: '0 8px', fontWeight: 700, textTransform: 'uppercase' }}>ROLE:</span>
               {['owner', 'manager', 'waiter'].map(role => (
                 <button
@@ -163,7 +143,6 @@ export const Header = () => {
             </div>
           )}
 
-          {/* Device View Mode Switcher */}
           <div className="pill-group">
             <button
               className={`pill-btn ${deviceMode === 'waiter_mobile' ? 'active' : ''}`}
@@ -188,40 +167,27 @@ export const Header = () => {
             </button>
           </div>
 
-          {/* Outage Simulator (owner/manager only) */}
           {currentRole !== 'waiter' && (
-            <button
+            <Button
+              variant={cloudOnline ? 'outline' : 'destructive'}
+              size="sm"
               onClick={toggleCloudOutage}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '8px 14px', borderRadius: 'var(--radius-sm)',
-                fontSize: '12px', fontWeight: 500,
-                background: !cloudOnline ? 'var(--status-rust-bg)' : 'var(--color-surface-soft)',
-                color: !cloudOnline ? 'var(--status-rust-text)' : 'var(--color-ink)',
-                border: `1px solid ${!cloudOnline ? 'var(--status-rust-border)' : 'var(--color-hairline)'}`,
-                transition: 'all 0.15s ease', cursor: 'pointer'
-              }}
             >
-              {!cloudOnline ? <WifiOff size={14} /> : <Wifi size={14} />}
-              {!cloudOnline ? 'Restore Internet' : 'Simulate Outage'}
+              {cloudOnline ? <Wifi /> : <WifiOff />}
+              {cloudOnline ? 'Simulate Outage' : 'Restore Internet'}
               {!cloudOnline && cloudQueue.length > 0 && (
-                <span style={{
-                  background: 'var(--status-rust-text)', color: 'var(--color-on-primary)', fontSize: '10px',
-                  fontWeight: 700, padding: '1px 6px', borderRadius: 'var(--radius-full)'
-                }}>{cloudQueue.length}</span>
+                <Badge variant="destructive" className="ml-1">{cloudQueue.length}</Badge>
               )}
-            </button>
+            </Button>
           )}
         </div>
       </header>
 
-      {/* Onboarding Wizard Modal */}
       <SelfServeOnboardingModal
         isOpen={isOnboardingOpen}
         onClose={() => setIsOnboardingOpen(false)}
       />
 
-      {/* Device Pairing Modal */}
       <DevicePairingModal
         isOpen={isPairingOpen}
         onClose={() => setIsPairingOpen(false)}
