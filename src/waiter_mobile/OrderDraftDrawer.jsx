@@ -3,6 +3,9 @@ import { usePos } from '../context/PosContext';
 import { Send, Trash2, Edit3, Wifi, Armchair, Zap, AlertTriangle, Loader } from 'lucide-react';
 import { VegBadge } from '../components/VegBadge';
 import { motion } from 'framer-motion';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { Input } from '../components/ui/input';
 
 export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, onClearDraft, hubUrl, hubConnected }) => {
   const { menu, tables, currentRestaurant } = usePos();
@@ -119,19 +122,18 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
             {table ? `${table.name} Draft Order` : 'Draft Order'}
           </span>
           {hasItems && (
-            <span style={{
-              background: 'var(--color-primary)', color: 'var(--color-on-primary)',
-              fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '10px',
-              padding: '2px 8px', borderRadius: 'var(--radius-full)'
-            }}>
-              {draftMenu.reduce((s,i) => s+i.qty, 0)} pcs
-            </span>
+            <Badge>{draftMenu.reduce((s,i) => s+i.qty, 0)} pcs</Badge>
           )}
         </div>
         {hasItems && (
-          <button onClick={() => { if (window.confirm('Clear all items from this draft?')) onClearDraft(); }} style={{ color: 'var(--status-rust-text)', background: 'none', border: 'none', cursor: 'pointer' }}>
-            <Trash2 size={15} />
-          </button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => { if (window.confirm('Clear all items from this draft?')) onClearDraft(); }}
+            className="text-destructive hover:text-destructive"
+          >
+            <Trash2 />
+          </Button>
         )}
       </div>
 
@@ -170,13 +172,12 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
             <div className="typography-badge" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)', marginBottom: 'var(--spacing-xs)', color: 'var(--color-muted)' }}>
               <Edit3 size={12} /> Kitchen Note
             </div>
-            <input
+            <Input
               type="text"
               value={note}
               onChange={e => setNote(e.target.value)}
               placeholder="e.g. Extra spicy, Less oil, Jain prep…"
-              className="input"
-              style={{ height: '44px', fontSize: '12px' }}
+              className="h-11 text-xs"
             />
           </div>
 
@@ -187,16 +188,15 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           )}
 
           {/* Send Button */}
-          <motion.button
-            whileTap={!hasItems || !hubConnected || isSubmitting ? {} : { scale: 0.96 }}
+          <Button
             onClick={handleSend}
             disabled={!hasItems || !hubConnected || isSubmitting}
-            className="btn btn-primary"
-            style={{ width: '100%', marginTop: '6px', opacity: (!hasItems || !hubConnected || isSubmitting) ? 0.5 : 1, cursor: (!hasItems || !hubConnected || isSubmitting) ? 'not-allowed' : 'pointer' }}
+            size="lg"
+            className="w-full mt-1.5 h-11"
           >
-            <Send size={16} />
-            {isSubmitting ? <><Loader size={14} className="spin" /> Sending to Kitchen...</> : (hubConnected ? 'Send to Kitchen KDS (LAN)' : 'Not Connected to Hub')}
-          </motion.button>
+            {isSubmitting ? <Loader className="animate-spin" /> : <Send />}
+            {isSubmitting ? 'Sending to Kitchen...' : (hubConnected ? 'Send to Kitchen KDS (LAN)' : 'Not Connected to Hub')}
+          </Button>
         </div>
       )}
     </div>

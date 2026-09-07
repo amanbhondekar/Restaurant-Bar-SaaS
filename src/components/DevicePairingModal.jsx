@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
-import { QrCode, Smartphone, Wifi, CheckCircle2, ShieldCheck, X } from 'lucide-react';
+import { QrCode, ShieldCheck } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 
 export const DevicePairingModal = ({ isOpen, onClose }) => {
-  const { currentRestaurant, pairingState, pairDevice } = usePos();
+  const { currentRestaurant, pairDevice } = usePos();
   const [inputCode, setInputCode] = useState('');
   const [feedback, setFeedback] = useState(null);
-
-  if (!isOpen) return null;
 
   const handlePair = (e) => {
     e.preventDefault();
@@ -24,41 +26,22 @@ export const DevicePairingModal = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'var(--color-scrim)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
-    }}>
-      <div className="card" style={{
-        background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)',
-        borderRadius: 'var(--radius-md)', width: '100%', maxWidth: '460px',
-        overflow: 'hidden', boxShadow: 'var(--shadow-modal)'
-      }}>
-        {/* Header */}
-        <div style={{
-          padding: '20px 24px', background: 'var(--color-surface-soft)',
-          borderBottom: '1px solid var(--color-hairline)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '40px', height: '40px', borderRadius: 'var(--radius-full)',
-              background: 'var(--color-primary)',
-              color: 'var(--color-on-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}>
-              <QrCode size={20} />
-            </div>
-            <div>
-              <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>Per-Tenant Device Pairing</div>
-              <div className="typography-body-sm" style={{ color: 'var(--color-muted)' }}>Scoped WiFi KDS Connection</div>
-            </div>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[460px] gap-0 p-0">
+        <DialogHeader className="flex flex-row items-center gap-3 p-5 bg-muted border-b">
+          <div style={{
+            width: '40px', height: '40px', borderRadius: 'var(--radius-full)',
+            background: 'var(--color-primary)', color: 'var(--color-on-primary)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+          }}>
+            <QrCode size={20} />
           </div>
-          <button onClick={onClose} style={{ color: 'var(--color-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
-            <X size={20} />
-          </button>
-        </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <DialogTitle>Per-Tenant Device Pairing</DialogTitle>
+            <DialogDescription>Scoped WiFi KDS Connection</DialogDescription>
+          </div>
+        </DialogHeader>
 
-        {/* Body */}
         <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {/* Active pairing card */}
           <div style={{
@@ -92,27 +75,20 @@ export const DevicePairingModal = ({ isOpen, onClose }) => {
           </div>
 
           {/* Enter Code to Pair Handset */}
-          <form onSubmit={handlePair} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <label className="typography-caption-sm" style={{ fontWeight: 600, color: 'var(--color-muted)' }}>
-              Pair Waiter Handset with Code
-            </label>
-
+          <form onSubmit={handlePair} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <Label htmlFor="pair-code">Pair Waiter Handset with Code</Label>
             <div style={{ display: 'flex', gap: '10px' }}>
-              <input
+              <Input
+                id="pair-code"
                 type="text"
                 placeholder="e.g. SPG-3108"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value.toUpperCase())}
-                className="input"
-                style={{ flex: 1, height: '48px', fontFamily: 'var(--font-mono)', fontSize: '15px', fontWeight: 700 }}
+                className="h-10 flex-1 font-mono font-bold text-base"
               />
-              <button
-                type="submit"
-                className="btn btn-primary"
-                style={{ height: '48px', padding: '0 20px' }}
-              >
+              <Button type="submit" size="lg" className="h-10">
                 Pair Device
-              </button>
+              </Button>
             </div>
           </form>
 
@@ -127,7 +103,7 @@ export const DevicePairingModal = ({ isOpen, onClose }) => {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
