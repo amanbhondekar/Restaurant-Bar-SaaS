@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
-import { Send, Trash2, Edit3, Wifi } from 'lucide-react';
+import { Send, Trash2, Edit3, Wifi, Armchair, Zap, AlertTriangle, Loader } from 'lucide-react';
+import { VegBadge } from '../components/VegBadge';
 import { motion } from 'framer-motion';
 
 export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, onClearDraft, hubUrl, hubConnected }) => {
@@ -77,7 +78,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
         border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-md)',
         background: 'var(--color-canvas)', animation: 'fadeIn 0.3s ease'
       }}>
-        <div style={{ fontSize: '28px', marginBottom: '6px' }}>🪑</div>
+        <Armchair size={28} style={{ color: 'var(--color-muted)', marginBottom: '6px' }} />
         <div style={{ fontWeight: 600, color: 'var(--color-ink)', marginBottom: '4px' }}>No table selected</div>
         <div className="typography-body-sm">Tap any table above to start an order for {currentRestaurant?.name}</div>
       </div>
@@ -91,7 +92,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
         background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)',
         borderRadius: 'var(--radius-md)', animation: 'slideInUp 0.3s ease'
       }}>
-        <div style={{ fontSize: '28px', marginBottom: '6px' }}>⚡</div>
+        <Zap size={28} style={{ color: 'var(--status-green-text)', marginBottom: '6px' }} />
         <div style={{ fontWeight: 700, color: 'var(--status-green-text)', fontSize: '16px', fontFamily: 'var(--font-display)', marginBottom: '4px' }}>
           Ticket #{sentTicket?.ticket_number || ''} Pushed to Kitchen!
         </div>
@@ -119,7 +120,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           </span>
           {hasItems && (
             <span style={{
-              background: 'var(--color-primary)', color: '#ffffff',
+              background: 'var(--color-primary)', color: 'var(--color-on-primary)',
               fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '10px',
               padding: '2px 8px', borderRadius: 'var(--radius-full)'
             }}>
@@ -144,7 +145,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           {draftMenu.map(item => (
             <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                <span style={{ fontSize: '10px', flexShrink: 0 }}>{item.isVeg ? '🟢' : '🔴'}</span>
+                <VegBadge isVeg={item.isVeg} size={8} />
                 <span className="typography-body-sm" style={{ color: 'var(--color-ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {item.qty > 1 && <span style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', marginRight: '4px', fontWeight: 700 }}>{item.qty}×</span>}
                   {item.name}
@@ -166,7 +167,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
 
           {/* Kitchen Note */}
           <div style={{ marginTop: '4px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', color: 'var(--color-muted)', fontSize: '11px', fontWeight: 500 }}>
+            <div className="typography-badge" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)', marginBottom: 'var(--spacing-xs)', color: 'var(--color-muted)' }}>
               <Edit3 size={12} /> Kitchen Note
             </div>
             <input
@@ -180,8 +181,8 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           </div>
 
           {sendError && (
-            <div style={{ color: 'var(--color-error-text)', fontSize: '11px', fontWeight: 600, marginTop: '4px' }}>
-              ⚠️ {sendError}
+            <div className="typography-badge" style={{ color: 'var(--color-error-text)', marginTop: 'var(--spacing-xs)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+              <AlertTriangle size={12} style={{ flexShrink: 0 }} /> {sendError}
             </div>
           )}
 
@@ -194,7 +195,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
             style={{ width: '100%', marginTop: '6px', opacity: (!hasItems || !hubConnected || isSubmitting) ? 0.5 : 1, cursor: (!hasItems || !hubConnected || isSubmitting) ? 'not-allowed' : 'pointer' }}
           >
             <Send size={16} />
-            {isSubmitting ? '⏳ Sending to Kitchen...' : (hubConnected ? 'Send to Kitchen KDS (LAN)' : 'Not Connected to Hub')}
+            {isSubmitting ? <><Loader size={14} className="spin" /> Sending to Kitchen...</> : (hubConnected ? 'Send to Kitchen KDS (LAN)' : 'Not Connected to Hub')}
           </motion.button>
         </div>
       )}

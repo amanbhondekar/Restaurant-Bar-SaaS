@@ -205,7 +205,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .card:hover {
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-flat);
 }
 
 .card-header {
@@ -230,7 +230,7 @@ input, select, textarea { font-family: inherit; }
   background: var(--color-canvas);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card-float);
+  box-shadow: var(--shadow-flat);
   overflow: hidden;
 }
 
@@ -252,7 +252,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .table-card:hover {
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-flat);
   transform: translateY(-1px);
 }
 
@@ -260,7 +260,7 @@ input, select, textarea { font-family: inherit; }
 
 .table-card.selected {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.2), var(--shadow-card);
+  box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.2);
   background: var(--color-canvas);
 }
 
@@ -300,7 +300,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .kds-ticket:hover {
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-flat);
 }
 
 .ticket-inner { padding: var(--spacing-base); }
@@ -953,7 +953,7 @@ input, select, textarea { font-family: inherit; }
   padding: var(--spacing-lg);
   width: 100%;
   max-width: 480px;
-  box-shadow: var(--shadow-card-float);
+  box-shadow: var(--shadow-flat);
   animation: slideInUp 0.25s ease;
 }
 
@@ -980,7 +980,7 @@ input, select, textarea { font-family: inherit; }
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-base);
-  box-shadow: var(--shadow-card-float);
+  box-shadow: var(--shadow-flat);
 }
 
 .plan-gate-icon {

@@ -77,7 +77,7 @@ export const Header = () => {
               >
                 {restaurants.map(r => (
                   <option key={r.id} value={r.id}>
-                    {r.name} {r.isPilot ? '👑 (Pilot)' : ''} ({r.city})
+                    {r.name} {r.isPilot ? ' (Pilot)' : ''} ({r.city})
                   </option>
                 ))}
               </select>

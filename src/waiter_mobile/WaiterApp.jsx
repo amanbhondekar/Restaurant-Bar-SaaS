@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FloorGrid } from './FloorGrid';
 import { RapidOrderBuilder } from './RapidOrderBuilder';
 import { OrderDraftDrawer } from './OrderDraftDrawer';
-import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw } from 'lucide-react';
+import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw, AlertTriangle } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { usePos } from '../context/PosContext';
 
@@ -346,8 +346,8 @@ export const WaiterApp = () => {
 
   return (
     <div style={{
-      width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column',
-      background: 'var(--color-canvas)',
+      width: '100%', maxWidth: '480px', minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      background: 'var(--color-canvas)', margin: '0 auto',
       paddingTop: 'env(safe-area-inset-top, 0px)',
       paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       paddingLeft: 'env(safe-area-inset-left, 0px)',
@@ -357,22 +357,18 @@ export const WaiterApp = () => {
         {/* App Header & Pairing Status */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 16px', background: 'var(--color-canvas)',
+          padding: 'var(--spacing-sm) var(--spacing-base)', background: 'var(--color-canvas)',
           borderBottom: '1px solid var(--color-hairline)', flex: 'none'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '50%',
-              background: 'var(--color-primary)', color: 'var(--color-on-primary)', fontWeight: 800, fontSize: '12px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+            <div className="avatar avatar-sm avatar-primary" style={{ fontWeight: 800, fontSize: '12px' }}>
               W1
             </div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-ink)' }}>
+              <div className="typography-caption" style={{ color: 'var(--color-ink)' }}>
                 {hubInfo?.name || currentRestaurant?.name || 'Hotel Mejwani'}
               </div>
-              <div style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)' }}>
+              <div className="typography-badge" style={{ color: 'var(--color-muted)', fontFamily: 'var(--font-mono)' }}>
                 Hub: {hubUrl.replace('http://', '').replace('https://', '')}
               </div>
             </div>
@@ -419,7 +415,7 @@ export const WaiterApp = () => {
             borderBottom: '1px solid var(--color-warning-border)',
             display: 'flex', alignItems: 'center', gap: '10px'
           }}>
-            <span style={{ fontSize: '16px' }}>⚠️</span>
+            <AlertTriangle size={16} style={{ flexShrink: 0 }} />
             <span>No menu data available — connect this hub to the internet once to complete setup.</span>
           </div>
         )}
@@ -428,23 +424,23 @@ export const WaiterApp = () => {
         {showPairModal && (
           <div className="modal-overlay" style={{
             position: 'absolute', inset: 0, zIndex: 100,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--spacing-lg)'
           }}>
             <div className="modal-content" style={{
               width: '100%', maxWidth: '340px'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-md)' }}>
                 <Server size={22} style={{ color: 'var(--color-primary)' }} />
-                <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--color-ink)', fontWeight: 700, fontFamily: 'var(--font-display)' }}>
+                <h3 className="typography-title-md" style={{ margin: 0, color: 'var(--color-ink)' }}>
                   Connect to Kitchen Hub
                 </h3>
               </div>
 
-              <p style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: 0, marginBottom: '16px' }}>
+              <p className="typography-body-sm" style={{ color: 'var(--color-muted)', marginTop: 0, marginBottom: 'var(--spacing-base)' }}>
                 Scan the QR code displayed on the Kitchen Display screen, or enter the hub's LAN IP address below.
               </p>
 
-              <form onSubmit={handlePairSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <form onSubmit={handlePairSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
                 <div>
                   <label className="form-label">
                     Hub LAN IP or URL
@@ -460,12 +456,12 @@ export const WaiterApp = () => {
                 </div>
 
                 {pairError && (
-                  <div style={{ color: 'var(--color-error-text)', fontSize: '11px', fontWeight: 600 }}>
-                    ⚠️ {pairError}
+                  <div className="typography-badge" style={{ color: 'var(--color-error-text)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+                    <AlertTriangle size={12} /> {pairError}
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
                   <button
                     type="button"
                     onClick={() => setShowPairModal(false)}
@@ -478,7 +474,7 @@ export const WaiterApp = () => {
                     type="submit"
                     disabled={isTestingConn}
                     className="btn btn-primary"
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--spacing-xs)' }}
                   >
                     {isTestingConn ? <RefreshCw size={14} className="spin" /> : 'Connect'}
                   </button>
@@ -489,7 +485,7 @@ export const WaiterApp = () => {
         )}
 
         {/* Screen Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--color-canvas)' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--spacing-md)', display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)', background: 'var(--color-canvas)' }}>
           {activeTab === 'floor' && (
             <>
               <p className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>
@@ -519,13 +515,11 @@ export const WaiterApp = () => {
           {activeTab === 'menu' && (
             <>
               {!selectedTableId && (
-                <div style={{
-                  background: 'var(--status-amber-bg)', border: '1px solid var(--status-amber-border)',
-                  borderRadius: 'var(--radius-sm)', padding: '10px 14px',
-                  fontSize: '12px', color: 'var(--status-amber-text)', fontWeight: 500,
-                  display: 'flex', alignItems: 'center', gap: '8px'
+                <div className="banner banner-warning" style={{
+                  borderRadius: 'var(--radius-sm)', padding: 'var(--spacing-sm) var(--spacing-md)',
+                  display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', borderBottom: 'none'
                 }}>
-                  ⚠️ Tap a table on the <strong>Tables</strong> tab first, then add items here.
+                  <AlertTriangle size={14} style={{ flexShrink: 0 }} /> Tap a table on the <strong>Tables</strong> tab first, then add items here.
                 </div>
               )}
               <RapidOrderBuilder
@@ -550,11 +544,7 @@ export const WaiterApp = () => {
         </div>
 
         {/* Bottom Nav Bar */}
-        <div style={{
-          display: 'flex', background: 'var(--color-canvas)',
-          borderTop: '1px solid var(--color-hairline)',
-          padding: '6px 8px 8px', flex: 'none', gap: '4px'
-        }}>
+        <div className="bottom-nav" style={{ flex: 'none' }}>
           {navItems.map(nav => (
             <button
               key={nav.id}

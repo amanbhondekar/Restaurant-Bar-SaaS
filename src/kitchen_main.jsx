@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode } from 'lucide-react';
+import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode, StickyNote, Check, Loader, Zap } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import QRCodeLib from 'qrcode';
 import './index.css';
 
 const KitchenHubApp = () => {
@@ -42,9 +43,17 @@ const KitchenHubApp = () => {
       if (res.ok) {
         const data = await res.json();
         setQrCodeUrl(data.qr_code);
+        return;
       }
     } catch (err) {
-      console.warn('Could not fetch QR code:', err);
+      console.warn('Could not fetch QR from hub, generating locally:', err);
+    }
+    try {
+      const waiterUrl = `${hubHost}/waiter`;
+      const dataUrl = await QRCodeLib.toDataURL(waiterUrl, { width: 256, margin: 2 });
+      setQrCodeUrl(dataUrl);
+    } catch (err) {
+      console.warn('Could not generate QR code:', err);
     }
   };
 
@@ -216,23 +225,23 @@ const KitchenHubApp = () => {
   const readyTickets = tickets.filter(t => t.status === 'ready');
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-canvas)', color: 'var(--color-ink)', fontFamily: 'var(--font-body)', padding: '24px' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--color-canvas)', color: 'var(--color-ink)', fontFamily: 'var(--font-body)', padding: 'var(--spacing-lg)' }}>
       {/* Top Navigation / Header */}
       <header style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        background: '#ffffff', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)',
-        padding: '16px 24px', marginBottom: '24px', flexWrap: 'wrap', gap: '16px',
-        boxShadow: 'var(--shadow-card-float)'
+        background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)',
+        padding: 'var(--spacing-base) var(--spacing-lg)', marginBottom: 'var(--spacing-lg)', flexWrap: 'wrap', gap: 'var(--spacing-base)',
+        boxShadow: 'var(--shadow-flat)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ background: 'var(--color-primary)', color: '#ffffff', width: '44px', height: '44px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
-            👨‍🍳
+          <div style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)', width: '44px', height: '44px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ChefHat size={22} />
           </div>
           <div>
             <h1 className="typography-display-sm" style={{ margin: 0, color: 'var(--color-ink)' }}>
               Kitchen Hub Display
             </h1>
-            <div style={{ fontSize: '13px', color: 'var(--color-muted)', marginTop: '2px' }}>
+            <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', marginTop: 'var(--spacing-xxs)' }}>
               {pairingInfo ? `${pairingInfo.name} (${pairingInfo.pairing_code})` : 'Connecting to Reception Hub...'}
             </div>
           </div>
@@ -284,47 +293,47 @@ const KitchenHubApp = () => {
       </header>
 
       {/* Main Grid: Left side pairing card, Right side live KOT tickets */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 320px) 1fr', gap: '24px', alignItems: 'start' }}>
-        
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 320px) 1fr', gap: 'var(--spacing-lg)', alignItems: 'start' }}>
+
         {/* Left Column: Waiter Pairing QR Code & Details */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ background: '#ffffff', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px', textAlign: 'center', boxShadow: 'var(--shadow-card-float)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'var(--font-display)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-base)' }}>
+          <div style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: 'var(--spacing-lg)', textAlign: 'center', boxShadow: 'var(--shadow-flat)' }}>
+            <div className="typography-micro-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--spacing-sm)', color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 'var(--spacing-md)' }}>
               <QrCode size={16} /> Waiter Pairing QR Code
             </div>
-            
+
             {qrCodeUrl ? (
-              <div style={{ background: '#ffffff', padding: '12px', borderRadius: '12px', border: '1px solid var(--color-hairline)', display: 'inline-block', marginBottom: '12px' }}>
+              <div style={{ background: 'var(--color-canvas)', padding: 'var(--spacing-md)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-hairline)', display: 'inline-block', marginBottom: 'var(--spacing-md)' }}>
                 <img src={qrCodeUrl} alt="Waiter App Pairing QR" style={{ width: '180px', height: '180px', display: 'block' }} />
               </div>
             ) : (
               <div style={{ height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-muted)' }}>Generating QR...</div>
             )}
 
-            <div style={{ fontSize: '13px', color: 'var(--color-ink)', fontWeight: 600 }}>
+            <div className="typography-caption" style={{ color: 'var(--color-ink)' }}>
               Scan with Waiter Phone Camera
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--color-muted)', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
+            <div className="typography-badge" style={{ color: 'var(--color-muted)', marginTop: 'var(--spacing-xs)', fontFamily: 'var(--font-mono)' }}>
               LAN Address: {pairingInfo?.server_url || hubHost}/waiter
             </div>
-            <div style={{ marginTop: '12px', background: 'var(--color-surface-soft)', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', color: 'var(--color-body)' }}>
-              Pairing Code: <strong style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)' }}>{pairingInfo?.pairing_code || '---'}</strong>
+            <div style={{ marginTop: 'var(--spacing-md)', background: 'var(--color-surface-soft)', padding: 'var(--spacing-sm) var(--spacing-md)', borderRadius: 'var(--radius-sm)', color: 'var(--color-body)' }}>
+              <span className="typography-micro-label">Pairing Code: </span><strong style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)' }}>{pairingInfo?.pairing_code || '---'}</strong>
             </div>
           </div>
 
           {/* Quick Metrics Card */}
-          <div style={{ background: '#ffffff', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px', boxShadow: 'var(--shadow-card-float)' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-muted)', textTransform: 'uppercase', marginBottom: '12px', fontFamily: 'var(--font-display)' }}>
+          <div style={{ background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: 'var(--spacing-lg)', boxShadow: 'var(--shadow-flat)' }}>
+            <div className="typography-micro-label" style={{ color: 'var(--color-muted)', textTransform: 'uppercase', marginBottom: 'var(--spacing-md)' }}>
               Kitchen Summary
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div style={{ background: 'var(--status-amber-bg)', border: '1px solid var(--status-amber-border)', padding: '12px', borderRadius: '10px', textAlign: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-md)' }}>
+              <div style={{ background: 'var(--status-amber-bg)', border: '1px solid var(--status-amber-border)', padding: 'var(--spacing-md)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
                 <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--status-amber-text)', fontFamily: 'var(--font-mono)' }}>{activeTickets.length}</div>
-                <div style={{ fontSize: '11px', color: 'var(--status-amber-text)', marginTop: '2px', fontWeight: 600 }}>ACTIVE KOTS</div>
+                <div className="typography-badge" style={{ color: 'var(--status-amber-text)', marginTop: 'var(--spacing-xxs)', textTransform: 'uppercase' }}>ACTIVE KOTS</div>
               </div>
-              <div style={{ background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)', padding: '12px', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)', padding: 'var(--spacing-md)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
                 <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--status-green-text)', fontFamily: 'var(--font-mono)' }}>{readyTickets.length}</div>
-                <div style={{ fontSize: '11px', color: 'var(--status-green-text)', marginTop: '2px', fontWeight: 600 }}>READY TO SERVE</div>
+                <div className="typography-badge" style={{ color: 'var(--status-green-text)', marginTop: 'var(--spacing-xxs)', textTransform: 'uppercase' }}>READY TO SERVE</div>
               </div>
             </div>
           </div>
@@ -332,30 +341,27 @@ const KitchenHubApp = () => {
 
         {/* Right Column: Live KOT Rail (SIGNATURE MOTION MOMENT: TICKET PRINT-IN) */}
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 className="typography-title-md" style={{ margin: 0, color: 'var(--color-ink)', fontSize: '18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-base)' }}>
+            <h2 className="typography-display-sm" style={{ margin: 0, color: 'var(--color-ink)' }}>
               Live Order Tickets ({activeTickets.length})
             </h2>
-            <span style={{ fontSize: '12px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)' }}>
-              ⚡ Instant Physical Ticket Printer Motion
+            <span className="typography-badge" style={{ color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+              <Zap size={12} /> Real-time KDS
             </span>
           </div>
 
           {loading ? (
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-muted)' }}>Loading active KOTs...</div>
           ) : activeTickets.length === 0 ? (
-            <div style={{
-              background: '#ffffff', border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '60px 20px',
-              textAlign: 'center', color: 'var(--color-muted)'
-            }}>
-              <ChefHat size={40} style={{ color: 'var(--color-muted)', marginBottom: '12px' }} />
-              <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-ink)', fontFamily: 'var(--font-display)' }}>Kitchen Rail Clear</div>
-              <div style={{ fontSize: '13px', marginTop: '4px', color: 'var(--color-muted)' }}>
+            <div className="empty-state empty-state-lg">
+              <ChefHat size={40} style={{ color: 'var(--color-muted)', marginBottom: 'var(--spacing-md)' }} />
+              <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>Kitchen Rail Clear</div>
+              <div className="typography-caption-sm" style={{ marginTop: 'var(--spacing-xs)', color: 'var(--color-muted)' }}>
                 Orders placed on waiter phones will pop up here in real time.
               </div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--spacing-base)' }}>
               <AnimatePresence mode="popLayout">
                 {activeTickets.map(ticket => {
                   const canMark = allChecked(ticket);
@@ -373,35 +379,35 @@ const KitchenHubApp = () => {
                         mass: 0.8
                       }}
                       style={{
-                        background: '#ffffff',
+                        background: 'var(--color-canvas)',
                         border: '1px solid var(--color-hairline)',
                         borderRadius: 'var(--radius-md)',
-                        padding: '16px',
+                        padding: 'var(--spacing-base)',
                         display: 'flex',
                         flexDirection: 'column',
-                        justify: 'space-between',
-                        boxShadow: 'var(--shadow-card-float)',
+                        justifyContent: 'space-between',
+                        boxShadow: 'var(--shadow-flat)',
                         transformOrigin: 'top center'
                       }}
                     >
                       <div>
                         {/* Ticket Header */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--color-hairline)', paddingBottom: '10px', marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--color-hairline)', paddingBottom: 'var(--spacing-sm)', marginBottom: 'var(--spacing-md)' }}>
                           <div>
-                            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-primary)', fontFamily: 'var(--font-mono)' }}>
+                            <span className="typography-badge" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>
                               TICKET #{ticket.ticket_number}
                             </span>
-                            <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-ink)', marginTop: '2px', fontFamily: 'var(--font-display)' }}>
+                            <div className="typography-display-sm" style={{ color: 'var(--color-ink)', marginTop: 'var(--spacing-xxs)' }}>
                               {ticket.table_name || 'Table'}
                             </div>
                           </div>
-                          <span style={{ fontSize: '11px', background: ticket.synced_to_cloud ? 'var(--status-green-bg)' : 'var(--status-amber-bg)', color: ticket.synced_to_cloud ? 'var(--status-green-text)' : 'var(--status-amber-text)', padding: '3px 8px', borderRadius: '999px', fontWeight: 600, fontFamily: 'var(--font-mono)', border: `1px solid ${ticket.synced_to_cloud ? 'var(--status-green-border)' : 'var(--status-amber-border)'}` }}>
-                            {ticket.synced_to_cloud ? '✓ Synced' : '⏳ Queued'}
+                          <span className="typography-badge" style={{ background: ticket.synced_to_cloud ? 'var(--status-green-bg)' : 'var(--status-amber-bg)', color: ticket.synced_to_cloud ? 'var(--status-green-text)' : 'var(--status-amber-text)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)', border: `1px solid ${ticket.synced_to_cloud ? 'var(--status-green-border)' : 'var(--status-amber-border)'}`, display: 'inline-flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+                            {ticket.synced_to_cloud ? <><Check size={10} /> Synced</> : <><Loader size={10} className="spin" /> Queued</>}
                           </span>
                         </div>
 
                         {/* Items Checklist */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-md)' }}>
                           {ticket.items && ticket.items.map((item, idx) => {
                             const isChecked = !!checkedItems[`${ticket.id}_${idx}`];
                             return (
@@ -409,20 +415,20 @@ const KitchenHubApp = () => {
                                 key={idx}
                                 onClick={() => toggleCheck(ticket.id, idx)}
                                 style={{
-                                  display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer',
+                                  display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', cursor: 'pointer',
                                   opacity: isChecked ? 0.4 : 1, textDecoration: isChecked ? 'line-through' : 'none'
                                 }}
                               >
                                 <div style={{
-                                  width: '18px', height: '18px', borderRadius: '4px',
+                                  width: '18px', height: '18px', borderRadius: 'var(--radius-xs)',
                                   border: `1.5px solid ${isChecked ? 'var(--status-green-text)' : 'var(--color-hairline)'}`,
                                   background: isChecked ? 'var(--status-green-text)' : 'transparent',
                                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                  color: '#fff', fontSize: '10px', fontWeight: 800
+                                  color: 'var(--color-on-primary)', fontSize: '10px', fontWeight: 800
                                 }}>
-                                  {isChecked && '✓'}
+                                  {isChecked && <Check size={10} />}
                                 </div>
-                                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-ink)' }}>
+                                <span className="typography-caption" style={{ color: 'var(--color-ink)' }}>
                                   {item.qty > 1 && <strong style={{ color: 'var(--color-primary)' }}>{item.qty}× </strong>}
                                   {item.name}
                                 </span>
@@ -432,15 +438,15 @@ const KitchenHubApp = () => {
                         </div>
 
                         {ticket.note && (
-                          <div style={{ background: 'var(--status-amber-bg)', padding: '8px 10px', borderRadius: '6px', fontSize: '12px', color: 'var(--status-amber-text)', fontStyle: 'italic', marginBottom: '12px', borderLeft: '3px solid var(--color-primary)' }}>
-                            📝 {ticket.note}
+                          <div className="ticket-note" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--spacing-xs)', marginBottom: 'var(--spacing-md)' }}>
+                            <StickyNote size={13} style={{ flexShrink: 0, marginTop: '1px' }} /> {ticket.note}
                           </div>
                         )}
                       </div>
 
                       {/* Bottom Action */}
-                      <div style={{ borderTop: '1px solid var(--color-hairline)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--color-muted)' }}>
+                      <div style={{ borderTop: '1px solid var(--color-hairline)', paddingTop: 'var(--spacing-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="typography-badge" style={{ color: 'var(--color-muted)' }}>
                           By {ticket.created_by_waiter || 'Waiter'}
                         </span>
                         <motion.button
@@ -449,12 +455,12 @@ const KitchenHubApp = () => {
                           disabled={!canMark}
                           style={{
                             background: canMark ? 'var(--status-green-text)' : 'var(--color-surface-soft)',
-                            color: canMark ? '#ffffff' : 'var(--color-muted)',
-                            border: `1px solid ${canMark ? 'var(--status-green-border)' : 'var(--color-hairline)'}`, padding: '8px 14px', borderRadius: 'var(--radius-full)',
+                            color: canMark ? 'var(--color-on-primary)' : 'var(--color-muted)',
+                            border: `1px solid ${canMark ? 'var(--status-green-border)' : 'var(--color-hairline)'}`, padding: 'var(--spacing-sm) var(--spacing-md)', borderRadius: 'var(--radius-full)',
                             fontWeight: 700, fontSize: '13px', cursor: canMark ? 'pointer' : 'not-allowed'
                           }}
                         >
-                          {canMark ? '✓ Mark Ready' : 'Tick All'}
+                          {canMark ? <><Check size={14} /> Mark Ready</> : 'Tick All'}
                         </motion.button>
                       </div>
                     </motion.div>
@@ -466,11 +472,11 @@ const KitchenHubApp = () => {
 
           {/* Ready Tickets Section */}
           {readyTickets.length > 0 && (
-            <div style={{ marginTop: '32px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--status-green-text)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-display)' }}>
+            <div style={{ marginTop: 'var(--spacing-xl)' }}>
+              <h3 className="typography-title-md" style={{ color: 'var(--status-green-text)', marginBottom: 'var(--spacing-md)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
                 <CheckCircle2 size={18} /> Ready to Serve ({readyTickets.length})
               </h3>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 'var(--spacing-md)', flexWrap: 'wrap' }}>
                 <AnimatePresence>
                   {readyTickets.map(t => (
                     <motion.div
@@ -478,12 +484,12 @@ const KitchenHubApp = () => {
                       initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
                       animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
                       exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
-                      style={{ background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}
+                      style={{ background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)', padding: 'var(--spacing-sm) var(--spacing-md)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}
                     >
                       <CheckCircle2 size={16} style={{ color: 'var(--status-green-text)' }} />
                       <div>
-                        <strong style={{ color: 'var(--color-ink)', fontSize: '13px' }}>{t.table_name || 'Table'}</strong>
-                        <div style={{ fontSize: '11px', color: 'var(--color-muted)' }}>Ticket #{t.ticket_number} · Ready</div>
+                        <strong className="typography-caption" style={{ color: 'var(--color-ink)' }}>{t.table_name || 'Table'}</strong>
+                        <div className="typography-badge" style={{ color: 'var(--color-muted)' }}>Ticket #{t.ticket_number} · Ready</div>
                       </div>
                     </motion.div>
                   ))}

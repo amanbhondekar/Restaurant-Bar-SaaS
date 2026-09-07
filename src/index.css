@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 /* ─── Kullina — Main Stylesheet ──────────────────────────────────
    Imports the canonical design system (tokens → typography → components).
    Only app-specific overrides live below.
@@ -6,6 +8,10 @@
 @import '../design-system/css/tokens.css';
 @import '../design-system/css/typography.css';
 @import '../design-system/css/components.css';
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 /* ── Font Loading (local files only — no CDN) ── */
 
@@ -33,4 +39,139 @@
   font-weight: 100 900;
   font-display: swap;
   font-style: italic;
+}
+
+/* ─── shadcn/ui × Kullina Theme Integration ─────────────────────
+   Maps shadcn's semantic tokens to Kullina design system values.
+   @theme inline registers Tailwind utilities without creating
+   CSS custom properties, so tokens.css vars remain authoritative.
+   ─────────────────────────────────────────────────────────────── */
+
+@theme inline {
+  --font-sans: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Cabinet Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, Menlo, Consolas, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ─── Kullina Brand Theme (Light) ───────────────────────────────
+   Maps shadcn semantic tokens → Kullina design system colors.
+   ─────────────────────────────────────────────────────────────── */
+
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --card: #ffffff;
+  --card-foreground: #222222;
+  --popover: #ffffff;
+  --popover-foreground: #222222;
+  --primary: #ff5722;
+  --primary-foreground: #ffffff;
+  --secondary: #f7f7f7;
+  --secondary-foreground: #222222;
+  --muted: #f7f7f7;
+  --muted-foreground: #6a6a6a;
+  --accent: #fff5f2;
+  --accent-foreground: #ff5722;
+  --destructive: #c13515;
+  --border: #dddddd;
+  --input: #dddddd;
+  --ring: #ff5722;
+  --chart-1: #ff5722;
+  --chart-2: #76abae;
+  --chart-3: #303841;
+  --chart-4: #1a7a3a;
+  --chart-5: #a06800;
+  --radius: 0.875rem;
+  --sidebar: #f7f7f7;
+  --sidebar-foreground: #222222;
+  --sidebar-primary: #ff5722;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fff5f2;
+  --sidebar-accent-foreground: #ff5722;
+  --sidebar-border: #dddddd;
+  --sidebar-ring: #ff5722;
+}
+
+.dark {
+  --background: #1a1a1a;
+  --foreground: #f5f5f5;
+  --card: #242424;
+  --card-foreground: #f5f5f5;
+  --popover: #242424;
+  --popover-foreground: #f5f5f5;
+  --primary: #ff7043;
+  --primary-foreground: #ffffff;
+  --secondary: #2a2a2a;
+  --secondary-foreground: #f5f5f5;
+  --muted: #2a2a2a;
+  --muted-foreground: #929292;
+  --accent: #3d2218;
+  --accent-foreground: #ff7043;
+  --destructive: #e5533b;
+  --border: #333333;
+  --input: #3a3a3a;
+  --ring: #ff7043;
+  --chart-1: #ff7043;
+  --chart-2: #8ec5c8;
+  --chart-3: #5a6a75;
+  --chart-4: #2ecc5f;
+  --chart-5: #f0a500;
+  --sidebar: #242424;
+  --sidebar-foreground: #f5f5f5;
+  --sidebar-primary: #ff7043;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #3d2218;
+  --sidebar-accent-foreground: #ff7043;
+  --sidebar-border: #333333;
+  --sidebar-ring: #ff7043;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

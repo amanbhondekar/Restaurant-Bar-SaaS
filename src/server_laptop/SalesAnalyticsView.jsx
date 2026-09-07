@@ -1,6 +1,6 @@
 import React from 'react';
 import { usePos } from '../context/PosContext';
-import { BarChart3, TrendingUp, ShoppingBag, Clock, Database } from 'lucide-react';
+import { BarChart3, TrendingUp, ShoppingBag, Clock, Database, Zap } from 'lucide-react';
 
 export const SalesAnalyticsView = () => {
   const { tickets, menu, tables, cloudQueue, cloudOnline, currentRestaurant } = usePos();
@@ -27,7 +27,7 @@ export const SalesAnalyticsView = () => {
     .slice(0, 5);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
       {/* Header */}
       <div style={{
         display: 'flex',
@@ -36,8 +36,8 @@ export const SalesAnalyticsView = () => {
         background: 'var(--color-canvas)',
         border: '1px solid var(--color-hairline)',
         borderRadius: 'var(--radius-md)',
-        padding: '20px 24px',
-        boxShadow: 'var(--shadow-card-float)'
+        padding: 'var(--spacing-lg)',
+        boxShadow: 'var(--shadow-flat)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
@@ -103,7 +103,7 @@ export const SalesAnalyticsView = () => {
             Instant (LAN)
           </div>
           <div className="typography-body-sm" style={{ color: 'var(--status-green-text)', marginTop: '4px' }}>
-            ⚡ 0ms latency to kitchen
+            <Zap size={13} style={{ verticalAlign: 'middle' }} /> 0ms latency to kitchen
           </div>
         </div>
 

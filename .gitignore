@@ -26,6 +26,7 @@ Thumbs.db
 # IDE subagent / brain logs
 .system_generated/
 scratch/
+.claude/
 
 # Local hub server data (keep seed/template, ignore local runtime tickets json)
 hub_server/data/tickets_runtime.json

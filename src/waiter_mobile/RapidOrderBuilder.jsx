@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
-import { Search, Plus, Minus } from 'lucide-react';
+import { Search, Plus, Minus, AlertTriangle } from 'lucide-react';
+import { VegBadge } from '../components/VegBadge';
 
 export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRemoveItem }) => {
   const { menu, tables, currentRestaurant } = usePos();
@@ -22,7 +23,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
       {/* Label row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>
@@ -36,22 +37,17 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       </div>
 
       {/* Search + Veg Toggle */}
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <div style={{
-          flex: 1, display: 'flex', alignItems: 'center', gap: '8px',
-          background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)',
-          borderRadius: 'var(--radius-sm)', padding: '0 12px', height: '48px'
-        }}>
+      <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
+        <div className="search-box" style={{ flex: 1 }}>
           <Search size={16} style={{ color: 'var(--color-muted)', flexShrink: 0 }} />
           <input
             type="text" placeholder="Search dishes…" value={query}
             onChange={e => setQuery(e.target.value)}
-            style={{ background: 'transparent', border: 'none', color: 'var(--color-ink)', fontSize: '13px', outline: 'none', width: '100%' }}
           />
         </div>
 
         <div className="pill-group" style={{ flexShrink: 0, height: '48px', alignItems: 'center' }}>
-          {[['all','All'],['veg','🟢'],['nonveg','🔴']].map(([val, label]) => (
+          {[['all','All'],['veg','Veg'],['nonveg','Non-V']].map(([val, label]) => (
             <button key={val} className={`pill-btn ${vegFilter === val ? 'active' : ''}`}
               onClick={() => setVegFilter(val)}
               style={{ padding: '6px 10px', fontSize: '12px' }}>
@@ -62,28 +58,21 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       </div>
 
       {/* Category Slider */}
-      <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '2px' }}>
+      <div className="chip-group">
         {categories.map(cat => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}
-            style={{
-              padding: '6px 14px', borderRadius: 'var(--radius-full)', fontSize: '12px',
-              fontWeight: 500, whiteSpace: 'nowrap',
-              background: activeCategory === cat ? 'var(--color-primary)' : 'var(--color-surface-soft)',
-              color: activeCategory === cat ? '#ffffff' : 'var(--color-muted)',
-              border: `1px solid ${activeCategory === cat ? 'var(--color-primary)' : 'var(--color-hairline)'}`,
-              transition: 'all 0.15s ease', cursor: 'pointer'
-            }}
+            className={`chip${activeCategory === cat ? ' active' : ''}`}
           >{cat}</button>
         ))}
       </div>
 
       {/* Dish List */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)', overflowY: 'auto' }}>
         {menu.length === 0 ? (
           <div className="banner banner-warning" style={{ textAlign: 'center' }}>
-            ⚠️ No menu data available — connect this hub to the internet once to complete setup.
+            <AlertTriangle size={14} style={{ flexShrink: 0 }} /> No menu data available — connect this hub to the internet once to complete setup.
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '24px', textAlign: 'center', color: 'var(--color-muted)', fontSize: '13px' }}>
@@ -105,7 +94,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                <span style={{ fontSize: '11px', flexShrink: 0 }}>{item.isVeg ? '🟢' : '🔴'}</span>
+                <VegBadge isVeg={item.isVeg} size={8} />
                 <div style={{ minWidth: 0 }}>
                   <div className="typography-title-md" style={{ color: 'var(--color-ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {item.name}
@@ -137,7 +126,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                       onClick={() => onAddItem(item.id)} disabled={!selectedTableId}
                       style={{
                         width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
-                        background: 'var(--color-primary)', color: '#ffffff', border: 'none',
+                        background: 'var(--color-primary)', color: 'var(--color-on-primary)', border: 'none',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
                         cursor: 'pointer'
                       }}
@@ -149,7 +138,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                     style={{
                       padding: '6px 14px', borderRadius: 'var(--radius-sm)', fontSize: '12px', fontWeight: 500,
                       background: selectedTableId ? 'var(--color-primary)' : 'var(--color-surface-soft)',
-                      color: selectedTableId ? '#ffffff' : 'var(--color-muted)',
+                      color: selectedTableId ? 'var(--color-on-primary)' : 'var(--color-muted)',
                       display: 'flex', alignItems: 'center', gap: '4px', border: 'none',
                       cursor: selectedTableId ? 'pointer' : 'not-allowed',
                       transition: 'all 0.15s ease'

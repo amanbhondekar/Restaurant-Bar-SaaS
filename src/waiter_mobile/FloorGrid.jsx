@@ -1,6 +1,6 @@
 import React from 'react';
 import { usePos } from '../context/PosContext';
-import { Users, Clock } from 'lucide-react';
+import { Users, Clock, Armchair } from 'lucide-react';
 
 const STATUS = {
   available: { label: 'Open',       color: 'var(--status-green-text)',  bg: 'var(--status-green-bg)', border: 'var(--status-green-border)' },
@@ -51,21 +51,14 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
       {/* Section Pills */}
-      <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '2px' }}>
+      <div className="chip-group">
         {sections.map(s => (
           <button
             key={s}
             onClick={() => setSelectedSection(s)}
-            style={{
-              padding: '5px 12px', borderRadius: 'var(--radius-full)', fontSize: '12px',
-              fontWeight: 500, whiteSpace: 'nowrap',
-              background: selectedSection === s ? 'var(--color-primary)' : 'var(--color-surface-soft)',
-              color: selectedSection === s ? '#ffffff' : 'var(--color-muted)',
-              border: `1px solid ${selectedSection === s ? 'var(--color-primary)' : 'var(--color-hairline)'}`,
-              transition: 'all 0.15s ease', cursor: 'pointer'
-            }}
+            className={`chip${selectedSection === s ? ' active' : ''}`}
           >{s}</button>
         ))}
       </div>
@@ -77,7 +70,7 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
           border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-md)',
           background: 'var(--color-canvas)'
         }}>
-          <div style={{ fontSize: '32px', marginBottom: '8px' }}>🪑</div>
+          <Armchair size={32} style={{ color: 'var(--color-muted)', marginBottom: '8px' }} />
           <div style={{ fontWeight: 700, color: 'var(--color-ink)', marginBottom: '4px', fontFamily: 'var(--font-display)' }}>
             {hubConnected === false ? 'No tables loaded' : 'No tables in this section'}
           </div>
@@ -93,7 +86,7 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
           )}
         </div>
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
+      <div className="floor-grid">
         {shown.map(t => {
           const st = STATUS[t.status] || STATUS.available;
           const sel = selectedTable === t.id;
@@ -130,7 +123,7 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
                 {t.name}
               </div>
 
-              <div className="typography-body-sm" style={{ fontSize: '11px', color: 'var(--color-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+              <div className="typography-badge" style={{ color: 'var(--color-muted)', marginTop: 'var(--spacing-xxs)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
                 <Users size={10} /> {t.capacity}p
               </div>
 
@@ -157,7 +150,7 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
               )}
 
               {mins && (
-                <div className="typography-body-sm" style={{ fontSize: '10px', color: 'var(--color-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                <div className="typography-badge" style={{ color: 'var(--color-muted)', marginTop: 'var(--spacing-xxs)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
                   <Clock size={9} /> {mins}
                 </div>
               )}

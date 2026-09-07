@@ -112,7 +112,7 @@ export const HubDashboardView = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div style={{
             width: '42px', height: '42px', borderRadius: 'var(--radius-full)',
-            background: 'var(--color-primary)', color: '#ffffff',
+            background: 'var(--color-primary)', color: 'var(--color-on-primary)',
             display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
             <Activity size={22} />
@@ -217,7 +217,7 @@ export const HubDashboardView = () => {
               {syncStatus.queued || 0}
             </div>
             <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', marginTop: '4px' }}>
-              {syncStatus.online ? 'Supabase Online ✓' : 'Cloud Unreachable (Queued)'}
+              {syncStatus.online ? 'Supabase Online' : 'Cloud Unreachable (Queued)'}
             </div>
           </div>
         </div>
@@ -230,13 +230,13 @@ export const HubDashboardView = () => {
             </div>
             <div style={{ display: 'flex', gap: '12px', fontSize: '11px', fontWeight: 600 }}>
               <span style={{ color: 'var(--status-green-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                🟢 {tableStats.open} Open
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-green-text)' }} /> {tableStats.open} Open
               </span>
               <span style={{ color: 'var(--status-amber-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                🟡 {tableStats.inKitchen} In Kitchen
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-amber-text)' }} /> {tableStats.inKitchen} In Kitchen
               </span>
               <span style={{ color: 'var(--status-blue-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                🔵 {tableStats.billReady} Bill Ready
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-blue-text)' }} /> {tableStats.billReady} Bill Ready
               </span>
             </div>
           </div>
