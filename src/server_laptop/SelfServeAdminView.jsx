@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
 import { Plus, Edit2, Trash2, Check, LayoutGrid, Utensils, Save, X, Users, QrCode, ShieldCheck, Crown } from 'lucide-react';
+import { VegBadge } from '../components/VegBadge';
 
 export const SelfServeAdminView = () => {
   const {
@@ -129,7 +130,7 @@ export const SelfServeAdminView = () => {
         border: '1px solid var(--color-hairline)',
         borderRadius: 'var(--radius-md)',
         padding: '20px 24px',
-        boxShadow: 'var(--shadow-card-float)'
+        boxShadow: 'var(--shadow-flat)'
       }}>
         <div>
           <h1 className="typography-display-xl" style={{ margin: 0, color: 'var(--color-ink)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -279,7 +280,7 @@ export const SelfServeAdminView = () => {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span>{item.isVeg ? '🟢' : '🔴'}</span>
+                    <VegBadge isVeg={item.isVeg} />
                     <div>
                       <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>
                         {item.name}
@@ -464,7 +465,7 @@ export const SelfServeAdminView = () => {
           <div style={{
             background: 'var(--color-canvas)', border: '1px dashed var(--color-primary)', borderRadius: 'var(--radius-md)',
             padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', textAlign: 'center',
-            boxShadow: 'var(--shadow-card-float)'
+            boxShadow: 'var(--shadow-flat)'
           }}>
             <div style={{ width: '48px', height: '48px', borderRadius: 'var(--radius-full)', background: 'var(--status-amber-bg)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
               <QrCode size={24} />

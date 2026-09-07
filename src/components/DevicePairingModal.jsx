@@ -44,7 +44,7 @@ export const DevicePairingModal = ({ isOpen, onClose }) => {
             <div style={{
               width: '40px', height: '40px', borderRadius: 'var(--radius-full)',
               background: 'var(--color-primary)',
-              color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              color: 'var(--color-on-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
               <QrCode size={20} />
             </div>

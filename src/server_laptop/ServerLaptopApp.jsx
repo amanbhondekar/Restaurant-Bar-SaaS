@@ -7,7 +7,7 @@ import { LiveClock } from '../components/LiveClock';
 import { usePos } from '../context/PosContext';
 import {
   ChefHat, Users, Settings, BarChart3, LayoutGrid, Clock,
-  Wifi, WifiOff, CheckCircle2, Lock, Sparkles, Shield
+  Wifi, WifiOff, CheckCircle2, Lock, Sparkles, Shield, AlertTriangle
 } from 'lucide-react';
 
 const TABS = [
@@ -117,7 +117,7 @@ const PlanUpgradeGate = ({ moduleTitle, requiredPlan, currentPlan, onUpgrade }) 
     background: 'var(--color-canvas)', border: '1px dashed var(--color-primary)',
     borderRadius: 'var(--radius-md)', padding: '48px 24px', textAlign: 'center',
     maxWidth: '540px', margin: '40px auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px',
-    boxShadow: 'var(--shadow-card-float)'
+    boxShadow: 'var(--shadow-flat)'
   }}>
     <div style={{
       width: '56px', height: '56px', borderRadius: 'var(--radius-full)',
@@ -166,7 +166,7 @@ export const ServerLaptopApp = () => {
       borderRadius: 'var(--radius-md)',
       border: '1px solid var(--color-hairline)',
       overflow: 'hidden',
-      boxShadow: 'var(--shadow-card-float)',
+      boxShadow: 'var(--shadow-flat)',
     }}>
       {/* Uninitialized Cache Warning Banner */}
       {isMenuUninitialized && (
@@ -174,7 +174,7 @@ export const ServerLaptopApp = () => {
           borderBottom: '1px solid var(--color-warning-border)',
           display: 'flex', alignItems: 'center', gap: '10px'
         }}>
-          <span style={{ fontSize: '18px' }}>⚠️</span>
+          <AlertTriangle size={18} style={{ flexShrink: 0 }} />
           <span>No menu data available — connect this hub to the internet once to complete setup.</span>
         </div>
       )}
@@ -194,7 +194,7 @@ export const ServerLaptopApp = () => {
           <div style={{
             width: '44px', height: '44px', borderRadius: 'var(--radius-full)', flexShrink: 0,
             background: 'var(--color-primary)',
-            color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center'
+            color: 'var(--color-on-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
             <ChefHat size={22} />
           </div>
@@ -258,7 +258,7 @@ export const ServerLaptopApp = () => {
                 display: 'flex', alignItems: 'center', gap: '8px',
                 padding: '12px 20px', fontSize: '14px', fontWeight: 500,
                 fontFamily: 'var(--font-body)',
-                color: isActive ? '#ffffff' : isModuleGated ? 'var(--color-muted-soft)' : 'var(--color-ink)',
+                color: isActive ? 'var(--color-on-primary)' : isModuleGated ? 'var(--color-muted-soft)' : 'var(--color-ink)',
                 background: isActive ? 'var(--color-primary)' : 'transparent',
                 borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0',
                 whiteSpace: 'nowrap', position: 'relative',
@@ -275,7 +275,7 @@ export const ServerLaptopApp = () => {
               {badge > 0 && !isModuleGated && (
                 <span style={{
                   background: isActive ? 'var(--color-primary-active)' : 'var(--color-primary)',
-                  color: '#ffffff',
+                  color: 'var(--color-on-primary)',
                   fontSize: '10px', fontWeight: 700, borderRadius: 'var(--radius-full)',
                   padding: '1px 6px', fontFamily: 'var(--font-mono)',
                   minWidth: '18px', textAlign: 'center',

@@ -3,6 +3,7 @@ import { PosProvider, usePos } from './context/PosContext';
 import { Header } from './components/Header';
 import { WaiterApp } from './waiter_mobile/WaiterApp';
 import { ServerLaptopApp } from './server_laptop/ServerLaptopApp';
+import { Smartphone, Laptop } from 'lucide-react';
 
 const AppContent = () => {
   const { deviceMode } = usePos();
@@ -46,7 +47,7 @@ const AppContent = () => {
                 marginBottom: '10px',
                 fontWeight: 700
               }}>
-                📱 Waiter Mobile Handset (Folder: waiter_mobile)
+                <Smartphone size={12} style={{ verticalAlign: 'middle' }} /> Waiter Mobile Handset (Folder: waiter_mobile)
               </div>
               <WaiterApp />
             </div>
@@ -62,7 +63,7 @@ const AppContent = () => {
                 marginBottom: '10px',
                 fontWeight: 700
               }}>
-                💻 Laptop / Reception & KDS System (Folder: server_laptop)
+                <Laptop size={12} style={{ verticalAlign: 'middle' }} /> Laptop / Reception & KDS System (Folder: server_laptop)
               </div>
               <ServerLaptopApp />
             </div>

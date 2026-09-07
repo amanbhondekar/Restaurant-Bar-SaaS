@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
 import { Sparkles, Building2, LayoutGrid, Utensils, Users, CheckCircle2, ArrowRight, ArrowLeft, X, QrCode } from 'lucide-react';
+import { VegBadge } from './VegBadge';
 
 export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
   const { onboardNewRestaurant } = usePos();
@@ -92,7 +93,7 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
             <div style={{
               width: '40px', height: '40px', borderRadius: 'var(--radius-full)',
               background: 'var(--color-primary)',
-              color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              color: 'var(--color-on-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
               <Sparkles size={20} />
             </div>
@@ -271,7 +272,7 @@ export const SelfServeOnboardingModal = ({ isOpen, onClose }) => {
                   }}>
                     <div>
                       <span className="typography-body-sm">
-                        {m.isVeg ? '🟢' : '🔴'} <strong style={{ color: 'var(--color-ink)' }}>{m.name}</strong>
+                        <VegBadge isVeg={m.isVeg} size={8} /> <strong style={{ color: 'var(--color-ink)' }}>{m.name}</strong>
                       </span>
                       <span className="typography-body-sm" style={{ fontSize: '11px', color: 'var(--color-muted)', marginLeft: '8px' }}>({m.category})</span>
                     </div>
