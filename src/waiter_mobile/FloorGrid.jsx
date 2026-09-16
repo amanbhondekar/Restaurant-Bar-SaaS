@@ -1,6 +1,8 @@
 import React from 'react';
 import { usePos } from '../context/PosContext';
 import { Users, Clock, Armchair } from 'lucide-react';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 
 const STATUS = {
   available: { label: 'Open',       color: 'var(--status-green-text)',  bg: 'var(--status-green-bg)', border: 'var(--status-green-border)' },
@@ -15,11 +17,10 @@ const elapsed = (iso) => {
   return m < 1 ? 'Just in' : `${m}m`;
 };
 
-// Section 6.2 Skeleton Screen Loader for Floor Grid
 export const FloorGridSkeleton = () => (
-  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
+  <div className="grid grid-cols-3 gap-2">
     {[1, 2, 3, 4, 5, 6].map(i => (
-      <div key={i} className="skeleton skeleton-card" style={{ borderRadius: 'var(--radius-md)' }} />
+      <div key={i} className="skeleton skeleton-card rounded-[var(--radius-md)]" />
     ))}
   </div>
 );
@@ -34,58 +35,43 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
 
   const [clearedTableIds, setClearedTableIds] = React.useState({});
 
-  if (isLoading) {
-    return <FloorGridSkeleton />;
-  }
+  if (isLoading) return <FloorGridSkeleton />;
 
   const handleClearClick = async (e, tableId) => {
     e.stopPropagation();
     if (clearedTableIds[tableId]) return;
     if (!window.confirm(`Clear the bill for this table? This cannot be undone.`)) return;
     setClearedTableIds(prev => ({ ...prev, [tableId]: true }));
-    try {
-      await clearTableBill(tableId);
-    } finally {
-      setClearedTableIds(prev => ({ ...prev, [tableId]: false }));
-    }
+    try { await clearTableBill(tableId); } finally { setClearedTableIds(prev => ({ ...prev, [tableId]: false })); }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
-      {/* Section Pills */}
+    <div className="flex flex-col gap-2">
+      {/* Section Filter */}
       <div className="chip-group">
         {sections.map(s => (
-          <button
-            key={s}
-            onClick={() => setSelectedSection(s)}
-            className={`chip${selectedSection === s ? ' active' : ''}`}
-          >{s}</button>
+          <button key={s} onClick={() => setSelectedSection(s)} className={`chip${selectedSection === s ? ' active' : ''}`}>{s}</button>
         ))}
       </div>
 
-      {/* Table Grid */}
+      {/* Empty State */}
       {shown.length === 0 && !isLoading && (
-        <div style={{
-          textAlign: 'center', padding: '32px 16px', color: 'var(--color-muted)', fontSize: '13px',
-          border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-md)',
-          background: 'var(--color-canvas)'
-        }}>
-          <Armchair size={32} style={{ color: 'var(--color-muted)', marginBottom: '8px' }} />
-          <div style={{ fontWeight: 700, color: 'var(--color-ink)', marginBottom: '4px', fontFamily: 'var(--font-display)' }}>
+        <div className="text-center rounded-[var(--radius-md)] border border-dashed p-8"
+          style={{ color: 'var(--color-muted)', borderColor: 'var(--color-hairline)', background: 'var(--color-canvas)' }}>
+          <Armchair size={32} className="mx-auto mb-2" style={{ color: 'var(--color-muted)' }} />
+          <div className="font-bold mb-1" style={{ color: 'var(--color-ink)', fontFamily: 'var(--font-display)' }}>
             {hubConnected === false ? 'No tables loaded' : 'No tables in this section'}
           </div>
-          <div className="typography-body-sm" style={{ color: 'var(--color-muted)', marginBottom: hubConnected === false ? '12px' : '0' }}>
-            {hubConnected === false
-              ? 'Connect to the kitchen hub to load your floor plan.'
-              : 'Try selecting a different section above.'}
+          <div className="typography-body-sm mb-3" style={{ color: 'var(--color-muted)' }}>
+            {hubConnected === false ? 'Connect to the kitchen hub to load your floor plan.' : 'Try selecting a different section above.'}
           </div>
           {hubConnected === false && onOpenPairing && (
-            <button onClick={onOpenPairing} className="btn btn-primary btn-sm">
-              Connect to Hub
-            </button>
+            <Button size="sm" onClick={onOpenPairing}>Connect to Hub</Button>
           )}
         </div>
       )}
+
+      {/* Table Grid */}
       <div className="floor-grid">
         {shown.map(t => {
           const st = STATUS[t.status] || STATUS.available;
@@ -94,63 +80,33 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
           const draftCount = drafts[t.id] ? Object.values(drafts[t.id]).reduce((s, q) => s + q, 0) : 0;
 
           return (
-            <div
-              key={t.id}
-              onClick={() => onSelectTable(t.id)}
-              className={`table-card${sel ? ' selected' : ''}`}
-            >
-              {/* Status Dot */}
-              <span style={{
-                position: 'absolute', top: '8px', right: '8px',
-                width: '7px', height: '7px', borderRadius: '50%',
-                background: st.color,
-              }} />
+            <div key={t.id} onClick={() => onSelectTable(t.id)} className={`table-card${sel ? ' selected' : ''}`}>
+              <span className="absolute top-2 right-2 w-[7px] h-[7px] rounded-full" style={{ background: st.color }} />
 
-              {/* Draft Indicator */}
               {draftCount > 0 && (
-                <span style={{
-                  position: 'absolute', top: '6px', left: '6px',
-                  background: 'var(--color-primary)', color: 'var(--color-on-primary)',
-                  fontSize: '8px', fontWeight: 700, borderRadius: 'var(--radius-full)',
-                  padding: '1px 5px', fontFamily: 'var(--font-mono)'
-                }}>
+                <Badge variant="default" className="absolute top-1.5 left-1.5 text-[8px] px-1.5 py-0 font-mono"
+                  style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
                   {draftCount}
-                </span>
+                </Badge>
               )}
 
-              {/* Table Name (title-md: Cabinet Grotesk 16px/600) */}
-              <div className="typography-title-md" style={{ color: 'var(--color-ink)', letterSpacing: '-0.3px' }}>
-                {t.name}
-              </div>
+              <div className="typography-title-md" style={{ color: 'var(--color-ink)', letterSpacing: '-0.3px' }}>{t.name}</div>
 
-              <div className="typography-badge" style={{ color: 'var(--color-muted)', marginTop: 'var(--spacing-xxs)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+              <div className="flex items-center justify-center gap-[3px] mt-[2px]" style={{ fontSize: '10px', color: 'var(--color-muted)' }}>
                 <Users size={10} /> {t.capacity}p
               </div>
 
-              {/* Status Tag (uppercase-tag: 8px/700 tracked Instrument Sans) */}
-              <div
-                className="typography-uppercase-tag"
-                style={{
-                  marginTop: '6px',
-                  display: 'inline-block',
-                  padding: '2px 6px',
-                  borderRadius: 'var(--radius-full)',
-                  background: st.bg,
-                  color: st.color,
-                  border: `1px solid ${st.border}`
-                }}
-              >
+              <Badge variant="outline" className="mt-1.5 text-[8px] font-bold"
+                style={{ color: st.color, background: st.bg, borderColor: st.border }}>
                 {st.label}
-              </div>
+              </Badge>
 
               {t.activeOrderTotal > 0 && (
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, color: 'var(--color-primary)', marginTop: '4px' }}>
-                  ₹{t.activeOrderTotal}
-                </div>
+                <div className="font-mono text-xs font-bold mt-1" style={{ color: 'var(--color-primary)' }}>₹{t.activeOrderTotal}</div>
               )}
 
               {mins && (
-                <div className="typography-badge" style={{ color: 'var(--color-muted)', marginTop: 'var(--spacing-xxs)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                <div className="flex items-center justify-center gap-[3px] mt-[2px]" style={{ fontSize: '10px', color: 'var(--color-muted)' }}>
                   <Clock size={9} /> {mins}
                 </div>
               )}
@@ -159,16 +115,13 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
                 <button
                   onClick={e => handleClearClick(e, t.id)}
                   disabled={!!clearedTableIds[t.id]}
-                  className="typography-uppercase-tag"
+                  className="typography-uppercase-tag w-full mt-1.5 py-1 rounded-[var(--radius-sm)] border cursor-pointer"
                   style={{
-                    marginTop: '6px', width: '100%', padding: '4px 0',
-                    borderRadius: 'var(--radius-sm)',
                     background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)',
-                    border: '1px solid var(--status-blue-border)',
-                    cursor: clearedTableIds[t.id] ? 'not-allowed' : 'pointer',
-                    opacity: clearedTableIds[t.id] ? 0.6 : 1
-                  }}
-                >
+                    borderColor: 'var(--status-blue-border)',
+                    opacity: clearedTableIds[t.id] ? 0.6 : 1,
+                    cursor: clearedTableIds[t.id] ? 'not-allowed' : 'pointer'
+                  }}>
                   {clearedTableIds[t.id] ? 'Clearing…' : 'Clear Bill'}
                 </button>
               )}

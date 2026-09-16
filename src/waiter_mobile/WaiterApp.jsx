@@ -5,6 +5,11 @@ import { OrderDraftDrawer } from './OrderDraftDrawer';
 import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw, AlertTriangle } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { usePos } from '../context/PosContext';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export const WaiterApp = () => {
   const { currentRestaurant, isMenuUninitialized: posMenuUninitialized } = usePos() || {};
@@ -14,9 +19,8 @@ export const WaiterApp = () => {
   const [activeTab, setActiveTab] = useState('floor');
   const [hubMenuUninitialized, setHubMenuUninitialized] = useState(false);
 
-  // Hub Connection & Pairing State
-  const defaultHub = typeof window !== 'undefined' 
-    ? `${window.location.protocol}//${window.location.hostname}:4000` 
+  const defaultHub = typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:4000`
     : 'http://localhost:4000';
 
   const [hubUrl, setHubUrl] = useState(() => {
@@ -24,20 +28,18 @@ export const WaiterApp = () => {
   });
 
   const [hubInfo, setHubInfo] = useState(null);
-  const [connStatus, setConnStatus] = useState('connecting'); // 'connecting' | 'connected' | 'disconnected'
+  const [connStatus, setConnStatus] = useState('connecting');
   const hubConnected = connStatus === 'connected';
   const [showPairModal, setShowPairModal] = useState(false);
   const [manualIpInput, setManualIpInput] = useState('');
   const [pairError, setPairError] = useState('');
   const [isTestingConn, setIsTestingConn] = useState(false);
 
-  // Live Dynamic State from Hub Server
   const [liveTables, setLiveTables] = useState([]);
   const [activeOrders, setActiveOrders] = useState([]);
   const wasConnectedRef = useRef(false);
   const isGracePeriodRef = useRef(true);
 
-  // 1. Fetch Live Tables, Open Orders, and Menu state from Hub Server
   const fetchLiveState = useCallback(async (targetUrl = hubUrl) => {
     const cleanUrl = targetUrl.replace(/\/+$/, '');
     try {
@@ -49,28 +51,18 @@ export const WaiterApp = () => {
 
       if (menuRes && menuRes.ok) {
         const menuData = await menuRes.json();
-        if (menuData.uninitialized) {
-          setHubMenuUninitialized(true);
-        } else {
-          setHubMenuUninitialized(false);
-        }
+        setHubMenuUninitialized(!!menuData.uninitialized);
       }
 
       if (tablesRes && tablesRes.ok) {
         const data = await tablesRes.json();
-        if (data.uninitialized) {
-          setHubMenuUninitialized(true);
-        }
-        if (data.tables && Array.isArray(data.tables)) {
-          setLiveTables(data.tables);
-        }
+        if (data.uninitialized) setHubMenuUninitialized(true);
+        if (data.tables && Array.isArray(data.tables)) setLiveTables(data.tables);
       }
 
       if (ordersRes && ordersRes.ok) {
         const data = await ordersRes.json();
-        if (data.tickets && Array.isArray(data.tickets)) {
-          setActiveOrders(data.tickets);
-        }
+        if (data.tickets && Array.isArray(data.tickets)) setActiveOrders(data.tickets);
       }
     } catch (err) {
       console.warn('Could not fetch live state from hub:', err);
@@ -79,27 +71,21 @@ export const WaiterApp = () => {
 
   const pingFailuresRef = useRef(0);
 
-  // 2. Periodic 5s Health Check & Auto Re-Sync on Reconnect
   const checkHubConnection = useCallback(async (targetUrl = hubUrl) => {
     setIsTestingConn(true);
     setPairError('');
     const cleanUrl = targetUrl.replace(/\/+$/, '');
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout
-
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(`${cleanUrl}/pairing-info`, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
         setHubInfo(data);
-        pingFailuresRef.current = 0; // Reset fail counter on success
-        
-        // Auto Re-Sync check: if previously disconnected and now connected again
-        if (!wasConnectedRef.current) {
-          fetchLiveState(cleanUrl);
-        }
+        pingFailuresRef.current = 0;
+        if (!wasConnectedRef.current) fetchLiveState(cleanUrl);
         wasConnectedRef.current = true;
         setConnStatus('connected');
         setHubUrl(cleanUrl);
@@ -109,7 +95,6 @@ export const WaiterApp = () => {
       }
     } catch (err) {
       pingFailuresRef.current += 1;
-      // Require 2 consecutive missed pings (or post grace window) before declaring offline state
       if (pingFailuresRef.current >= 2 || !isGracePeriodRef.current) {
         wasConnectedRef.current = false;
         setConnStatus('disconnected');
@@ -123,38 +108,24 @@ export const WaiterApp = () => {
     isGracePeriodRef.current = true;
     const graceTimer = setTimeout(() => {
       isGracePeriodRef.current = false;
-      if (pingFailuresRef.current >= 2) {
-        setConnStatus('disconnected');
-      }
+      if (pingFailuresRef.current >= 2) setConnStatus('disconnected');
     }, 3000);
 
     checkHubConnection(hubUrl);
     fetchLiveState(hubUrl);
+    const healthInterval = setInterval(() => checkHubConnection(hubUrl), 5000);
 
-    // Periodic 5s health check loop
-    const healthInterval = setInterval(() => {
-      checkHubConnection(hubUrl);
-    }, 5000);
-
-    return () => {
-      clearTimeout(graceTimer);
-      clearInterval(healthInterval);
-    };
+    return () => { clearTimeout(graceTimer); clearInterval(healthInterval); };
   }, [hubUrl, checkHubConnection, fetchLiveState]);
 
-  // Shared WebSocket Message Funnel for all state-changing events
   const handleHubWsEvent = useCallback((msg, cleanUrl) => {
     if (!msg || !msg.type) return;
     const type = msg.type;
     const payload = msg.payload || {};
 
-    console.log(`⚡ WaiterApp processing WS event: ${type}`, payload);
-
-    // 1. Instant optimistic local state updates
     if (type === 'TICKET_READY' || type === 'order_ready') {
       const tableId = payload.table_id;
       const ticketId = payload.ticket_id || payload.ticket_number || payload.order_id;
-
       if (tableId) {
         setLiveTables(prev => prev.map(t => {
           if (String(t.id) === String(tableId) || (t.name && String(t.name).toLowerCase() === String(payload.table_name).toLowerCase())) {
@@ -165,45 +136,26 @@ export const WaiterApp = () => {
       }
       if (ticketId) {
         setActiveOrders(prev => prev.map(o => {
-          if (o.id === ticketId || String(o.ticket_number) === String(ticketId)) {
-            return { ...o, status: 'ready' };
-          }
+          if (o.id === ticketId || String(o.ticket_number) === String(ticketId)) return { ...o, status: 'ready' };
           return o;
         }));
       }
     } else if (type === 'CLEAR_TABLE' || type === 'bill_cleared' || type === 'order_cleared') {
       const tableId = payload.table_id;
-
       if (tableId) {
-        setLiveTables(prev => prev.map(t => {
-          if (String(t.id) === String(tableId)) {
-            return { ...t, status: 'available', activeOrderTotal: 0, occupiedSince: null };
-          }
-          return t;
-        }));
-
+        setLiveTables(prev => prev.map(t => String(t.id) === String(tableId) ? { ...t, status: 'available', activeOrderTotal: 0, occupiedSince: null } : t));
         setActiveOrders(prev => prev.filter(o => String(o.table_id) !== String(tableId)));
-
-        setDrafts(prev => {
-          const copy = { ...prev };
-          delete copy[tableId];
-          return copy;
-        });
+        setDrafts(prev => { const copy = { ...prev }; delete copy[tableId]; return copy; });
       }
     } else if (type === 'NEW_ORDER' || type === 'order_created') {
       const ticket = payload.ticket || payload;
       if (ticket && ticket.table_id) {
         setLiveTables(prev => prev.map(t => {
           if (String(t.id) === String(ticket.table_id)) {
-            return {
-              ...t,
-              status: t.status === 'ready' ? 'ready' : 'kot',
-              activeOrderTotal: (t.activeOrderTotal || 0) + (Number(ticket.total_amount) || 0)
-            };
+            return { ...t, status: t.status === 'ready' ? 'ready' : 'kot', activeOrderTotal: (t.activeOrderTotal || 0) + (Number(ticket.total_amount) || 0) };
           }
           return t;
         }));
-
         setActiveOrders(prev => {
           const exists = prev.some(o => o.id === ticket.id || String(o.ticket_number) === String(ticket.ticket_number));
           if (exists) return prev;
@@ -211,108 +163,53 @@ export const WaiterApp = () => {
         });
       }
     }
-
-    // 2. Authoritative live state fetch to stay 100% synchronized
     fetchLiveState(cleanUrl);
   }, [fetchLiveState]);
 
-  // 3. WebSocket Real-Time Subscription to WS /live
   useEffect(() => {
     if (!hubUrl) return;
     const cleanUrl = hubUrl.replace(/\/+$/, '');
     const wsHost = cleanUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     const wsUrl = `${wsHost}/live`;
-
     let ws = null;
     let isSubscribed = true;
 
     const connectWs = () => {
       try {
         ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-          console.log(`📱 Waiter App WS /live connected to ${wsUrl}`);
-          fetchLiveState(cleanUrl);
-        };
-
+        ws.onopen = () => { console.log(`📱 Waiter WS connected to ${wsUrl}`); fetchLiveState(cleanUrl); };
         ws.onmessage = (event) => {
           if (!isSubscribed) return;
-          try {
-            const msg = JSON.parse(event.data);
-            handleHubWsEvent(msg, cleanUrl);
-          } catch (e) {
-            console.warn('WS message parse error:', e);
-          }
+          try { handleHubWsEvent(JSON.parse(event.data), cleanUrl); } catch (e) {}
         };
-
-        ws.onclose = () => {
-          if (isSubscribed) {
-            setTimeout(connectWs, 4000);
-          }
-        };
-
-        ws.onerror = () => {
-          if (ws) ws.close();
-        };
-      } catch (err) {
-        console.warn('WS connection failed:', err);
-      }
+        ws.onclose = () => { if (isSubscribed) setTimeout(connectWs, 4000); };
+        ws.onerror = () => { if (ws) ws.close(); };
+      } catch (err) {}
     };
-
     connectWs();
-
-    return () => {
-      isSubscribed = false;
-      if (ws) ws.close();
-    };
+    return () => { isSubscribed = false; if (ws) ws.close(); };
   }, [hubUrl, fetchLiveState, handleHubWsEvent]);
 
-  // Handle Clearing Table Bill
   const handleClearTableBill = async (tableId) => {
-    setDrafts(p => {
-      const c = { ...p };
-      delete c[tableId];
-      return c;
-    });
-
+    setDrafts(p => { const c = { ...p }; delete c[tableId]; return c; });
     if (!hubUrl) return;
     const cleanUrl = hubUrl.replace(/\/+$/, '');
     try {
-      const res = await fetch(`${cleanUrl}/tables/${tableId}/clear`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (res.ok) {
-        console.log(`🧹 Clear bill request for table ${tableId} succeeded on Hub`);
-        fetchLiveState(cleanUrl);
-      }
-    } catch (err) {
-      console.error(`Failed to clear bill for table ${tableId}:`, err);
-    }
+      const res = await fetch(`${cleanUrl}/tables/${tableId}/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (res.ok) fetchLiveState(cleanUrl);
+    } catch (err) { console.error(`Failed to clear bill for table ${tableId}:`, err); }
   };
 
   const handlePairSubmit = async (e) => {
     e.preventDefault();
     if (!manualIpInput.trim()) return;
     setConnStatus('connecting');
-
     let raw = manualIpInput.trim();
-    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
-      raw = `http://${raw}`;
-    }
-    if (!raw.includes(':', 6)) {
-      raw = `${raw}:4000`;
-    }
-
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) raw = `http://${raw}`;
+    if (!raw.includes(':', 6)) raw = `${raw}:4000`;
     const success = await checkHubConnection(raw);
-    if (success) {
-      setShowPairModal(false);
-      setManualIpInput('');
-      fetchLiveState(raw);
-    } else {
-      setConnStatus('disconnected');
-      setPairError(`Could not reach Kitchen Hub at ${raw}. Check WiFi connection.`);
-    }
+    if (success) { setShowPairModal(false); setManualIpInput(''); fetchLiveState(raw); }
+    else { setConnStatus('disconnected'); setPairError(`Could not reach Kitchen Hub at ${raw}. Check WiFi connection.`); }
   };
 
   const currentDraftItems = selectedTableId ? (drafts[selectedTableId] || {}) : {};
@@ -346,168 +243,114 @@ export const WaiterApp = () => {
 
   return (
     <div style={{
-      width: '100%', maxWidth: '480px', minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      width: '100%', maxWidth: '480px', height: '100vh', display: 'flex', flexDirection: 'column',
       background: 'var(--color-canvas)', margin: '0 auto',
       paddingTop: 'env(safe-area-inset-top, 0px)',
-      paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      paddingLeft: 'env(safe-area-inset-left, 0px)',
-      paddingRight: 'env(safe-area-inset-right, 0px)'
+      paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)'
     }}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* App Header & Pairing Status */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: 'var(--spacing-sm) var(--spacing-base)', background: 'var(--color-canvas)',
-          borderBottom: '1px solid var(--color-hairline)', flex: 'none'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-            <div className="avatar avatar-sm avatar-primary" style={{ fontWeight: 800, fontSize: '12px' }}>
+      <div className="flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between flex-none px-4 py-3"
+          style={{ background: 'var(--color-canvas)', borderBottom: '1px solid var(--color-hairline)' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-extrabold shrink-0"
+              style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
               W1
             </div>
             <div>
               <div className="typography-caption" style={{ color: 'var(--color-ink)' }}>
                 {hubInfo?.name || currentRestaurant?.name || 'Hotel Mejwani'}
               </div>
-              <div className="typography-badge" style={{ color: 'var(--color-muted)', fontFamily: 'var(--font-mono)' }}>
+              <div className="font-mono text-[10px]" style={{ color: 'var(--color-muted)' }}>
                 Hub: {hubUrl.replace('http://', '').replace('https://', '')}
               </div>
             </div>
           </div>
 
-          <button
-            onClick={() => setShowPairModal(true)}
-            className={`conn-pill conn-pill-${connStatus === 'connected' ? 'ok' : connStatus === 'connecting' ? 'connecting' : 'off'}`}
-            style={{ cursor: 'pointer' }}
-          >
-            {connStatus === 'connected' ? (
-              <ShieldCheck size={12} />
-            ) : connStatus === 'connecting' ? (
-              <RefreshCw size={12} className="spin" />
-            ) : (
-              <WifiOff size={12} />
-            )}
-            {connStatus === 'connected' ? 'LAN Connected' : connStatus === 'connecting' ? 'Connecting…' : 'Not Connected'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className="text-[10px] font-semibold cursor-pointer gap-1 px-2.5 py-1"
+              onClick={() => setShowPairModal(true)}
+              style={{
+                color: connStatus === 'connected' ? 'var(--status-green-text)' : connStatus === 'connecting' ? 'var(--status-amber-text)' : 'var(--status-rust-text)',
+                background: connStatus === 'connected' ? 'var(--status-green-bg)' : connStatus === 'connecting' ? 'var(--status-amber-bg)' : 'var(--status-rust-bg)',
+                borderColor: connStatus === 'connected' ? 'var(--status-green-border)' : connStatus === 'connecting' ? 'var(--status-amber-border)' : 'var(--status-rust-border)',
+              }}>
+              {connStatus === 'connected' ? <ShieldCheck size={11} /> : connStatus === 'connecting' ? <RefreshCw size={11} className="spin" /> : <WifiOff size={11} />}
+              {connStatus === 'connected' ? 'LAN' : connStatus === 'connecting' ? '…' : 'Off'}
+            </Badge>
+            <ThemeToggle size="icon-sm" />
+          </div>
         </div>
 
-        {/* Unreachable Hub Offline Banner */}
+        {/* Banners */}
         {connStatus === 'disconnected' && (
-          <div className="banner banner-error" style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            borderBottom: '1px solid var(--color-error-border)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <WifiOff size={16} style={{ flexShrink: 0 }} />
-              <span>Not connected to kitchen hub. Tap to pair.</span>
+          <div className="banner banner-error flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-error-border)' }}>
+            <div className="flex items-center gap-2">
+              <WifiOff size={14} className="shrink-0" />
+              <span className="text-xs">Not connected to kitchen hub.</span>
             </div>
-            <button
-              onClick={() => setShowPairModal(true)}
-              className="btn btn-danger btn-sm banner-connect-btn"
-            >
-              Connect
-            </button>
+            <Button size="sm" variant="destructive" className="h-7 px-3 text-[11px]" onClick={() => setShowPairModal(true)}>Connect</Button>
           </div>
         )}
 
-        {/* Uninitialized Cache & Offline Failure Banner */}
         {(hubMenuUninitialized || posMenuUninitialized) && (
-          <div className="banner banner-warning" style={{
-            borderBottom: '1px solid var(--color-warning-border)',
-            display: 'flex', alignItems: 'center', gap: '10px'
-          }}>
-            <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-            <span>No menu data available — connect this hub to the internet once to complete setup.</span>
+          <div className="banner banner-warning flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-warning-border)' }}>
+            <AlertTriangle size={14} className="shrink-0" />
+            <span className="text-xs">No menu data — connect hub to internet to complete setup.</span>
           </div>
         )}
 
-        {/* Pairing Modal Flow */}
+        {/* Pairing Modal */}
         {showPairModal && (
-          <div className="modal-overlay" style={{
-            position: 'absolute', inset: 0, zIndex: 100,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--spacing-lg)'
-          }}>
-            <div className="modal-content" style={{
-              width: '100%', maxWidth: '340px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-md)' }}>
-                <Server size={22} style={{ color: 'var(--color-primary)' }} />
-                <h3 className="typography-title-md" style={{ margin: 0, color: 'var(--color-ink)' }}>
-                  Connect to Kitchen Hub
-                </h3>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="w-full max-w-[340px] rounded-[var(--radius-md)] border p-6"
+              style={{ background: 'var(--color-canvas)', borderColor: 'var(--color-hairline)' }}>
+              <div className="flex items-center gap-2.5 mb-4">
+                <Server size={20} style={{ color: 'var(--color-primary)' }} />
+                <h3 className="typography-title-md" style={{ color: 'var(--color-ink)' }}>Connect to Kitchen Hub</h3>
               </div>
-
-              <p className="typography-body-sm" style={{ color: 'var(--color-muted)', marginTop: 0, marginBottom: 'var(--spacing-base)' }}>
-                Scan the QR code displayed on the Kitchen Display screen, or enter the hub's LAN IP address below.
+              <p className="typography-body-sm mb-4" style={{ color: 'var(--color-muted)' }}>
+                Enter the hub's LAN IP address to pair this device.
               </p>
-
-              <form onSubmit={handlePairSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+              <form onSubmit={handlePairSubmit} className="flex flex-col gap-4">
                 <div>
-                  <label className="form-label">
-                    Hub LAN IP or URL
-                  </label>
-                  <input
-                    type="text"
-                    value={manualIpInput}
-                    onChange={e => setManualIpInput(e.target.value)}
-                    placeholder="e.g. 192.168.1.50:4000"
-                    className="input"
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  />
+                  <Label className="text-xs font-semibold" style={{ color: 'var(--color-muted)' }}>Hub LAN IP or URL</Label>
+                  <Input type="text" value={manualIpInput} onChange={e => setManualIpInput(e.target.value)}
+                    placeholder="e.g. 192.168.1.50:4000" className="mt-1 font-mono" />
                 </div>
-
                 {pairError && (
-                  <div className="typography-badge" style={{ color: 'var(--color-error-text)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+                  <div className="text-xs flex items-center gap-1" style={{ color: 'var(--color-error-text)' }}>
                     <AlertTriangle size={12} /> {pairError}
                   </div>
                 )}
-
-                <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowPairModal(false)}
-                    className="btn btn-ghost"
-                    style={{ flex: 1 }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isTestingConn}
-                    className="btn btn-primary"
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--spacing-xs)' }}
-                  >
+                <div className="flex gap-2.5 mt-1">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setShowPairModal(false)}>Cancel</Button>
+                  <Button type="submit" disabled={isTestingConn} className="flex-1">
                     {isTestingConn ? <RefreshCw size={14} className="spin" /> : 'Connect'}
-                  </button>
+                  </Button>
                 </div>
               </form>
             </div>
           </div>
         )}
 
-        {/* Screen Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--spacing-md)', display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)', background: 'var(--color-canvas)' }}>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4" style={{ background: 'var(--color-canvas)' }}>
           {activeTab === 'floor' && (
             <>
               <p className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>
                 Select Table → Add Items → Send to Kitchen
               </p>
               <FloorGrid
-                selectedTable={selectedTableId}
-                onSelectTable={setSelectedTableId}
-                tables={liveTables}
-                onClearTableBill={handleClearTableBill}
+                selectedTable={selectedTableId} onSelectTable={setSelectedTableId}
+                tables={liveTables} onClearTableBill={handleClearTableBill}
                 isLoading={connStatus === 'connecting' && liveTables.length === 0}
-                drafts={drafts}
-                onOpenPairing={() => setShowPairModal(true)}
-                hubConnected={hubConnected}
+                drafts={drafts} onOpenPairing={() => setShowPairModal(true)} hubConnected={hubConnected}
               />
               <OrderDraftDrawer
-                selectedTableId={selectedTableId}
-                draftItems={currentDraftItems}
-                onRemoveItem={removeItem}
-                onClearDraft={clearDraft}
-                hubUrl={hubUrl}
-                hubConnected={hubConnected}
+                selectedTableId={selectedTableId} draftItems={currentDraftItems}
+                onRemoveItem={removeItem} onClearDraft={clearDraft}
+                hubUrl={hubUrl} hubConnected={hubConnected}
               />
             </>
           )}
@@ -515,68 +358,37 @@ export const WaiterApp = () => {
           {activeTab === 'menu' && (
             <>
               {!selectedTableId && (
-                <div className="banner banner-warning" style={{
-                  borderRadius: 'var(--radius-sm)', padding: 'var(--spacing-sm) var(--spacing-md)',
-                  display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', borderBottom: 'none'
-                }}>
-                  <AlertTriangle size={14} style={{ flexShrink: 0 }} /> Tap a table on the <strong>Tables</strong> tab first, then add items here.
+                <div className="banner banner-warning flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2" style={{ borderBottom: 'none' }}>
+                  <AlertTriangle size={14} className="shrink-0" /> <span className="text-xs">Tap a table on <strong>Tables</strong> tab first.</span>
                 </div>
               )}
               <RapidOrderBuilder
-                selectedTableId={selectedTableId}
-                draftItems={currentDraftItems}
-                onAddItem={addItem}
-                onRemoveItem={removeItem}
+                selectedTableId={selectedTableId} draftItems={currentDraftItems}
+                onAddItem={addItem} onRemoveItem={removeItem}
               />
             </>
           )}
 
           {activeTab === 'cart' && (
             <OrderDraftDrawer
-              selectedTableId={selectedTableId}
-              draftItems={currentDraftItems}
-              onRemoveItem={removeItem}
-              onClearDraft={clearDraft}
-              hubUrl={hubUrl}
-              hubConnected={hubConnected}
+              selectedTableId={selectedTableId} draftItems={currentDraftItems}
+              onRemoveItem={removeItem} onClearDraft={clearDraft}
+              hubUrl={hubUrl} hubConnected={hubConnected}
             />
           )}
         </div>
 
-        {/* Bottom Nav Bar */}
-        <div className="bottom-nav" style={{ flex: 'none' }}>
+        {/* Bottom Nav */}
+        <div className="bottom-nav flex-none">
           {navItems.map(nav => (
             <button
               key={nav.id}
               onClick={() => setActiveTab(nav.id)}
-              style={{
-                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-                padding: '8px 4px', borderRadius: 'var(--radius-sm)',
-                color: activeTab === nav.id ? 'var(--color-primary)' : 'var(--color-muted)',
-                background: 'transparent',
-                fontSize: '11px', fontWeight: activeTab === nav.id ? 700 : 500, position: 'relative',
-                transition: 'all 0.15s ease', border: 'none', cursor: 'pointer'
-              }}
+              className={`bottom-nav-item${activeTab === nav.id ? ' active' : ''}`}
             >
-              <nav.icon size={20} strokeWidth={activeTab === nav.id ? 2.5 : 1.8} />
+              <nav.icon size={22} strokeWidth={activeTab === nav.id ? 2.4 : 1.8} />
               {nav.label}
-              {activeTab === nav.id && (
-                <span style={{
-                  position: 'absolute', bottom: '0', left: '50%', transform: 'translateX(-50%)',
-                  width: '20px', height: '3px', borderRadius: '2px',
-                  background: 'var(--color-primary)'
-                }} />
-              )}
-              {nav.badge > 0 && (
-                <span style={{
-                  position: 'absolute', top: '2px', right: '14px',
-                  background: 'var(--color-primary)',
-                  color: 'var(--color-on-primary)', fontSize: '9px', fontWeight: 700, borderRadius: 'var(--radius-full)',
-                  padding: '1px 6px', fontFamily: 'var(--font-mono)'
-                }}>
-                  {nav.badge}
-                </span>
-              )}
+              {nav.badge > 0 && <span className="nav-badge">{nav.badge}</span>}
             </button>
           ))}
         </div>

@@ -4,6 +4,7 @@ import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshC
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import QRCodeLib from 'qrcode';
 import './index.css';
+import { ThemeToggle } from './components/ThemeToggle';
 
 const KitchenHubApp = () => {
   const [pairingInfo, setPairingInfo] = useState(null);
@@ -289,6 +290,7 @@ const KitchenHubApp = () => {
           >
             <RefreshCw size={14} /> Refresh
           </motion.button>
+          <ThemeToggle />
         </div>
       </header>
 

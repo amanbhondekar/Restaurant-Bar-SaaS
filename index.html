@@ -6,6 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kitchen Hub Display — LAN Order Gateway</title>
     <meta name="theme-color" content="#303841" />
+    <script>
+      (function() {
+        try {
+          var t = localStorage.getItem('kullina_theme') || 'system';
+          var d = document.documentElement;
+          if (t === 'system') {
+            var m = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            d.classList.add(m ? 'dark' : 'light');
+          } else {
+            d.setAttribute('data-theme', t);
+            d.classList.add(t);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
