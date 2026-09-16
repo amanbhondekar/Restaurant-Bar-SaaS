@@ -131,3 +131,110 @@
   --bp-desktop: 1024px;
   --bp-wide: 1280px;
 }
+
+/* ─── Dark Theme Overrides ─────────────────────────────────────
+   Activated by adding `.dark` class to <html> or <body>, or by
+   setting data-theme="dark" on :root. The theme toggle button
+   in the app manages this. `.dark` wins even when the OS is set
+   to light (and vice-versa via `data-theme="light"`).
+   ─────────────────────────────────────────────────────────────── */
+
+.dark,
+:root[data-theme="dark"] {
+  /* Brand & accent — slightly warmer/lighter primary for dark ground */
+  --color-primary: #ff7043;
+  --color-primary-active: #ffab91;
+  --color-primary-disabled: #2a2a2a;
+  --color-luxe: #8ec5c8;
+  --color-plus: #f5f5f5;
+
+  /* Text */
+  --color-ink: #f5f5f5;
+  --color-body: #d4d4d4;
+  --color-muted: #929292;
+  --color-muted-soft: #6a6a6a;
+  --color-on-primary: #ffffff;
+  --color-on-dark: #ffffff;
+  --color-star-rating: #f5f5f5;
+  --color-legal-link: #6ba3ff;
+
+  /* Surfaces */
+  --color-canvas: #1a1a1a;
+  --color-surface-soft: #242424;
+  --color-surface-card: #1f1f1f;
+  --color-surface-strong: #2a2a2a;
+
+  /* Hairlines */
+  --color-hairline: #333333;
+  --color-hairline-soft: #2a2a2a;
+  --color-border-strong: #444444;
+
+  /* Semantic — error / success / warning / info tuned for dark ground */
+  --color-error-text: #ff6b52;
+  --color-error-text-hover: #ff8571;
+  --color-error-bg: #3a1a15;
+  --color-error-border: #b32a1e;
+
+  --color-success-text: #4ade80;
+  --color-success-bg: #14311e;
+  --color-success-border: #1f7a3a;
+
+  --color-warning-text: #f5b74a;
+  --color-warning-bg: #3a2a10;
+  --color-warning-border: #a06800;
+
+  --color-info-text: #7cb7ff;
+  --color-info-bg: #142838;
+  --color-info-border: #1a5fc2;
+
+  /* Primary tint on dark ground */
+  --color-primary-bg: #3a2018;
+}
+
+/* Follow the OS when nothing has been explicitly chosen. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) {
+    --color-primary: #ff7043;
+    --color-primary-active: #ffab91;
+    --color-primary-disabled: #2a2a2a;
+    --color-luxe: #8ec5c8;
+    --color-plus: #f5f5f5;
+
+    --color-ink: #f5f5f5;
+    --color-body: #d4d4d4;
+    --color-muted: #929292;
+    --color-muted-soft: #6a6a6a;
+    --color-on-primary: #ffffff;
+    --color-on-dark: #ffffff;
+    --color-star-rating: #f5f5f5;
+    --color-legal-link: #6ba3ff;
+
+    --color-canvas: #1a1a1a;
+    --color-surface-soft: #242424;
+    --color-surface-card: #1f1f1f;
+    --color-surface-strong: #2a2a2a;
+
+    --color-hairline: #333333;
+    --color-hairline-soft: #2a2a2a;
+    --color-border-strong: #444444;
+
+    --color-error-text: #ff6b52;
+    --color-error-text-hover: #ff8571;
+    --color-error-bg: #3a1a15;
+    --color-error-border: #b32a1e;
+
+    --color-success-text: #4ade80;
+    --color-success-bg: #14311e;
+    --color-success-border: #1f7a3a;
+
+    --color-warning-text: #f5b74a;
+    --color-warning-bg: #3a2a10;
+    --color-warning-border: #a06800;
+
+    --color-info-text: #7cb7ff;
+    --color-info-bg: #142838;
+    --color-info-border: #1a5fc2;
+
+    --color-primary-bg: #3a2018;
+  }
+}

@@ -11,7 +11,9 @@
    RESET & BASE
    ═══════════════════════════════════════════════════════════════ */
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+@layer base {
+  * { box-sizing: border-box; }
+}
 
 html, body {
   height: 100%;
@@ -734,8 +736,11 @@ input, select, textarea { font-family: inherit; }
   display: flex;
   background: var(--color-canvas);
   border-top: 1px solid var(--color-hairline);
-  padding: 6px 8px 8px;
-  gap: 4px;
+  padding: 12px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 50;
 }
 
 .bottom-nav-item {
@@ -743,39 +748,58 @@ input, select, textarea { font-family: inherit; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 8px 4px;
-  border-radius: var(--radius-full);
-  font-size: 11px;
-  font-weight: 500;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  min-height: 60px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-body);
   color: var(--color-muted);
   background: transparent;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
   border: none;
   cursor: pointer;
   position: relative;
 }
 
+.bottom-nav-item:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-ink);
+}
+
+.bottom-nav-item:active {
+  background: var(--color-hairline);
+}
+
 .bottom-nav-item.active {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+
+.bottom-nav-item.active:hover {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .nav-badge {
   position: absolute;
-  top: 2px;
-  right: 14px;
+  top: 6px;
+  right: calc(50% - 22px);
   background: var(--color-primary);
   color: #ffffff;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   border-radius: var(--radius-full);
   padding: 1px 6px;
+  min-width: 16px;
+  text-align: center;
   font-family: var(--font-mono);
 }
 
 .bottom-nav-item.active .nav-badge {
-  background: var(--color-primary-active);
+  background: var(--color-primary);
+  color: #ffffff;
 }
 
 .tab-bar {

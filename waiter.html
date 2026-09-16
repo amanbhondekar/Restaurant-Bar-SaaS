@@ -10,6 +10,21 @@
     <meta name="apple-mobile-web-app-title" content="Waiter App" />
     <link rel="manifest" href="/manifest.json" />
     <title>Waiter Handset — Mejwani POS</title>
+    <script>
+      (function() {
+        try {
+          var t = localStorage.getItem('kullina_theme') || 'system';
+          var d = document.documentElement;
+          if (t === 'system') {
+            var m = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            d.classList.add(m ? 'dark' : 'light');
+          } else {
+            d.setAttribute('data-theme', t);
+            d.classList.add(t);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <style>
       body { background: var(--color-surface-soft); }
       @media (min-width: 481px) {

@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Activity, Server, Wifi, WifiOff, Smartphone, Utensils, Clock,
-  CheckCircle2, AlertTriangle, ShieldCheck, RefreshCw, LayoutGrid, DollarSign
+  Activity, Wifi, WifiOff, Smartphone, Utensils, Clock,
+  CheckCircle2, AlertTriangle, LayoutGrid, ArrowUpRight,
+  CloudOff, Cloud, Hash, IndianRupee, Timer, Users
 } from 'lucide-react';
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { LiveClock } from '../components/LiveClock';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
+import { Separator } from '../components/ui/separator';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export const HubDashboardView = () => {
   const defaultHub = typeof window !== 'undefined'
@@ -39,23 +45,19 @@ export const HubDashboardView = () => {
     return () => clearInterval(interval);
   }, [fetchDashboardData]);
 
-  // Real-Time WebSocket Subscription
   useEffect(() => {
     const wsHost = defaultHub.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     const wsUrl = `${wsHost}/live`;
-
     let ws = null;
     let isSubscribed = true;
 
     const connectWs = () => {
       try {
         ws = new WebSocket(wsUrl);
-
         ws.onopen = () => {
           console.log(`📊 Dashboard WS /live connected to ${wsUrl}`);
           fetchDashboardData();
         };
-
         ws.onmessage = (event) => {
           if (!isSubscribed) return;
           try {
@@ -65,7 +67,6 @@ export const HubDashboardView = () => {
             }
           } catch (err) {}
         };
-
         ws.onclose = () => {
           if (isSubscribed) setTimeout(connectWs, 4000);
         };
@@ -73,7 +74,6 @@ export const HubDashboardView = () => {
     };
 
     connectWs();
-
     return () => {
       isSubscribed = false;
       if (ws) ws.close();
@@ -87,7 +87,6 @@ export const HubDashboardView = () => {
   const syncStatus = hubData?.sync_status || {};
   const runningTotal = hubData?.running_total || 0;
   const connectedDevices = hubData?.connected_devices || 0;
-
   const currency = restaurant.currency || '₹';
 
   const tableStats = {
@@ -98,271 +97,281 @@ export const HubDashboardView = () => {
     open: tables.filter(t => t.status === 'available').length,
   };
 
+  const statusColors = {
+    available: { bg: 'bg-[var(--status-green-bg)]', text: 'text-[var(--status-green-text)]', border: 'border-[var(--status-green-border)]', label: 'Open' },
+    kot: { bg: 'bg-[var(--status-amber-bg)]', text: 'text-[var(--status-amber-text)]', border: 'border-[var(--status-amber-border)]', label: 'In Kitchen' },
+    ready: { bg: 'bg-[var(--status-blue-bg)]', text: 'text-[var(--status-blue-text)]', border: 'border-[var(--status-blue-border)]', label: 'Bill Ready' },
+  };
+
   return (
-    <div style={{
-      width: '100%', minHeight: '100vh', background: 'var(--color-canvas)',
-      display: 'flex', flexDirection: 'column', color: 'var(--color-ink)'
-    }}>
-      {/* Top Bar Header */}
-      <div style={{
-        background: 'var(--color-surface-soft)', borderBottom: '1px solid var(--color-hairline)',
-        padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexWrap: 'wrap', gap: '16px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{
-            width: '42px', height: '42px', borderRadius: 'var(--radius-full)',
-            background: 'var(--color-primary)', color: 'var(--color-on-primary)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
-            <Activity size={22} />
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-canvas)', color: 'var(--color-ink)' }}>
+
+      {/* Top Bar */}
+      <header className="flex items-center justify-between flex-wrap gap-4 px-8 py-4 border-b" style={{ background: 'var(--color-surface-soft)', borderColor: 'var(--color-hairline)' }}>
+        <div className="flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
+            <Activity size={20} />
           </div>
           <div>
-            <div className="typography-display-sm" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {restaurant.name || 'Hotel Mejwani'} Live Operational Dashboard
-              <span className={`conn-pill ${lastFetchErr ? 'conn-pill-off' : 'conn-pill-ok'}`}>
-                {lastFetchErr ? 'HUB OFFLINE' : 'HUB ONLINE'}
-              </span>
+            <div className="flex items-center gap-2.5">
+              <h1 className="typography-display-sm" style={{ color: 'var(--color-ink)' }}>
+                {restaurant.name || 'Hotel Mejwani'}
+              </h1>
+              <Badge variant={lastFetchErr ? 'destructive' : 'default'} className={lastFetchErr ? '' : 'bg-[var(--status-green-bg)] text-[var(--status-green-text)] border border-[var(--status-green-border)] hover:bg-[var(--status-green-bg)]'}>
+                {lastFetchErr ? 'HUB OFFLINE' : 'LIVE'}
+              </Badge>
             </div>
-            <div className="typography-body-sm" style={{ color: 'var(--color-muted)', marginTop: '2px' }}>
-              Pairing Code: <strong style={{ color: 'var(--color-primary)' }}>{restaurant.pairing_code || 'MJW-7492'}</strong> · LAN IP: <span style={{ fontFamily: 'var(--font-mono)' }}>{defaultHub}</span>
-            </div>
+            <p className="typography-body-sm mt-0.5" style={{ color: 'var(--color-muted)' }}>
+              Pairing <strong style={{ color: 'var(--color-primary)' }}>{restaurant.pairing_code || 'MJW-7492'}</strong>
+              <span className="mx-1.5" style={{ color: 'var(--color-hairline)' }}>·</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>{defaultHub}</span>
+            </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-            <Smartphone size={16} style={{ color: 'var(--status-blue-text)' }} />
-            <span style={{ color: 'var(--color-muted)' }}>Connected Staff Handsets:</span>
-            <strong style={{ color: 'var(--status-blue-text)', fontFamily: 'var(--font-mono)' }}>{connectedDevices} Active</strong>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 text-xs">
+            <Smartphone size={15} style={{ color: 'var(--status-blue-text)' }} />
+            <span style={{ color: 'var(--color-muted)' }}>Staff Devices</span>
+            <Badge variant="outline" className="font-mono">{connectedDevices}</Badge>
           </div>
-          <div style={{ width: '1px', height: '36px', background: 'var(--color-hairline)' }} />
+          <Separator orientation="vertical" className="h-8" />
           <LiveClock />
+          <ThemeToggle />
         </div>
-      </div>
+      </header>
 
-      {/* Connection Failure Banner */}
+      {/* Error Banner */}
       {lastFetchErr && (
-        <div className="banner banner-error" style={{
-          borderBottom: '1px solid var(--color-error-border)',
-          display: 'flex', alignItems: 'center', gap: '8px'
-        }}>
-          <AlertTriangle size={16} /> {lastFetchErr}. Re-connecting to hub server...
+        <div className="banner banner-error flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-error-border)' }}>
+          <AlertTriangle size={15} /> {lastFetchErr}. Re-connecting...
         </div>
       )}
 
-      {/* Uninitialized Cache Failure Banner */}
+      {/* Uninitialized Banner */}
       {(hubData?.uninitialized || hubData?.tables?.uninitialized) && (
-        <div className="banner banner-warning" style={{
-          borderBottom: '1px solid var(--color-warning-border)',
-          display: 'flex', alignItems: 'center', gap: '10px'
-        }}>
-          <AlertTriangle size={18} /> No menu data available — connect this hub to the internet once to complete setup.
+        <div className="banner banner-warning flex items-center gap-2.5" style={{ borderBottom: '1px solid var(--color-warning-border)' }}>
+          <AlertTriangle size={16} /> No menu data — connect hub to internet to complete setup.
         </div>
       )}
 
-      {/* Main Content Dashboard Layout */}
-      <div style={{ flex: 1, padding: '24px', maxWidth: '1400px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        
-        {/* KPI Metrics Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-          <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-            <div className="typography-uppercase-tag" style={{ color: 'var(--color-muted)', marginBottom: '4px' }}>
-              Today's Billed Sales
-            </div>
-            <motion.div
-              key={runningTotal}
-              initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -10 }}
-              animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-              transition={{ duration: 0.25 }}
-              className="typography-rating-display"
-              style={{ color: 'var(--color-primary)' }}
-            >
-              {currency}{runningTotal}
-            </motion.div>
-            <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', marginTop: '4px' }}>
-              From {completedTickets.length} completed table bills
-            </div>
-          </div>
+      {/* Main Grid */}
+      <main className="flex-1 w-full max-w-[1400px] mx-auto px-8 py-6 flex flex-col gap-6">
 
-          <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-            <div className="typography-uppercase-tag" style={{ color: 'var(--color-muted)', marginBottom: '4px' }}>
-              Active Kitchen KOTs
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '32px', fontWeight: 800, color: 'var(--status-amber-text)' }}>
-              {activeTickets.length}
-            </div>
-            <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', marginTop: '4px' }}>
-              {activeTickets.filter(t => t.status === 'in_progress').length} In Kitchen · {activeTickets.filter(t => t.status === 'ready').length} Ready
-            </div>
-          </div>
+        {/* KPI Row */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Revenue */}
+          <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+            <CardContent className="pt-5 pb-5 px-5">
+              <div className="flex items-center justify-between mb-1">
+                <span className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>Today's Sales</span>
+                <IndianRupee size={16} style={{ color: 'var(--color-primary)' }} />
+              </div>
+              <motion.div
+                key={runningTotal}
+                initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+                className="font-mono text-3xl font-extrabold tracking-tight"
+                style={{ color: 'var(--color-primary)' }}
+              >
+                {currency}{runningTotal.toLocaleString()}
+              </motion.div>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-muted)' }}>
+                {completedTickets.length} bills cleared
+              </p>
+            </CardContent>
+          </Card>
 
-          <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-            <div className="typography-uppercase-tag" style={{ color: 'var(--color-muted)', marginBottom: '4px' }}>
-              Floor Occupancy
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '32px', fontWeight: 800, color: 'var(--color-ink)' }}>
-              {tableStats.occupied} / {tableStats.total}
-            </div>
-            <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', marginTop: '4px' }}>
-              {tableStats.open} Open Tables Available
-            </div>
-          </div>
+          {/* Active KOTs */}
+          <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+            <CardContent className="pt-5 pb-5 px-5">
+              <div className="flex items-center justify-between mb-1">
+                <span className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>Kitchen KOTs</span>
+                <Utensils size={16} style={{ color: 'var(--status-amber-text)' }} />
+              </div>
+              <div className="font-mono text-3xl font-extrabold tracking-tight" style={{ color: 'var(--status-amber-text)' }}>
+                {activeTickets.length}
+              </div>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-xs" style={{ color: 'var(--status-amber-text)' }}>
+                  {activeTickets.filter(t => t.status === 'in_progress').length} cooking
+                </span>
+                <span className="text-xs" style={{ color: 'var(--status-blue-text)' }}>
+                  {activeTickets.filter(t => t.status === 'ready').length} ready
+                </span>
+              </div>
+            </CardContent>
+          </Card>
 
-          <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-            <div className="typography-uppercase-tag" style={{ color: 'var(--color-muted)', marginBottom: '4px' }}>
-              Cloud Sync Queue
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '32px', fontWeight: 800, color: syncStatus.queued > 0 ? 'var(--status-amber-text)' : 'var(--status-green-text)' }}>
-              {syncStatus.queued || 0}
-            </div>
-            <div className="typography-caption-sm" style={{ color: 'var(--color-muted)', marginTop: '4px' }}>
-              {syncStatus.online ? 'Supabase Online' : 'Cloud Unreachable (Queued)'}
-            </div>
-          </div>
+          {/* Floor Occupancy */}
+          <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+            <CardContent className="pt-5 pb-5 px-5">
+              <div className="flex items-center justify-between mb-1">
+                <span className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>Floor Occupancy</span>
+                <Users size={16} style={{ color: 'var(--color-ink)' }} />
+              </div>
+              <div className="font-mono text-3xl font-extrabold tracking-tight" style={{ color: 'var(--color-ink)' }}>
+                {tableStats.occupied}<span className="text-lg font-semibold" style={{ color: 'var(--color-muted)' }}>/{tableStats.total}</span>
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-muted)' }}>
+                {tableStats.open} tables open
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Cloud Sync */}
+          <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+            <CardContent className="pt-5 pb-5 px-5">
+              <div className="flex items-center justify-between mb-1">
+                <span className="typography-uppercase-tag" style={{ color: 'var(--color-muted)' }}>Cloud Sync</span>
+                {syncStatus.online
+                  ? <Cloud size={16} style={{ color: 'var(--status-green-text)' }} />
+                  : <CloudOff size={16} style={{ color: 'var(--status-rust-text)' }} />
+                }
+              </div>
+              <div className="font-mono text-3xl font-extrabold tracking-tight" style={{ color: syncStatus.queued > 0 ? 'var(--status-amber-text)' : 'var(--status-green-text)' }}>
+                {syncStatus.queued || 0}
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-muted)' }}>
+                {syncStatus.online ? 'Supabase synced' : 'Queued offline'}
+              </p>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Live Floor Grid Section */}
-        <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <div className="typography-title-md" style={{ color: 'var(--color-ink)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <LayoutGrid size={18} style={{ color: 'var(--color-primary)' }} /> Live Floor Table Grid
-            </div>
-            <div style={{ display: 'flex', gap: '12px', fontSize: '11px', fontWeight: 600 }}>
-              <span style={{ color: 'var(--status-green-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-green-text)' }} /> {tableStats.open} Open
-              </span>
-              <span style={{ color: 'var(--status-amber-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-amber-text)' }} /> {tableStats.inKitchen} In Kitchen
-              </span>
-              <span style={{ color: 'var(--status-blue-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-blue-text)' }} /> {tableStats.billReady} Bill Ready
-              </span>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
-            {tables.map(t => {
-              const statusColors = {
-                available: { bg: 'var(--status-green-bg)', text: 'var(--status-green-text)', border: 'var(--status-green-border)', label: 'Open' },
-                kot: { bg: 'var(--status-amber-bg)', text: 'var(--status-amber-text)', border: 'var(--status-amber-border)', label: 'In Kitchen' },
-                ready: { bg: 'var(--status-blue-bg)', text: 'var(--status-blue-text)', border: 'var(--status-blue-border)', label: 'Bill Ready' },
-              }[t.status] || { bg: 'var(--color-canvas)', text: 'var(--color-muted)', border: 'var(--color-hairline)', label: t.status };
-
-              return (
-                <div key={t.id} style={{
-                  background: 'var(--color-canvas)', border: `1px solid ${statusColors.border}`,
-                  borderRadius: 'var(--radius-md)', padding: '12px', textAlign: 'center'
-                }}>
-                  <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>{t.name}</div>
-                  <div style={{ fontSize: '10px', color: 'var(--color-muted)', marginTop: '2px' }}>{t.capacity} Seats · {t.section}</div>
-                  <div style={{
-                    fontSize: '10px', fontWeight: 700, color: statusColors.text, background: statusColors.bg,
-                    padding: '2px 6px', borderRadius: 'var(--radius-full)', marginTop: '6px', display: 'inline-block'
-                  }}>
-                    {statusColors.label}
+        {/* Floor Grid */}
+        <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+          <CardHeader className="pb-3 px-5 pt-5">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-base" style={{ color: 'var(--color-ink)' }}>
+                <LayoutGrid size={17} style={{ color: 'var(--color-primary)' }} /> Live Floor Grid
+              </CardTitle>
+              <div className="flex items-center gap-4">
+                {[
+                  { label: 'Open', count: tableStats.open, color: 'var(--status-green-text)' },
+                  { label: 'Kitchen', count: tableStats.inKitchen, color: 'var(--status-amber-text)' },
+                  { label: 'Bill Ready', count: tableStats.billReady, color: 'var(--status-blue-text)' },
+                ].map(s => (
+                  <div key={s.label} className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: s.color }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
+                    {s.count} {s.label}
                   </div>
-                  {t.activeOrderTotal > 0 && (
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-primary)', fontWeight: 700, marginTop: '4px' }}>
-                      {currency}{t.activeOrderTotal}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="px-5 pb-5">
+            <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
+              {tables.map(t => {
+                const st = statusColors[t.status] || { bg: '', text: 'text-[var(--color-muted)]', border: 'border-[var(--color-hairline)]', label: t.status };
+                return (
+                  <div key={t.id} className={`rounded-[var(--radius-md)] border p-3 text-center transition-colors`} style={{ background: 'var(--color-canvas)', borderColor: 'var(--color-hairline)' }}>
+                    <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>{t.name}</div>
+                    <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-muted)' }}>{t.capacity} seats · {t.section}</div>
+                    <Badge variant="outline" className={`mt-1.5 text-[9px] font-bold px-1.5 py-0 ${st.bg} ${st.text} ${st.border}`}>
+                      {st.label}
+                    </Badge>
+                    {t.activeOrderTotal > 0 && (
+                      <div className="font-mono text-xs font-bold mt-1" style={{ color: 'var(--color-primary)' }}>
+                        {currency}{t.activeOrderTotal}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Tickets Feed Split View */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
-          
+        {/* Tickets Split */}
+        <div className="grid lg:grid-cols-2 gap-5">
+
           {/* Active KOT Tickets */}
-          <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-            <div className="typography-title-md" style={{ color: 'var(--color-ink)', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Utensils size={18} style={{ color: 'var(--status-amber-text)' }} /> Active KOT Tickets ({activeTickets.length})
-            </div>
+          <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+            <CardHeader className="pb-3 px-5 pt-5">
+              <CardTitle className="flex items-center gap-2 text-base" style={{ color: 'var(--color-ink)' }}>
+                <Utensils size={17} style={{ color: 'var(--status-amber-text)' }} />
+                Active KOTs
+                <Badge variant="outline" className="ml-1 font-mono">{activeTickets.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-5">
+              {activeTickets.length === 0 ? (
+                <div className="text-center py-8 text-sm rounded-[var(--radius-sm)] border border-dashed" style={{ color: 'var(--color-muted)', borderColor: 'var(--color-hairline)' }}>
+                  No active kitchen tickets
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2.5 max-h-[420px] overflow-y-auto">
+                  {activeTickets.map(t => (
+                    <div key={t.id} className="rounded-[var(--radius-sm)] border p-3.5" style={{ background: 'var(--color-canvas)', borderColor: 'var(--color-hairline)' }}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-mono font-extrabold text-sm" style={{ color: 'var(--color-primary)' }}>
+                          #{t.ticket_number}
+                        </span>
+                        <Badge variant="outline" className={`text-[9px] font-bold ${t.status === 'ready' ? 'bg-[var(--status-blue-bg)] text-[var(--status-blue-text)] border-[var(--status-blue-border)]' : 'bg-[var(--status-amber-bg)] text-[var(--status-amber-text)] border-[var(--status-amber-border)]'}`}>
+                          {t.table_name} · {t.status === 'ready' ? 'READY' : 'COOKING'}
+                        </Badge>
+                      </div>
 
-            {activeTickets.length === 0 ? (
-              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--color-muted)', fontSize: '13px', border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-sm)' }}>
-                No active kitchen tickets. Waiter orders will appear here in real-time.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
-                {activeTickets.map(t => (
-                  <div key={t.id} style={{
-                    background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)',
-                    borderRadius: 'var(--radius-sm)', padding: '12px 14px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-primary)' }}>
-                        Ticket #{t.ticket_number}
-                      </span>
-                      <span style={{
-                        fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: 'var(--radius-full)',
-                        background: t.status === 'ready' ? 'var(--status-blue-bg)' : 'var(--status-amber-bg)',
-                        color: t.status === 'ready' ? 'var(--status-blue-text)' : 'var(--status-amber-text)'
-                      }}>
-                        {t.table_name} · {t.status === 'ready' ? 'BILL READY' : 'IN KITCHEN'}
-                      </span>
+                      <div className="flex flex-col gap-0.5 text-xs" style={{ color: 'var(--color-ink)' }}>
+                        {t.items?.map((item, idx) => (
+                          <div key={idx} className="flex justify-between">
+                            <span>{item.qty}× {item.name}</span>
+                            <span className="font-mono" style={{ color: 'var(--color-muted)' }}>{currency}{item.price * item.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <Separator className="my-2" />
+                      <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--color-muted)' }}>
+                        <span>{t.created_by_waiter || 'Handset'}</span>
+                        <strong className="font-mono" style={{ color: 'var(--color-ink)' }}>{currency}{t.total_amount}</strong>
+                      </div>
                     </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-                    <div style={{ fontSize: '12px', color: 'var(--color-ink)', margin: '6px 0', lineHeight: 1.5 }}>
-                      {t.items?.map((item, idx) => (
-                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>{item.qty}× {item.name}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-muted)' }}>{currency}{item.price * item.qty}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '6px', borderTop: '1px dashed var(--color-hairline)', fontSize: '11px', color: 'var(--color-muted)' }}>
-                      <span>Waiter: {t.created_by_waiter || 'Handset'}</span>
-                      <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-ink)' }}>{currency}{t.total_amount}</strong>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Completed / Billed Orders */}
-          <div style={{ background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
-            <div className="typography-title-md" style={{ color: 'var(--color-ink)', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CheckCircle2 size={18} style={{ color: 'var(--status-green-text)' }} /> Billed Orders History ({completedTickets.length})
-            </div>
-
-            {completedTickets.length === 0 ? (
-              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--color-muted)', fontSize: '13px', border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-sm)' }}>
-                No completed orders yet today.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
-                {completedTickets.map(t => (
-                  <div key={t.id} style={{
-                    background: 'var(--color-canvas)', border: '1px solid var(--color-hairline)',
-                    borderRadius: 'var(--radius-sm)', padding: '12px 14px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {/* Completed Orders */}
+          <Card className="border-[var(--color-hairline)]" style={{ background: 'var(--color-surface-soft)' }}>
+            <CardHeader className="pb-3 px-5 pt-5">
+              <CardTitle className="flex items-center gap-2 text-base" style={{ color: 'var(--color-ink)' }}>
+                <CheckCircle2 size={17} style={{ color: 'var(--status-green-text)' }} />
+                Billed Orders
+                <Badge variant="outline" className="ml-1 font-mono">{completedTickets.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-5">
+              {completedTickets.length === 0 ? (
+                <div className="text-center py-8 text-sm rounded-[var(--radius-sm)] border border-dashed" style={{ color: 'var(--color-muted)', borderColor: 'var(--color-hairline)' }}>
+                  No completed orders today
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto">
+                  {completedTickets.map(t => (
+                    <div key={t.id} className="flex items-center justify-between rounded-[var(--radius-sm)] border p-3" style={{ background: 'var(--color-canvas)', borderColor: 'var(--color-hairline)' }}>
                       <div>
-                        <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-ink)' }}>
-                          Ticket #{t.ticket_number} ({t.table_name})
-                        </strong>
-                        <div style={{ fontSize: '10px', color: 'var(--color-muted)', marginTop: '2px' }}>
-                          Cleared at: {t.updated_at ? new Date(t.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today'}
+                        <div className="font-mono text-sm font-bold" style={{ color: 'var(--color-ink)' }}>
+                          #{t.ticket_number} <span className="font-normal" style={{ color: 'var(--color-muted)' }}>({t.table_name})</span>
+                        </div>
+                        <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-muted)' }}>
+                          {t.updated_at ? new Date(t.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today'}
                         </div>
                       </div>
-                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '15px', fontWeight: 800, color: 'var(--status-green-text)' }}>
+                      <span className="font-mono text-sm font-extrabold" style={{ color: 'var(--status-green-text)' }}>
                         {currency}{t.total_amount}
-                      </div>
+                      </span>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      </main>
     </div>
   );
 };
