@@ -521,3 +521,134 @@ test('M1: invalid adjustments on /clear refuse the close (tickets stay open)', a
   const body = await good.json();
   assert.ok(body.invoice, 'close after fixing adjustments must issue an invoice');
 });
+
+// ---------------------------------------------------------------------------
+// M1 — invoice lifecycle: void + mark-paid
+// ---------------------------------------------------------------------------
+
+async function closeTable(tableId) {
+  const res = await api(`/tables/${tableId}/clear`, {
+    auth: true, method: 'POST', body: JSON.stringify({})
+  });
+  const body = await res.json();
+  return { res, body, invoice: body.invoice };
+}
+
+test('M1: void requires auth', async () => {
+  const res = await api('/invoices/inv_anything/void', {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'x' })
+  });
+  assert.equal(res.status, 401);
+});
+
+test('M1: void of an unknown invoice returns 404', async () => {
+  const res = await api('/invoices/inv_does_not_exist/void', {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
+  });
+  assert.equal(res.status, 404);
+});
+
+test('M1: void without a reason is refused', async () => {
+  await createOrder(20, [{ id: 'm1', qty: 1 }]);
+  const { invoice } = await closeTable(20);
+  const res = await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({})
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'REASON_REQUIRED');
+});
+
+test('M1: voiding an invoice reopens the underlying tickets', async () => {
+  await createOrder(21, [{ id: 'm1', qty: 2 }]); // 460
+  const { invoice } = await closeTable(21);
+  assert.equal(invoice.grand_total, 483);
+
+  // Post-close: no active tickets on T21.
+  const preview1 = await api('/tables/21/invoice', { auth: true });
+  assert.equal(preview1.status, 404);
+
+  const voided = await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'Wrong table' })
+  });
+  assert.equal(voided.status, 200);
+  const voidBody = await voided.json();
+  assert.equal(voidBody.invoice.payment_status, 'voided');
+  assert.equal(voidBody.invoice.voided_reason, 'Wrong table');
+  assert.equal(voidBody.reopened_ticket_ids.length, 1);
+
+  // Post-void: the table has an active bill again with the same total.
+  const preview2 = await api('/tables/21/invoice', { auth: true });
+  assert.equal(preview2.status, 200);
+  const preview2Body = await preview2.json();
+  assert.equal(preview2Body.invoice.grand_total, invoice.grand_total);
+});
+
+test('M1: double-void is refused', async () => {
+  await createOrder(22, [{ id: 'm1', qty: 1 }]);
+  const { invoice } = await closeTable(22);
+  await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'Wrong table' })
+  });
+  const second = await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'again' })
+  });
+  assert.equal(second.status, 400);
+  const body = await second.json();
+  assert.equal(body.code, 'ALREADY_VOIDED');
+});
+
+test('M1: mark-paid records method and transitions payment_status', async () => {
+  await createOrder(23, [{ id: 'm1', qty: 1 }]);
+  const { invoice } = await closeTable(23);
+  assert.equal(invoice.payment_status, 'pending');
+
+  const paid = await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+  assert.equal(paid.status, 200);
+  const body = await paid.json();
+  assert.equal(body.invoice.payment_status, 'paid');
+  assert.equal(body.invoice.payment_method, 'upi');
+  assert.ok(body.invoice.paid_at);
+});
+
+test('M1: mark-paid rejects an unknown method', async () => {
+  await createOrder(24, [{ id: 'm1', qty: 1 }]);
+  const { invoice } = await closeTable(24);
+  const res = await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'crypto' })
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'INVALID_METHOD');
+});
+
+test('M1: voiding a paid invoice is refused (must be refunded instead)', async () => {
+  await createOrder(25, [{ id: 'm1', qty: 1 }]);
+  const { invoice } = await closeTable(25);
+  await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  const res = await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'oops' })
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'ALREADY_PAID');
+});
+
+test('M1: mark-paid on a voided invoice is refused', async () => {
+  await createOrder(26, [{ id: 'm1', qty: 1 }]);
+  const { invoice } = await closeTable(26);
+  await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
+  });
+  const res = await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'ALREADY_VOIDED');
+});

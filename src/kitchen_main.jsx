@@ -321,6 +321,62 @@ const KitchenHubApp = () => {
     }
   };
 
+  // Mark an issued invoice paid — the seam future payment-capture code
+  // will hook into. Method is captured now; the actual integration lands
+  // in a follow-up PR.
+  const markPaid = async (method) => {
+    if (!billInvoice?.id) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/mark-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method: method })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+      } else {
+        setBillError(data.error || 'Could not mark invoice paid.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  // Void an issued invoice. Reception is prompted for a reason (required),
+  // the underlying tickets are reopened on the server, and the modal
+  // closes so the reopened tickets appear on the KDS rail again.
+  const voidInvoice = async () => {
+    if (!billInvoice?.id) return;
+    const reason = window.prompt(
+      `Void ${billInvoice.invoice_number}? The tickets on ${billInvoice.table_name || 'this table'} will reopen.\n\nReason:`
+    );
+    if (!reason || !reason.trim()) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/void`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        closeBill();
+        fetchActiveTickets();
+      } else {
+        setBillError(data.error || 'Could not void the invoice.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
   const toggleCheck = (ticketId, idx) => {
     const key = `${ticketId}_${idx}`;
     setCheckedItems(p => ({ ...p, [key]: !p[key] }));
@@ -809,12 +865,75 @@ const KitchenHubApp = () => {
                         </div>
 
                         {billInvoice.invoice_number ? (
-                          <div style={{
-                            marginTop: '12px', background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)',
-                            color: 'var(--status-green-text)', padding: '10px 12px', borderRadius: '8px',
-                            fontSize: '13px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontWeight: 700
-                          }}>
-                            ✓ {billInvoice.invoice_number} issued
+                          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{
+                              background: billInvoice.payment_status === 'paid'
+                                ? 'var(--status-green-bg)'
+                                : billInvoice.payment_status === 'voided'
+                                ? 'var(--status-rust-bg)'
+                                : 'var(--status-amber-bg)',
+                              border: `1px solid ${
+                                billInvoice.payment_status === 'paid'
+                                  ? 'var(--status-green-border)'
+                                  : billInvoice.payment_status === 'voided'
+                                  ? 'var(--status-rust-border)'
+                                  : 'var(--status-amber-border)'
+                              }`,
+                              color: billInvoice.payment_status === 'paid'
+                                ? 'var(--status-green-text)'
+                                : billInvoice.payment_status === 'voided'
+                                ? 'var(--status-rust-text)'
+                                : 'var(--status-amber-text)',
+                              padding: '10px 12px', borderRadius: '8px',
+                              fontSize: '13px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontWeight: 700
+                            }}>
+                              {billInvoice.payment_status === 'paid' && `✓ ${billInvoice.invoice_number} · Paid · ${billInvoice.payment_method?.toUpperCase()}`}
+                              {billInvoice.payment_status === 'voided' && `✕ ${billInvoice.invoice_number} · Voided`}
+                              {billInvoice.payment_status === 'pending' && `⏳ ${billInvoice.invoice_number} · Awaiting payment`}
+                            </div>
+
+                            {billInvoice.payment_status === 'pending' && (
+                              <>
+                                <div style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                                  Mark paid
+                                </div>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  {['cash', 'upi', 'card', 'other'].map(m => (
+                                    <button
+                                      key={m}
+                                      onClick={() => markPaid(m)}
+                                      disabled={billLoading}
+                                      style={{
+                                        flex: 1, padding: '8px 10px', borderRadius: 'var(--radius-full)',
+                                        background: 'var(--color-primary)', color: '#fff',
+                                        border: 'none', fontWeight: 700, fontSize: '12px', textTransform: 'uppercase',
+                                        letterSpacing: '0.5px', cursor: billLoading ? 'not-allowed' : 'pointer', opacity: billLoading ? 0.6 : 1
+                                      }}
+                                    >
+                                      {m}
+                                    </button>
+                                  ))}
+                                </div>
+                                <button
+                                  onClick={voidInvoice}
+                                  disabled={billLoading}
+                                  style={{
+                                    padding: '8px 10px', borderRadius: 'var(--radius-full)',
+                                    background: 'transparent', color: 'var(--status-rust-text)',
+                                    border: '1px solid var(--status-rust-border)', fontWeight: 700, fontSize: '12px',
+                                    cursor: billLoading ? 'not-allowed' : 'pointer'
+                                  }}
+                                >
+                                  Void bill (reopens tickets)
+                                </button>
+                              </>
+                            )}
+
+                            {billInvoice.payment_status === 'voided' && billInvoice.voided_reason && (
+                              <div style={{ fontSize: '11px', color: 'var(--color-muted)', textAlign: 'center', fontStyle: 'italic' }}>
+                                Reason: {billInvoice.voided_reason}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>

@@ -171,6 +171,12 @@ CREATE TABLE IF NOT EXISTS public.invoices (
     tax_rows JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{label, rate_percent, taxable_amount, amount}]
     ticket_ids JSONB NOT NULL DEFAULT '[]'::jsonb, -- Local hub ticket ids folded into this bill
     payment_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'refunded', 'voided')),
+    payment_method VARCHAR(20), -- 'cash' | 'upi' | 'card' | 'other' (populated on mark-paid)
+    paid_at TIMESTAMPTZ,
+    paid_by VARCHAR(60),
+    voided_at TIMESTAMPTZ,
+    voided_reason TEXT,
+    voided_by VARCHAR(60),
     issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(restaurant_id, invoice_number)

@@ -121,6 +121,83 @@ class InvoiceStore {
   listInvoices(restaurantId) {
     return this.invoices.filter(inv => !restaurantId || inv.restaurant_id === restaurantId);
   }
+
+  /**
+   * Void an issued invoice (accidental close, mis-billing, etc.).
+   *
+   * Refuses: unknown id, wrong tenant, already voided, already refunded,
+   * already paid (a paid invoice must be refunded, not voided), missing
+   * reason. Returns the mutated invoice on success.
+   */
+  voidInvoice(invoiceId, restaurantId, { reason, actor } = {}) {
+    const invoice = this.getInvoice(invoiceId, restaurantId);
+    if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
+    if (invoice.payment_status === 'voided') {
+      return { ok: false, error: 'Invoice already voided.', code: 'ALREADY_VOIDED' };
+    }
+    if (invoice.payment_status === 'paid') {
+      return { ok: false, error: 'A paid invoice cannot be voided; refund it instead.', code: 'ALREADY_PAID' };
+    }
+    if (invoice.payment_status === 'refunded') {
+      return { ok: false, error: 'Invoice already refunded.', code: 'ALREADY_REFUNDED' };
+    }
+    const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!cleanReason) {
+      return { ok: false, error: 'A reason is required to void an invoice.', code: 'REASON_REQUIRED' };
+    }
+
+    this.invoices = this.invoices.map(inv => {
+      if (inv.id !== invoice.id) return inv;
+      return {
+        ...inv,
+        payment_status: 'voided',
+        voided_at: new Date().toISOString(),
+        voided_reason: cleanReason.slice(0, 240),
+        voided_by: typeof actor === 'string' ? actor.slice(0, 60) : null
+      };
+    });
+    this.save();
+    return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
+  }
+
+  /**
+   * Mark an invoice as paid — the seam future payment-capture code will
+   * hook into. For now callers supply the method (`cash`, `upi`, `card`,
+   * `other`) directly; a follow-up will replace direct calls with the
+   * outcome of an actual payment integration.
+   *
+   * Refuses: unknown id, already paid, voided, refunded, unknown method.
+   */
+  markPaid(invoiceId, restaurantId, { method, actor } = {}) {
+    const invoice = this.getInvoice(invoiceId, restaurantId);
+    if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
+    if (invoice.payment_status === 'paid') {
+      return { ok: false, error: 'Invoice already marked paid.', code: 'ALREADY_PAID' };
+    }
+    if (invoice.payment_status === 'voided') {
+      return { ok: false, error: 'A voided invoice cannot be marked paid.', code: 'ALREADY_VOIDED' };
+    }
+    if (invoice.payment_status === 'refunded') {
+      return { ok: false, error: 'A refunded invoice cannot be marked paid.', code: 'ALREADY_REFUNDED' };
+    }
+    const allowed = new Set(['cash', 'upi', 'card', 'other']);
+    if (!allowed.has(method)) {
+      return { ok: false, error: `payment_method must be one of ${[...allowed].join(', ')}.`, code: 'INVALID_METHOD' };
+    }
+
+    this.invoices = this.invoices.map(inv => {
+      if (inv.id !== invoice.id) return inv;
+      return {
+        ...inv,
+        payment_status: 'paid',
+        payment_method: method,
+        paid_at: new Date().toISOString(),
+        paid_by: typeof actor === 'string' ? actor.slice(0, 60) : null
+      };
+    });
+    this.save();
+    return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
+  }
 }
 
 export const invoiceStore = new InvoiceStore();

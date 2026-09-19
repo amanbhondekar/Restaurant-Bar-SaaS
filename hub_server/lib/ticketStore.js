@@ -155,14 +155,21 @@ class TicketStore {
     let clearedCount = 0;
     const clearedTickets = [];
     const updatedList = this.tickets.map(t => {
-      const matchTable = String(t.table_id) === String(tableId) || 
-                         String(t.table_name).toLowerCase() === `t${tableId}`.toLowerCase() || 
+      const matchTable = String(t.table_id) === String(tableId) ||
+                         String(t.table_name).toLowerCase() === `t${tableId}`.toLowerCase() ||
                          String(t.table_name).toLowerCase() === `table ${tableId}`.toLowerCase() ||
                          String(t.table_name) === String(tableId) ||
                          String(t.id) === String(tableId);
       if (matchTable && (t.status === 'in_progress' || t.status === 'ready')) {
         clearedCount++;
-        const updated = { ...t, status: 'completed', updated_at: new Date().toISOString() };
+        // Remember what the ticket looked like BEFORE clearing so a later
+        // void on the issued invoice can restore it verbatim.
+        const updated = {
+          ...t,
+          status: 'completed',
+          pre_clear_status: t.status,
+          updated_at: new Date().toISOString()
+        };
         clearedTickets.push(updated);
         return updated;
       }
@@ -173,6 +180,33 @@ class TicketStore {
       this.saveTickets(updatedList);
     }
     return { clearedCount, clearedTickets };
+  }
+
+  /**
+   * Reopen a set of previously cleared tickets, restoring their pre-clear
+   * status when known. Used by invoice void: an in-error close should not
+   * strand the guest's KOTs in `completed` land.
+   *
+   * Returns the ids of tickets actually reopened, ignoring any that don't
+   * exist any more, are still open, or belong to another tenant.
+   */
+  reopenTickets(ticketIds, restaurantId) {
+    if (!Array.isArray(ticketIds) || ticketIds.length === 0) return [];
+    const idSet = new Set(ticketIds.map(String));
+    const reopened = [];
+    const updatedList = this.tickets.map(t => {
+      if (!idSet.has(String(t.id))) return t;
+      if (restaurantId && t.restaurant_id !== restaurantId) return t;
+      if (t.status !== 'completed') return t;
+      reopened.push(t.id);
+      const restored = t.pre_clear_status === 'ready' ? 'ready' : 'in_progress';
+      const { pre_clear_status: _prev, ...rest } = t;
+      return { ...rest, status: restored, updated_at: new Date().toISOString() };
+    });
+    if (reopened.length > 0) {
+      this.saveTickets(updatedList);
+    }
+    return reopened;
   }
 
   getActiveTickets(restaurantId) {

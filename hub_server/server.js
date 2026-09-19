@@ -480,6 +480,56 @@ app.get('/invoices', requireDevice, (req, res) => {
   });
 });
 
+// 7d. POST /invoices/:id/void — Reopen the underlying tickets and record why
+app.post('/invoices/:id/void', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const result = invoiceStore.voidInvoice(req.params.id, pairing.restaurant_id, {
+    reason: body.reason,
+    actor: body.actor
+  });
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  const invoice = result.invoice;
+  const reopened = ticketStore.reopenTickets(invoice.ticket_ids || [], pairing.restaurant_id);
+
+  broadcast('INVOICE_VOIDED', { invoice, reopened_ticket_ids: reopened });
+  console.log(`↩︎  Voided ${invoice.invoice_number} · ${invoice.currency || '₹'}${invoice.grand_total} · reason: ${invoice.voided_reason} · reopened ${reopened.length} ticket(s)`);
+
+  res.json({
+    success: true,
+    invoice,
+    reopened_ticket_ids: reopened,
+    tables: getLiveTables(pairing.restaurant_id)
+  });
+});
+
+// 7e. POST /invoices/:id/mark-paid — Record a settled payment against the invoice
+app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const result = invoiceStore.markPaid(req.params.id, pairing.restaurant_id, {
+    method: body.payment_method,
+    actor: body.actor
+  });
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  broadcast('INVOICE_PAID', { invoice: result.invoice });
+  console.log(`💰 Marked ${result.invoice.invoice_number} paid · ${result.invoice.payment_method} · ${result.invoice.currency || '₹'}${result.invoice.grand_total}`);
+
+  res.json({ success: true, invoice: result.invoice });
+});
+
 function issueInvoiceForTable(tableId, pairing, adjustments) {
   const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
   if (openTickets.length === 0) return { ok: true, invoice: null };
