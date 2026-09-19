@@ -15,6 +15,8 @@ import { syncQueue } from './lib/syncQueue.js';
 import { authenticateHubStaff } from './lib/supabaseClient.js';
 import { restaurantCache } from './lib/restaurantCache.js';
 import { priceOrder } from './lib/pricing.js';
+import { buildInvoicePreview } from './lib/invoice.js';
+import { invoiceStore } from './lib/invoiceStore.js';
 import { deviceAuth, requireDevice, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -411,45 +413,118 @@ app.get('/tables', requireDevice, (req, res) => {
   });
 });
 
-// 7. POST /tables/:id/clear — Clear table bill after guest payment
+// 7a. GET /tables/:id/invoice — Preview the current bill for a table (any time)
+app.get('/tables/:id/invoice', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const tableId = req.params.id;
+  const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
+
+  if (openTickets.length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: `No open tickets for table ${tableId}.`,
+      code: 'NO_OPEN_TICKETS'
+    });
+  }
+
+  const invoice = buildInvoicePreview({
+    tickets: openTickets,
+    tableId,
+    tableName: openTickets[0].table_name,
+    restaurantId: pairing.restaurant_id,
+    currency: pairing.currency || '₹',
+    taxConfig: pairing
+  });
+
+  res.json({ success: true, preview: true, invoice });
+});
+
+// 7b. GET /invoices/:id — Retrieve a previously issued invoice
+app.get('/invoices/:id', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const invoice = invoiceStore.getInvoice(req.params.id, pairing.restaurant_id);
+  if (!invoice) {
+    return res.status(404).json({ success: false, error: 'Invoice not found.' });
+  }
+  res.json({ success: true, invoice });
+});
+
+// 7c. GET /invoices — List issued invoices for this tenant
+app.get('/invoices', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  res.json({
+    success: true,
+    restaurant_id: pairing.restaurant_id,
+    invoices: invoiceStore.listInvoices(pairing.restaurant_id)
+  });
+});
+
+function issueInvoiceForTable(tableId, pairing) {
+  const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
+  if (openTickets.length === 0) return null;
+  const result = invoiceStore.issueInvoice({
+    tickets: openTickets,
+    tableId,
+    tableName: openTickets[0].table_name,
+    restaurantId: pairing.restaurant_id,
+    currency: pairing.currency || '₹',
+    taxConfig: pairing
+  });
+  return result.ok ? result.invoice : null;
+}
+
+// 7. POST /tables/:id/clear — Close a bill: issue invoice, then complete tickets
 app.post('/tables/:id/clear', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const tableId = req.params.id;
 
+  // Issue the invoice BEFORE clearing so the tickets are still queryable.
+  // invoiceStore.issueInvoice is idempotent per (table, ticket ids), so a
+  // network-retry double-POST cannot produce a second invoice.
+  const invoice = issueInvoiceForTable(tableId, pairing);
+
   const { clearedCount, clearedTickets } = ticketStore.clearTableTickets(tableId, pairing.restaurant_id);
 
-  // Queue corresponding Supabase status updates (orders.status = 'completed') cloud-async
   if (clearedTickets && clearedTickets.length > 0) {
     clearedTickets.forEach(t => {
       syncQueue.enqueueStatusUpdate(t.ticket_number || t.id, 'completed', pairing.restaurant_id);
     });
   }
 
-  // Broadcast CLEAR_TABLE and alias events to all WS clients over LAN
   const clearPayload = {
     table_id: Number(tableId) || tableId,
     order_id: tableId,
     cleared_count: clearedCount,
-    status: 'available'
+    status: 'available',
+    invoice_number: invoice?.invoice_number || null,
+    grand_total: invoice?.grand_total ?? null
   };
   broadcast('CLEAR_TABLE', clearPayload);
   broadcast('bill_cleared', clearPayload);
   broadcast('order_cleared', clearPayload);
+  if (invoice) broadcast('INVOICE_ISSUED', { invoice });
 
   const updatedTables = getLiveTables(pairing.restaurant_id);
-  console.log(`🧹 Cleared bill for Table ${tableId} (${clearedCount} ticket(s) completed, queued for cloud sync)`);
+  if (invoice) {
+    console.log(`🧾 Issued ${invoice.invoice_number} for Table ${tableId} · ${pairing.currency || '₹'}${invoice.grand_total} · ${clearedCount} ticket(s) completed`);
+  } else {
+    console.log(`🧹 Cleared bill for Table ${tableId} (${clearedCount} ticket(s) completed, no invoice — no open tickets)`);
+  }
 
   res.json({
     success: true,
     table_id: tableId,
     cleared_count: clearedCount,
-    tables: updatedTables
+    tables: updatedTables,
+    invoice: invoice || null
   });
 });
 
 app.post('/orders/:id/clear', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const id = req.params.id;
+
+  const invoice = issueInvoiceForTable(id, pairing);
 
   const { clearedCount, clearedTickets } = ticketStore.clearTableTickets(id, pairing.restaurant_id);
 
@@ -463,20 +538,28 @@ app.post('/orders/:id/clear', requireDevice, (req, res) => {
     table_id: Number(id) || id,
     order_id: id,
     cleared_count: clearedCount,
-    status: 'available'
+    status: 'available',
+    invoice_number: invoice?.invoice_number || null,
+    grand_total: invoice?.grand_total ?? null
   };
   broadcast('CLEAR_TABLE', orderClearPayload);
   broadcast('bill_cleared', orderClearPayload);
   broadcast('order_cleared', orderClearPayload);
+  if (invoice) broadcast('INVOICE_ISSUED', { invoice });
 
   const updatedTables = getLiveTables(pairing.restaurant_id);
-  console.log(`🧹 Cleared bill for Order/Table ${id} (${clearedCount} ticket(s) completed, queued for cloud sync)`);
+  if (invoice) {
+    console.log(`🧾 Issued ${invoice.invoice_number} for Order/Table ${id} · ${pairing.currency || '₹'}${invoice.grand_total}`);
+  } else {
+    console.log(`🧹 Cleared bill for Order/Table ${id} (${clearedCount} ticket(s) completed)`);
+  }
 
   res.json({
     success: true,
     id,
     cleared_count: clearedCount,
-    tables: updatedTables
+    tables: updatedTables,
+    invoice: invoice || null
   });
 });
 

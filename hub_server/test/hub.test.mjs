@@ -269,3 +269,93 @@ test('idempotency still returns the original ticket for a repeated request id', 
   assert.equal(b.duplicate, true);
   assert.equal(b.ticket.ticket_number, a.ticket.ticket_number);
 });
+
+// ---------------------------------------------------------------------------
+// M1 — billing foundation
+// ---------------------------------------------------------------------------
+
+async function createOrder(tableId, items, opts = {}) {
+  return api('/orders', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({
+      order_request_id: opts.reqId || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      table_id: tableId,
+      table_name: `T${tableId}`,
+      items
+    })
+  });
+}
+
+test('M1: /tables/:id/invoice requires auth', async () => {
+  const res = await api('/tables/9/invoice');
+  assert.equal(res.status, 401);
+});
+
+test('M1: /invoices/:id requires auth', async () => {
+  const res = await api('/invoices/inv_anything');
+  assert.equal(res.status, 401);
+});
+
+test('M1: invoice preview 404s when the table has no open tickets', async () => {
+  const res = await api('/tables/9/invoice', { auth: true });
+  assert.equal(res.status, 404);
+  const body = await res.json();
+  assert.equal(body.code, 'NO_OPEN_TICKETS');
+});
+
+test('M1: invoice preview folds every open ticket for the table into one bill with default 5% GST', async () => {
+  // T3 gets two separate tickets — the bill must cover both.
+  const t1 = await createOrder(3, [{ id: 'm1', qty: 2 }]); // Paneer Tikka 230 x 2 = 460
+  const t2 = await createOrder(3, [{ id: 'm2', qty: 1 }]); // Chicken Sukka 220 x 1 = 220
+  assert.equal(t1.status, 201);
+  assert.equal(t2.status, 201);
+
+  const res = await api('/tables/3/invoice', { auth: true });
+  assert.equal(res.status, 200);
+  const { invoice } = await res.json();
+
+  assert.equal(invoice.items.length, 2, 'both tickets should contribute lines');
+  assert.equal(invoice.subtotal, 680, 'subtotal must equal 460 + 220');
+
+  // Default rules are CGST 2.5% + SGST 2.5% on the whole subtotal.
+  const cgst = invoice.tax_rows.find(r => r.label === 'CGST');
+  const sgst = invoice.tax_rows.find(r => r.label === 'SGST');
+  assert.ok(cgst && sgst, 'both default tax rows must be present');
+  assert.equal(cgst.amount, 17, 'CGST 2.5% of 680');
+  assert.equal(sgst.amount, 17, 'SGST 2.5% of 680');
+  assert.equal(invoice.tax_total, 34);
+  assert.equal(invoice.grand_total, 714, '680 subtotal + 34 tax, rupee-rounded');
+});
+
+test('M1: closing the bill issues an invoice number, persists it, and returns it', async () => {
+  const preview = await api('/tables/3/invoice', { auth: true });
+  const previewInvoice = (await preview.json()).invoice;
+
+  const cleared = await api('/tables/3/clear', { auth: true, method: 'POST' });
+  assert.equal(cleared.status, 200);
+  const body = await cleared.json();
+  assert.equal(body.cleared_count, 2);
+  assert.ok(body.invoice, 'clear response should carry the issued invoice');
+  assert.match(body.invoice.invoice_number, /^INV-\d{6}$/, 'invoice number must be tenant-sequential');
+  assert.equal(body.invoice.grand_total, previewInvoice.grand_total, 'issued total must match the preview');
+
+  // Retrieval by both id and invoice_number
+  const byId = await api(`/invoices/${body.invoice.id}`, { auth: true });
+  assert.equal(byId.status, 200);
+  const byNumber = await api(`/invoices/${body.invoice.invoice_number}`, { auth: true });
+  assert.equal(byNumber.status, 200);
+});
+
+test('M1: a network-retry double-close does not double-charge', async () => {
+  await createOrder(1, [{ id: 'm1', qty: 1 }]); // 230 + 5% = 242
+  const first = await api('/tables/1/clear', { auth: true, method: 'POST' });
+  const firstBody = await first.json();
+  assert.ok(firstBody.invoice);
+
+  // Second clear with the tickets already completed must not issue another invoice
+  const second = await api('/tables/1/clear', { auth: true, method: 'POST' });
+  const secondBody = await second.json();
+  assert.equal(secondBody.cleared_count, 0);
+  assert.equal(secondBody.invoice, null, 'no open tickets remain, so no new invoice');
+});

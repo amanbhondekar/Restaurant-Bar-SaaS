@@ -176,9 +176,19 @@ class TicketStore {
   }
 
   getActiveTickets(restaurantId) {
-    return this.tickets.filter(t => 
-      (!restaurantId || t.restaurant_id === restaurantId) && 
+    return this.tickets.filter(t =>
+      (!restaurantId || t.restaurant_id === restaurantId) &&
       (t.status === 'in_progress' || t.status === 'ready')
+    );
+  }
+
+  getActiveTicketsForTable(tableId, restaurantId) {
+    const idStr = String(tableId);
+    return this.getActiveTickets(restaurantId).filter(t =>
+      String(t.table_id) === idStr ||
+      String(t.table_name).toLowerCase() === `t${idStr}`.toLowerCase() ||
+      String(t.table_name).toLowerCase() === `table ${idStr}`.toLowerCase() ||
+      String(t.table_name) === idStr
     );
   }
 

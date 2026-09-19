@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode } from 'lucide-react';
+import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode, Receipt, X } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import './index.css';
 
@@ -17,6 +17,12 @@ const KitchenHubApp = () => {
   const [checkedItems, setCheckedItems] = useState({});
   const [loading, setLoading] = useState(true);
   const shouldReduceMotion = useReducedMotion();
+
+  // Bill preview modal state (M1 billing foundation)
+  const [billTableId, setBillTableId] = useState(null);
+  const [billInvoice, setBillInvoice] = useState(null);
+  const [billLoading, setBillLoading] = useState(false);
+  const [billError, setBillError] = useState('');
 
   const hubHost = typeof window !== 'undefined'
     ? (window.location.port === '4000'
@@ -202,6 +208,35 @@ const KitchenHubApp = () => {
     } catch (err) {
       console.error('Failed to mark ticket ready:', err);
     }
+  };
+
+  // Open bill preview for a table — folds every open ticket on that table
+  // into a single invoice and pulls tax breakdown from the hub.
+  const openBill = async (tableId) => {
+    if (!tableId && tableId !== 0) return;
+    setBillTableId(tableId);
+    setBillInvoice(null);
+    setBillError('');
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/tables/${tableId}/invoice`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+      } else {
+        setBillError(data.error || `Could not load bill for table ${tableId}.`);
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  const closeBill = () => {
+    setBillTableId(null);
+    setBillInvoice(null);
+    setBillError('');
   };
 
   const toggleCheck = (ticketId, idx) => {
@@ -449,10 +484,30 @@ const KitchenHubApp = () => {
                       </div>
 
                       {/* Bottom Action */}
-                      <div style={{ borderTop: '1px solid var(--color-hairline)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--color-muted)' }}>
+                      <div style={{ borderTop: '1px solid var(--color-hairline)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--color-muted)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           By {ticket.created_by_waiter || 'Waiter'}
                         </span>
+                        <button
+                          onClick={() => openBill(ticket.table_id)}
+                          disabled={!ticket.table_id && ticket.table_id !== 0}
+                          title={`View bill for ${ticket.table_name || 'this table'}`}
+                          style={{
+                            background: 'transparent',
+                            color: 'var(--color-primary)',
+                            border: '1px solid var(--color-hairline)',
+                            padding: '6px 10px',
+                            borderRadius: 'var(--radius-full)',
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Receipt size={13} /> Bill
+                        </button>
                         <motion.button
                           whileTap={shouldReduceMotion || !canMark ? {} : { scale: 0.95 }}
                           onClick={() => handleMarkReady(ticket)}
@@ -473,6 +528,135 @@ const KitchenHubApp = () => {
               </AnimatePresence>
             </div>
           )}
+
+          {/* Bill Preview Modal (M1 billing foundation) */}
+          <AnimatePresence>
+            {billTableId !== null && (
+              <motion.div
+                key="bill-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                onClick={closeBill}
+                style={{
+                  position: 'fixed', inset: 0, background: 'rgba(15, 15, 15, 0.55)',
+                  zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+                }}
+              >
+                <motion.div
+                  key="bill-card"
+                  initial={{ opacity: 0, y: 14, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                  transition={{ duration: 0.18 }}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: '#ffffff', borderRadius: 'var(--radius-md)', width: '100%', maxWidth: '440px',
+                    boxShadow: '0 24px 64px rgba(0,0,0,0.22)', border: '1px solid var(--color-hairline)',
+                    overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '90vh'
+                  }}
+                >
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 18px', borderBottom: '1px solid var(--color-hairline)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <Receipt size={18} style={{ color: 'var(--color-primary)' }} />
+                      <div>
+                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '16px', color: 'var(--color-ink)' }}>
+                          Bill Preview
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)' }}>
+                          {billInvoice?.table_name || `Table ${billTableId}`} · not yet issued
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={closeBill}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: 4 }}
+                      aria-label="Close bill preview"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div style={{ overflowY: 'auto', padding: '16px 18px' }}>
+                    {billLoading && (
+                      <div style={{ padding: '24px', textAlign: 'center', color: 'var(--color-muted)', fontSize: '13px' }}>
+                        <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite', display: 'inline-block', marginRight: 6, verticalAlign: 'middle' }} />
+                        Fetching latest bill from hub…
+                      </div>
+                    )}
+
+                    {billError && !billLoading && (
+                      <div style={{
+                        background: 'var(--status-rust-bg)', color: 'var(--status-rust-text)',
+                        border: '1px solid var(--status-rust-border)', padding: '10px 12px', borderRadius: '8px',
+                        fontSize: '13px'
+                      }}>
+                        {billError}
+                      </div>
+                    )}
+
+                    {billInvoice && !billLoading && (
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }}>
+                          {billInvoice.items.map((line, idx) => (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ fontSize: '13px', color: 'var(--color-ink)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <span style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', marginRight: 6, fontWeight: 700 }}>
+                                    {line.qty}×
+                                  </span>
+                                  {line.name}
+                                </div>
+                                <div style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
+                                  #{line.ticket_number} · {billInvoice.currency}{line.price} each
+                                </div>
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: 'var(--color-ink)' }}>
+                                {billInvoice.currency}{line.line_total}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed var(--color-hairline)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--color-muted)' }}>
+                            <span>Subtotal</span>
+                            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-ink)' }}>{billInvoice.currency}{billInvoice.subtotal}</span>
+                          </div>
+                          {billInvoice.tax_rows.map((row, idx) => (
+                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-muted)' }}>
+                              <span>{row.label} ({row.rate_percent}%)</span>
+                              <span style={{ fontFamily: 'var(--font-mono)' }}>{billInvoice.currency}{row.amount}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div style={{
+                          marginTop: '12px', borderTop: '1px solid var(--color-hairline)', paddingTop: '12px',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline'
+                        }}>
+                          <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-ink)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Grand Total
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '22px', fontWeight: 800, color: 'var(--color-primary)' }}>
+                            {billInvoice.currency}{billInvoice.grand_total}
+                          </span>
+                        </div>
+
+                        <div style={{ marginTop: '10px', fontSize: '10px', color: 'var(--color-muted)', textAlign: 'center', fontStyle: 'italic' }}>
+                          Bill is not yet closed. An invoice number is assigned when the guest settles the bill.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Ready Tickets Section */}
           {readyTickets.length > 0 && (

@@ -150,6 +150,47 @@ CREATE TABLE IF NOT EXISTS public.device_pairings (
 
 CREATE INDEX IF NOT EXISTS idx_device_pairings_tenant ON public.device_pairings(restaurant_id);
 
+-- 9. INVOICES (invoices) — issued at bill-close, cloud replica of hub invoiceStore
+CREATE TABLE IF NOT EXISTS public.invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
+    hub_invoice_id VARCHAR(64) UNIQUE, -- Matches invoiceStore's local id, keeps hub-cloud replication idempotent
+    invoice_number VARCHAR(20) NOT NULL, -- Tenant-sequential, e.g. INV-000123
+    table_id VARCHAR(50),
+    table_name VARCHAR(50),
+    currency VARCHAR(10) DEFAULT '₹',
+    subtotal NUMERIC(12,2) NOT NULL,
+    tax_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+    grand_total NUMERIC(12,2) NOT NULL,
+    tax_rows JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{label, rate_percent, taxable_amount, amount}]
+    ticket_ids JSONB NOT NULL DEFAULT '[]'::jsonb, -- Local hub ticket ids folded into this bill
+    payment_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'refunded', 'voided')),
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(restaurant_id, invoice_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_tenant ON public.invoices(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_table ON public.invoices(restaurant_id, table_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_issued_at ON public.invoices(restaurant_id, issued_at DESC);
+
+-- 10. INVOICE LINES (invoice_lines) — one row per priced line item on the bill
+CREATE TABLE IF NOT EXISTS public.invoice_lines (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invoice_id UUID NOT NULL REFERENCES public.invoices(id) ON DELETE CASCADE,
+    restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
+    menu_item_id VARCHAR(64),
+    name VARCHAR(255) NOT NULL,
+    qty INT NOT NULL,
+    price NUMERIC(10,2) NOT NULL,
+    line_total NUMERIC(12,2) NOT NULL,
+    ticket_number INT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON public.invoice_lines(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_lines_tenant ON public.invoice_lines(restaurant_id);
+
 -- =====================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES — ENFORCING STRUCTURAL DATA ISOLATION
 -- =====================================================================
@@ -164,6 +205,8 @@ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.waitlist_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.device_pairings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoice_lines ENABLE ROW LEVEL SECURITY;
 
 -- 1. RESTAURANTS POLICY
 CREATE POLICY "Users can access their own restaurant record"
@@ -204,6 +247,18 @@ CREATE POLICY "Tenant isolation for waitlist_entries"
 -- 7. DEVICE PAIRINGS POLICY
 CREATE POLICY "Tenant isolation for device_pairings"
     ON public.device_pairings
+    FOR ALL
+    USING (restaurant_id = public.current_restaurant_id());
+
+-- 8. INVOICES POLICY
+CREATE POLICY "Tenant isolation for invoices"
+    ON public.invoices
+    FOR ALL
+    USING (restaurant_id = public.current_restaurant_id());
+
+-- 9. INVOICE LINES POLICY
+CREATE POLICY "Tenant isolation for invoice_lines"
+    ON public.invoice_lines
     FOR ALL
     USING (restaurant_id = public.current_restaurant_id());
 
