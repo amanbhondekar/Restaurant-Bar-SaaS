@@ -359,3 +359,165 @@ test('M1: a network-retry double-close does not double-charge', async () => {
   assert.equal(secondBody.cleared_count, 0);
   assert.equal(secondBody.invoice, null, 'no open tickets remain, so no new invoice');
 });
+
+// ---------------------------------------------------------------------------
+// M1 — bill-level discounts + service charge
+// ---------------------------------------------------------------------------
+
+test('M1: flat bill discount is subtracted before tax', async () => {
+  // 460 subtotal (m1×2), ₹60 flat off => 400 taxable, 5% GST = 20 => 420
+  await createOrder(4, [{ id: 'm1', qty: 2 }]);
+  const res = await api('/tables/4/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ discounts: [{ type: 'flat', value: 60, reason: 'Loyalty' }] })
+  });
+  assert.equal(res.status, 200);
+  const { invoice } = await res.json();
+
+  assert.equal(invoice.subtotal, 460);
+  assert.equal(invoice.discount_total, 60);
+  assert.equal(invoice.subtotal_after_discount, 400);
+  assert.equal(invoice.tax_total, 20, '5% GST on 400');
+  assert.equal(invoice.grand_total, 420);
+  assert.equal(invoice.discount_rows[0].reason, 'Loyalty');
+});
+
+test('M1: percent bill discount is subtracted before tax', async () => {
+  // 440 subtotal (m2×2), 10% off => 44 discount => 396 taxable, 5% = 19.8 => 416
+  await createOrder(5, [{ id: 'm2', qty: 2 }]);
+  const res = await api('/tables/5/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ discounts: [{ type: 'percent', value: 10 }] })
+  });
+  assert.equal(res.status, 200);
+  const { invoice } = await res.json();
+
+  assert.equal(invoice.subtotal, 440);
+  assert.equal(invoice.discount_total, 44);
+  assert.equal(invoice.subtotal_after_discount, 396);
+  assert.equal(invoice.grand_total, 416);
+});
+
+test('M1: service charge is added before tax and both are tenant-configurable per bill', async () => {
+  // 230 subtotal (m1×1), 10% service = 23 => 253 taxable, 5% GST = 12.65 => 266
+  await createOrder(6, [{ id: 'm1', qty: 1 }]);
+  const res = await api('/tables/6/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ service_charge_percent: 10 })
+  });
+  assert.equal(res.status, 200);
+  const { invoice } = await res.json();
+
+  assert.equal(invoice.subtotal, 230);
+  assert.equal(invoice.discount_total, 0);
+  assert.equal(invoice.service_charge_percent, 10);
+  assert.equal(invoice.service_charge_amount, 23);
+  assert.equal(invoice.taxable_base, 253);
+  assert.equal(invoice.grand_total, 266);
+});
+
+test('M1: discount + service charge compose in the right order', async () => {
+  // 460 subtotal, 10% off (46) => 414, +5% service (20.7) => 434.7 taxable,
+  // 5% GST = 21.74 (rounded to 21.74 by 2dp = 21.74; grand rupee-rounded)
+  await createOrder(7, [{ id: 'm1', qty: 2 }]);
+  const res = await api('/tables/7/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({
+      discounts: [{ type: 'percent', value: 10 }],
+      service_charge_percent: 5
+    })
+  });
+  assert.equal(res.status, 200);
+  const { invoice } = await res.json();
+
+  assert.equal(invoice.subtotal, 460);
+  assert.equal(invoice.discount_total, 46);
+  assert.equal(invoice.subtotal_after_discount, 414);
+  assert.equal(invoice.service_charge_amount, 20.7);
+  assert.equal(invoice.taxable_base, 434.7);
+  // CGST 2.5% of 434.7 = 10.87, SGST 2.5% = 10.87 => 21.74; grand = 434.7 + 21.74 = 456.44 => 456
+  assert.equal(invoice.tax_total, 21.74);
+  assert.equal(invoice.grand_total, 456);
+});
+
+test('M1: adjustments carry through to the persisted invoice', async () => {
+  await createOrder(8, [{ id: 'm1', qty: 2 }]);
+  const cleared = await api('/tables/8/clear', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({
+      discounts: [{ type: 'flat', value: 60, reason: 'Loyalty' }],
+      service_charge_percent: 5
+    })
+  });
+  assert.equal(cleared.status, 200);
+  const { invoice } = await cleared.json();
+
+  assert.ok(invoice.invoice_number);
+  assert.equal(invoice.discount_total, 60);
+  assert.equal(invoice.service_charge_percent, 5);
+  assert.equal(invoice.service_charge_amount, 20);
+  assert.equal(invoice.taxable_base, 420);
+  assert.equal(invoice.grand_total, 441);
+
+  const retrieved = await api(`/invoices/${invoice.invoice_number}`, { auth: true });
+  const body = await retrieved.json();
+  assert.equal(body.invoice.discount_rows[0].reason, 'Loyalty');
+  assert.equal(body.invoice.grand_total, 441);
+});
+
+test('M1: discount larger than subtotal is refused', async () => {
+  await createOrder(9, [{ id: 'm1', qty: 1 }]); // 230
+  const res = await api('/tables/9/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ discounts: [{ type: 'flat', value: 500 }] })
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'INVALID_ADJUSTMENTS');
+});
+
+test('M1: negative discount is refused', async () => {
+  await createOrder(10, [{ id: 'm1', qty: 1 }]);
+  const res = await api('/tables/10/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ discounts: [{ type: 'flat', value: -10 }] })
+  });
+  assert.equal(res.status, 400);
+});
+
+test('M1: percent discount over 100 is refused', async () => {
+  await createOrder(11, [{ id: 'm1', qty: 1 }]);
+  const res = await api('/tables/11/invoice/preview', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ discounts: [{ type: 'percent', value: 150 }] })
+  });
+  assert.equal(res.status, 400);
+});
+
+test('M1: invalid adjustments on /clear refuse the close (tickets stay open)', async () => {
+  await createOrder(12, [{ id: 'm1', qty: 1 }]);
+  const bad = await api('/tables/12/clear', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({ service_charge_percent: 50 }) // over the 25% cap
+  });
+  assert.equal(bad.status, 400);
+
+  // Tickets must remain openable, so a successful retry produces an invoice.
+  const good = await api('/tables/12/clear', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify({})
+  });
+  assert.equal(good.status, 200);
+  const body = await good.json();
+  assert.ok(body.invoice, 'close after fixing adjustments must issue an invoice');
+});

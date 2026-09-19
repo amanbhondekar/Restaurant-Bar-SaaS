@@ -18,11 +18,17 @@ const KitchenHubApp = () => {
   const [loading, setLoading] = useState(true);
   const shouldReduceMotion = useReducedMotion();
 
-  // Bill preview modal state (M1 billing foundation)
+  // Bill preview modal state (M1 billing foundation + adjustments)
   const [billTableId, setBillTableId] = useState(null);
   const [billInvoice, setBillInvoice] = useState(null);
   const [billLoading, setBillLoading] = useState(false);
   const [billError, setBillError] = useState('');
+  const [billAdjustments, setBillAdjustments] = useState({
+    discount_type: 'percent', // 'percent' | 'flat'
+    discount_value: '',
+    discount_reason: '',
+    service_charge_percent: ''
+  });
 
   const hubHost = typeof window !== 'undefined'
     ? (window.location.port === '4000'
@@ -210,20 +216,45 @@ const KitchenHubApp = () => {
     }
   };
 
-  // Open bill preview for a table — folds every open ticket on that table
-  // into a single invoice and pulls tax breakdown from the hub.
-  const openBill = async (tableId) => {
-    if (!tableId && tableId !== 0) return;
-    setBillTableId(tableId);
-    setBillInvoice(null);
-    setBillError('');
+  // Turn the modal's adjustment form into the body the hub understands.
+  // Empty inputs mean "no adjustment on this axis" rather than 0.
+  const buildAdjustmentBody = (adj) => {
+    const body = {};
+    const value = Number(adj.discount_value);
+    if (adj.discount_value !== '' && Number.isFinite(value) && value > 0) {
+      body.discounts = [{
+        type: adj.discount_type,
+        value,
+        reason: adj.discount_reason?.trim() || undefined
+      }];
+    }
+    if (adj.service_charge_percent !== '') {
+      const sc = Number(adj.service_charge_percent);
+      if (Number.isFinite(sc) && sc >= 0) body.service_charge_percent = sc;
+    }
+    return body;
+  };
+
+  // Fetch a preview for the current adjustments. Both the initial open and
+  // any recalculation from the modal route through here.
+  const fetchBillPreview = async (tableId, adj) => {
+    const body = buildAdjustmentBody(adj);
+    const hasAdjustments = Object.keys(body).length > 0;
     setBillLoading(true);
+    setBillError('');
     try {
-      const res = await fetch(`${hubHost}/tables/${tableId}/invoice`);
+      const res = hasAdjustments
+        ? await fetch(`${hubHost}/tables/${tableId}/invoice/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+        : await fetch(`${hubHost}/tables/${tableId}/invoice`);
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.invoice) {
         setBillInvoice(data.invoice);
       } else {
+        setBillInvoice(null);
         setBillError(data.error || `Could not load bill for table ${tableId}.`);
       }
     } catch (err) {
@@ -233,10 +264,61 @@ const KitchenHubApp = () => {
     }
   };
 
+  // Open bill preview for a table — folds every open ticket on that table
+  // into a single invoice and pulls tax breakdown from the hub.
+  const openBill = async (tableId) => {
+    if (!tableId && tableId !== 0) return;
+    setBillTableId(tableId);
+    setBillInvoice(null);
+    setBillError('');
+    const fresh = {
+      discount_type: 'percent',
+      discount_value: '',
+      discount_reason: '',
+      service_charge_percent: ''
+    };
+    setBillAdjustments(fresh);
+    fetchBillPreview(tableId, fresh);
+  };
+
+  // Debounce recomputation while reception is typing amounts.
+  useEffect(() => {
+    if (billTableId === null) return;
+    const t = setTimeout(() => fetchBillPreview(billTableId, billAdjustments), 220);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [billAdjustments, billTableId]);
+
   const closeBill = () => {
     setBillTableId(null);
     setBillInvoice(null);
     setBillError('');
+  };
+
+  // Close the bill with whatever the modal is currently showing.
+  const commitBill = async () => {
+    if (billTableId === null) return;
+    const body = buildAdjustmentBody(billAdjustments);
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/tables/${billTableId}/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        // Show the issued invoice one last time so reception has the number.
+        setBillInvoice(data.invoice);
+        setBillError('');
+      } else {
+        setBillError(data.error || 'Could not close the bill.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
   };
 
   const toggleCheck = (ticketId, idx) => {
@@ -599,9 +681,9 @@ const KitchenHubApp = () => {
                       </div>
                     )}
 
-                    {billInvoice && !billLoading && (
+                    {billInvoice && (
                       <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', opacity: billLoading ? 0.55 : 1, transition: 'opacity 0.15s ease' }}>
                           {billInvoice.items.map((line, idx) => (
                             <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
                               <div style={{ minWidth: 0, flex: 1 }}>
@@ -622,11 +704,90 @@ const KitchenHubApp = () => {
                           ))}
                         </div>
 
+                        {/* Adjustment controls */}
+                        {!billInvoice.invoice_number && (
+                          <div style={{
+                            borderTop: '1px dashed var(--color-hairline)', paddingTop: '10px', marginBottom: '8px',
+                            display: 'flex', flexDirection: 'column', gap: '8px'
+                          }}>
+                            <div style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                              Bill adjustments
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <select
+                                value={billAdjustments.discount_type}
+                                onChange={e => setBillAdjustments(a => ({ ...a, discount_type: e.target.value }))}
+                                style={{
+                                  padding: '6px 8px', fontSize: '12px', border: '1px solid var(--color-hairline)',
+                                  borderRadius: 'var(--radius-xs)', background: '#fff', color: 'var(--color-ink)'
+                                }}
+                              >
+                                <option value="percent">Discount %</option>
+                                <option value="flat">Discount ₹</option>
+                              </select>
+                              <input
+                                type="number"
+                                min="0"
+                                step={billAdjustments.discount_type === 'percent' ? '1' : '10'}
+                                placeholder="0"
+                                value={billAdjustments.discount_value}
+                                onChange={e => setBillAdjustments(a => ({ ...a, discount_value: e.target.value }))}
+                                style={{
+                                  width: '80px', padding: '6px 8px', fontSize: '12px', fontFamily: 'var(--font-mono)',
+                                  border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)', color: 'var(--color-ink)'
+                                }}
+                              />
+                              <input
+                                type="text"
+                                placeholder="Reason (optional)"
+                                value={billAdjustments.discount_reason}
+                                onChange={e => setBillAdjustments(a => ({ ...a, discount_reason: e.target.value }))}
+                                style={{
+                                  flex: 1, minWidth: 0, padding: '6px 8px', fontSize: '12px',
+                                  border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)', color: 'var(--color-ink)'
+                                }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <label style={{ fontSize: '12px', color: 'var(--color-muted)', flexShrink: 0 }}>Service charge</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="25"
+                                step="0.5"
+                                placeholder="0"
+                                value={billAdjustments.service_charge_percent}
+                                onChange={e => setBillAdjustments(a => ({ ...a, service_charge_percent: e.target.value }))}
+                                style={{
+                                  width: '70px', padding: '6px 8px', fontSize: '12px', fontFamily: 'var(--font-mono)',
+                                  border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)', color: 'var(--color-ink)'
+                                }}
+                              />
+                              <span style={{ fontSize: '12px', color: 'var(--color-muted)' }}>%</span>
+                            </div>
+                          </div>
+                        )}
+
                         <div style={{ borderTop: '1px dashed var(--color-hairline)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--color-muted)' }}>
                             <span>Subtotal</span>
                             <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-ink)' }}>{billInvoice.currency}{billInvoice.subtotal}</span>
                           </div>
+                          {billInvoice.discount_rows && billInvoice.discount_rows.map((row, idx) => (
+                            <div key={`d${idx}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--status-green-text)' }}>
+                              <span>
+                                Discount{row.type === 'percent' ? ` (${row.value}%)` : ''}
+                                {row.reason ? ` · ${row.reason}` : ''}
+                              </span>
+                              <span style={{ fontFamily: 'var(--font-mono)' }}>−{billInvoice.currency}{row.amount}</span>
+                            </div>
+                          ))}
+                          {billInvoice.service_charge_amount > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-muted)' }}>
+                              <span>Service charge ({billInvoice.service_charge_percent}%)</span>
+                              <span style={{ fontFamily: 'var(--font-mono)' }}>{billInvoice.currency}{billInvoice.service_charge_amount}</span>
+                            </div>
+                          )}
                           {billInvoice.tax_rows.map((row, idx) => (
                             <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-muted)' }}>
                               <span>{row.label} ({row.rate_percent}%)</span>
@@ -647,9 +808,41 @@ const KitchenHubApp = () => {
                           </span>
                         </div>
 
-                        <div style={{ marginTop: '10px', fontSize: '10px', color: 'var(--color-muted)', textAlign: 'center', fontStyle: 'italic' }}>
-                          Bill is not yet closed. An invoice number is assigned when the guest settles the bill.
-                        </div>
+                        {billInvoice.invoice_number ? (
+                          <div style={{
+                            marginTop: '12px', background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)',
+                            color: 'var(--status-green-text)', padding: '10px 12px', borderRadius: '8px',
+                            fontSize: '13px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontWeight: 700
+                          }}>
+                            ✓ {billInvoice.invoice_number} issued
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={closeBill}
+                              style={{
+                                flex: 1, padding: '10px 14px', borderRadius: 'var(--radius-full)',
+                                background: 'transparent', color: 'var(--color-muted)',
+                                border: '1px solid var(--color-hairline)', fontWeight: 600, fontSize: '13px', cursor: 'pointer'
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={commitBill}
+                              disabled={billLoading}
+                              style={{
+                                flex: 1, padding: '10px 14px', borderRadius: 'var(--radius-full)',
+                                background: billLoading ? 'var(--color-surface-soft)' : 'var(--color-primary)',
+                                color: billLoading ? 'var(--color-muted)' : '#fff',
+                                border: 'none', fontWeight: 700, fontSize: '13px',
+                                cursor: billLoading ? 'not-allowed' : 'pointer'
+                              }}
+                            >
+                              Close Bill · {billInvoice.currency}{billInvoice.grand_total}
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

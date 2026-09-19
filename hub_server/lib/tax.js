@@ -68,7 +68,7 @@ function round2(n) {
  *     grand_total        // subtotal + tax_total, rupee-rounded
  *   }
  */
-export function computeTax(items, rules = DEFAULT_TAX_RULES) {
+export function computeTax(items, rules = DEFAULT_TAX_RULES, opts = {}) {
   if (!Array.isArray(items)) items = [];
   const activeRules = Array.isArray(rules) && rules.length > 0 ? rules : DEFAULT_TAX_RULES;
 
@@ -80,6 +80,12 @@ export function computeTax(items, rules = DEFAULT_TAX_RULES) {
   }
   subtotal = round2(subtotal);
 
+  // When pre-tax adjustments have been applied, callers pass their override
+  // for what each rule taxes. In the plain (no-adjustment) path we tax the
+  // per-line contribution as before, so scoped rules still work.
+  const overrideBase = Number.isFinite(opts.taxableBase) ? Number(opts.taxableBase) : null;
+  const baseScale = overrideBase !== null && subtotal > 0 ? overrideBase / subtotal : null;
+
   const tax_rows = activeRules.map(rule => {
     let taxable = 0;
     for (const line of items) {
@@ -88,7 +94,13 @@ export function computeTax(items, rules = DEFAULT_TAX_RULES) {
       const price = Number(line?.price) || 0;
       taxable += qty * price;
     }
-    taxable = round2(taxable);
+    if (baseScale !== null) {
+      // Scale the rule's taxable share so bill-level discounts and service
+      // charge redistribute proportionally across scoped rules.
+      taxable = round2(taxable * baseScale);
+    } else {
+      taxable = round2(taxable);
+    }
     const amount = round2(taxable * (rule.rate_percent / 100));
     return {
       label: rule.label,
@@ -99,7 +111,8 @@ export function computeTax(items, rules = DEFAULT_TAX_RULES) {
   });
 
   const tax_total = round2(tax_rows.reduce((s, r) => s + r.amount, 0));
-  const grand_total = Math.round(subtotal + tax_total);
+  const grand_base = overrideBase !== null ? overrideBase : subtotal;
+  const grand_total = Math.round(grand_base + tax_total);
 
   return { subtotal, tax_rows, tax_total, grand_total };
 }

@@ -57,8 +57,11 @@ class InvoiceStore {
    * and return it. Idempotent per (restaurant_id, table_id, ticket ids):
    * calling twice with the same tickets returns the first invoice unchanged
    * so a network retry on POST /tables/:id/clear can never double-charge.
+   *
+   * `adjustments` (optional) is forwarded to buildInvoicePreview; a validation
+   * failure there is returned to the caller and no invoice is persisted.
    */
-  issueInvoice({ tickets, tableId, tableName, restaurantId, currency, taxConfig }) {
+  issueInvoice({ tickets, tableId, tableName, restaurantId, currency, taxConfig, adjustments }) {
     if (!Array.isArray(tickets) || tickets.length === 0) {
       return { ok: false, error: 'No open tickets to invoice for this table.' };
     }
@@ -81,11 +84,20 @@ class InvoiceStore {
       tableName,
       restaurantId,
       currency,
-      taxConfig
+      taxConfig,
+      adjustments
     });
 
+    if (!preview.ok) {
+      return { ok: false, error: preview.error };
+    }
+
+    // Strip the wrapper flag before persisting; the on-disk shape matches
+    // what the modal / cloud replica consumes.
+    const { ok: _ok, ...invoiceBody } = preview;
+
     const invoice = {
-      ...preview,
+      ...invoiceBody,
       id: 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       invoice_number: this.nextInvoiceNumber(restaurantId),
       ticket_ids: tickets.map(t => t.id),

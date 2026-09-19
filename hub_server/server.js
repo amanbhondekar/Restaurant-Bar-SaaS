@@ -413,30 +413,51 @@ app.get('/tables', requireDevice, (req, res) => {
   });
 });
 
-// 7a. GET /tables/:id/invoice — Preview the current bill for a table (any time)
-app.get('/tables/:id/invoice', requireDevice, (req, res) => {
-  const pairing = hubConfig.getPairingInfo();
-  const tableId = req.params.id;
+function buildPreviewForTable(tableId, pairing, adjustments) {
   const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
-
   if (openTickets.length === 0) {
-    return res.status(404).json({
+    return { status: 404, body: {
       success: false,
       error: `No open tickets for table ${tableId}.`,
       code: 'NO_OPEN_TICKETS'
-    });
+    }};
   }
 
-  const invoice = buildInvoicePreview({
+  const preview = buildInvoicePreview({
     tickets: openTickets,
     tableId,
     tableName: openTickets[0].table_name,
     restaurantId: pairing.restaurant_id,
     currency: pairing.currency || '₹',
-    taxConfig: pairing
+    taxConfig: pairing,
+    adjustments
   });
 
-  res.json({ success: true, preview: true, invoice });
+  if (!preview.ok) {
+    return { status: 400, body: {
+      success: false,
+      error: preview.error,
+      code: 'INVALID_ADJUSTMENTS'
+    }};
+  }
+
+  const { ok: _ok, ...invoice } = preview;
+  return { status: 200, body: { success: true, preview: true, invoice } };
+}
+
+// 7a. GET /tables/:id/invoice — Preview the current bill for a table (any time)
+app.get('/tables/:id/invoice', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const { status, body } = buildPreviewForTable(req.params.id, pairing, undefined);
+  res.status(status).json(body);
+});
+
+// 7a-2. POST /tables/:id/invoice/preview — Preview with reception-supplied adjustments
+app.post('/tables/:id/invoice/preview', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const adjustments = (req.body && typeof req.body === 'object') ? req.body : {};
+  const { status, body } = buildPreviewForTable(req.params.id, pairing, adjustments);
+  res.status(status).json(body);
 });
 
 // 7b. GET /invoices/:id — Retrieve a previously issued invoice
@@ -459,29 +480,40 @@ app.get('/invoices', requireDevice, (req, res) => {
   });
 });
 
-function issueInvoiceForTable(tableId, pairing) {
+function issueInvoiceForTable(tableId, pairing, adjustments) {
   const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
-  if (openTickets.length === 0) return null;
+  if (openTickets.length === 0) return { ok: true, invoice: null };
   const result = invoiceStore.issueInvoice({
     tickets: openTickets,
     tableId,
     tableName: openTickets[0].table_name,
     restaurantId: pairing.restaurant_id,
     currency: pairing.currency || '₹',
-    taxConfig: pairing
+    taxConfig: pairing,
+    adjustments
   });
-  return result.ok ? result.invoice : null;
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, invoice: result.invoice };
 }
 
 // 7. POST /tables/:id/clear — Close a bill: issue invoice, then complete tickets
 app.post('/tables/:id/clear', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const tableId = req.params.id;
+  const adjustments = (req.body && typeof req.body === 'object') ? req.body : undefined;
 
   // Issue the invoice BEFORE clearing so the tickets are still queryable.
   // invoiceStore.issueInvoice is idempotent per (table, ticket ids), so a
   // network-retry double-POST cannot produce a second invoice.
-  const invoice = issueInvoiceForTable(tableId, pairing);
+  const issued = issueInvoiceForTable(tableId, pairing, adjustments);
+  if (!issued.ok) {
+    return res.status(400).json({
+      success: false,
+      error: issued.error,
+      code: 'INVALID_ADJUSTMENTS'
+    });
+  }
+  const invoice = issued.invoice;
 
   const { clearedCount, clearedTickets } = ticketStore.clearTableTickets(tableId, pairing.restaurant_id);
 
@@ -523,8 +555,17 @@ app.post('/tables/:id/clear', requireDevice, (req, res) => {
 app.post('/orders/:id/clear', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const id = req.params.id;
+  const adjustments = (req.body && typeof req.body === 'object') ? req.body : undefined;
 
-  const invoice = issueInvoiceForTable(id, pairing);
+  const issued = issueInvoiceForTable(id, pairing, adjustments);
+  if (!issued.ok) {
+    return res.status(400).json({
+      success: false,
+      error: issued.error,
+      code: 'INVALID_ADJUSTMENTS'
+    });
+  }
+  const invoice = issued.invoice;
 
   const { clearedCount, clearedTickets } = ticketStore.clearTableTickets(id, pairing.restaurant_id);
 

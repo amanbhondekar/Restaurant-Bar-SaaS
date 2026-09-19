@@ -160,6 +160,12 @@ CREATE TABLE IF NOT EXISTS public.invoices (
     table_name VARCHAR(50),
     currency VARCHAR(10) DEFAULT '₹',
     subtotal NUMERIC(12,2) NOT NULL,
+    discount_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+    discount_rows JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{scope, type, value, reason, amount}]
+    subtotal_after_discount NUMERIC(12,2) NOT NULL,
+    service_charge_percent NUMERIC(5,2) NOT NULL DEFAULT 0,
+    service_charge_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    taxable_base NUMERIC(12,2) NOT NULL,
     tax_total NUMERIC(12,2) NOT NULL DEFAULT 0,
     grand_total NUMERIC(12,2) NOT NULL,
     tax_rows JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{label, rate_percent, taxable_amount, amount}]
