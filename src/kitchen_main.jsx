@@ -347,6 +347,74 @@ const KitchenHubApp = () => {
     }
   };
 
+  // Split the issued invoice into N equal seat shares. Reception picks
+  // the seat count from the modal, and the resulting shares surface as
+  // per-row Mark Paid actions.
+  const splitBySeats = async (count) => {
+    if (!billInvoice?.id || !count) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/split-by-seats`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: Number(count) })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+      } else {
+        setBillError(data.error || 'Could not split the bill.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  const unsplitInvoice = async () => {
+    if (!billInvoice?.id) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/splits`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+      } else {
+        setBillError(data.error || 'Could not unsplit.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  const markSplitPaid = async (splitIndex, method) => {
+    if (!billInvoice?.id) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/splits/${splitIndex}/mark-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method: method })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+      } else {
+        setBillError(data.error || 'Could not mark split paid.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
   // Void an issued invoice. Reception is prompted for a reason (required),
   // the underlying tickets are reopened on the server, and the modal
   // closes so the reopened tickets appear on the KDS rail again.
@@ -892,7 +960,7 @@ const KitchenHubApp = () => {
                               {billInvoice.payment_status === 'pending' && `⏳ ${billInvoice.invoice_number} · Awaiting payment`}
                             </div>
 
-                            {billInvoice.payment_status === 'pending' && (
+                            {billInvoice.payment_status === 'pending' && !billInvoice.splits && (
                               <>
                                 <div style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
                                   Mark paid
@@ -914,6 +982,26 @@ const KitchenHubApp = () => {
                                     </button>
                                   ))}
                                 </div>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                                    Split by seats
+                                  </span>
+                                  {[2, 3, 4, 5, 6].map(n => (
+                                    <button
+                                      key={n}
+                                      onClick={() => splitBySeats(n)}
+                                      disabled={billLoading}
+                                      style={{
+                                        padding: '6px 10px', borderRadius: 'var(--radius-full)',
+                                        background: 'transparent', color: 'var(--color-primary)',
+                                        border: '1px solid var(--color-primary)', fontWeight: 700, fontSize: '12px',
+                                        cursor: billLoading ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-mono)'
+                                      }}
+                                    >
+                                      {n}
+                                    </button>
+                                  ))}
+                                </div>
                                 <button
                                   onClick={voidInvoice}
                                   disabled={billLoading}
@@ -926,6 +1014,71 @@ const KitchenHubApp = () => {
                                 >
                                   Void bill (reopens tickets)
                                 </button>
+                              </>
+                            )}
+
+                            {billInvoice.payment_status === 'pending' && Array.isArray(billInvoice.splits) && billInvoice.splits.length > 0 && (
+                              <>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                                    Split into {billInvoice.splits.length} seats
+                                  </span>
+                                  {billInvoice.splits.every(s => s.payment_status !== 'paid') && (
+                                    <button
+                                      onClick={unsplitInvoice}
+                                      disabled={billLoading}
+                                      style={{
+                                        background: 'transparent', color: 'var(--color-muted)', border: 'none',
+                                        fontSize: '11px', cursor: billLoading ? 'not-allowed' : 'pointer', textDecoration: 'underline'
+                                      }}
+                                    >
+                                      Undo split
+                                    </button>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                  {billInvoice.splits.map((s, idx) => (
+                                    <div key={idx} style={{
+                                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                      padding: '8px 10px', borderRadius: 'var(--radius-xs)',
+                                      background: s.payment_status === 'paid' ? 'var(--status-green-bg)' : 'var(--color-surface-soft)',
+                                      border: `1px solid ${s.payment_status === 'paid' ? 'var(--status-green-border)' : 'var(--color-hairline)'}`
+                                    }}>
+                                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                        <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-ink)' }}>
+                                          {s.label}
+                                        </span>
+                                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: s.payment_status === 'paid' ? 'var(--status-green-text)' : 'var(--color-primary)', fontWeight: 700 }}>
+                                          {billInvoice.currency}{s.share_amount}
+                                        </span>
+                                      </div>
+                                      {s.payment_status === 'paid' ? (
+                                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--status-green-text)', fontWeight: 700, textTransform: 'uppercase' }}>
+                                          ✓ {s.payment_method}
+                                        </span>
+                                      ) : (
+                                        <div style={{ display: 'flex', gap: '4px' }}>
+                                          {['cash', 'upi', 'card'].map(m => (
+                                            <button
+                                              key={m}
+                                              onClick={() => markSplitPaid(idx, m)}
+                                              disabled={billLoading}
+                                              style={{
+                                                padding: '5px 8px', borderRadius: 'var(--radius-full)',
+                                                background: 'var(--color-primary)', color: '#fff',
+                                                border: 'none', fontWeight: 700, fontSize: '10px',
+                                                textTransform: 'uppercase', letterSpacing: '0.5px',
+                                                cursor: billLoading ? 'not-allowed' : 'pointer'
+                                              }}
+                                            >
+                                              {m}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
                               </>
                             )}
 

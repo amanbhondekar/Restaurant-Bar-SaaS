@@ -652,3 +652,167 @@ test('M1: mark-paid on a voided invoice is refused', async () => {
   const body = await res.json();
   assert.equal(body.code, 'ALREADY_VOIDED');
 });
+
+// ---------------------------------------------------------------------------
+// M1 — split-bill by seats
+// ---------------------------------------------------------------------------
+
+async function issueInvoiceForTable(tableId, items = [{ id: 'm1', qty: 1 }]) {
+  await createOrder(tableId, items);
+  const { invoice } = await closeTable(tableId);
+  return invoice;
+}
+
+test('M1: split-by-seats requires auth', async () => {
+  const res = await api('/invoices/inv_x/split-by-seats', {
+    method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  assert.equal(res.status, 401);
+});
+
+test('M1: split divides grand_total exactly across N seats (rupee-fair)', async () => {
+  // 460 subtotal + 5% GST = 483 grand. Split 4 ways: 483 / 4 = 120.75 →
+  // shares must be integers summing to 483. Rupee-fair: three seats @ 121, one @ 120.
+  const invoice = await issueInvoiceForTable(30, [{ id: 'm1', qty: 2 }]);
+  assert.equal(invoice.grand_total, 483);
+
+  const res = await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 4 })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.invoice.splits.length, 4);
+  const shares = body.invoice.splits.map(s => s.share_amount);
+  assert.equal(shares.reduce((s, x) => s + x, 0), 483, 'shares must sum to grand_total');
+  // rupee-fair: values differ by at most 1
+  assert.ok(Math.max(...shares) - Math.min(...shares) <= 1);
+  assert.equal(body.invoice.splits[0].payment_status, 'pending');
+});
+
+test('M1: split rejects out-of-range seat counts', async () => {
+  const invoice = await issueInvoiceForTable(31);
+  for (const count of [1, 0, -3, 999, 'x', null]) {
+    const res = await api(`/invoices/${invoice.id}/split-by-seats`, {
+      auth: true, method: 'POST', body: JSON.stringify({ count })
+    });
+    assert.equal(res.status, 400, `count=${count} must be rejected`);
+  }
+});
+
+test('M1: re-splitting an already split invoice is refused', async () => {
+  const invoice = await issueInvoiceForTable(32);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  const res = await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 3 })
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'ALREADY_SPLIT');
+});
+
+test('M1: mark-paid on parent is refused once split; each split settles individually', async () => {
+  const invoice = await issueInvoiceForTable(33);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  const parentPaid = await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  assert.equal(parentPaid.status, 400);
+  assert.equal((await parentPaid.json()).code, 'INVOICE_SPLIT');
+
+  const splitPaid = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+  assert.equal(splitPaid.status, 200);
+  const body = await splitPaid.json();
+  assert.equal(body.invoice.splits[0].payment_status, 'paid');
+  assert.equal(body.invoice.splits[0].payment_method, 'upi');
+  assert.equal(body.invoice.payment_status, 'pending', 'parent stays pending until all splits paid');
+});
+
+test('M1: all-splits-paid rolls parent invoice to paid with method=split', async () => {
+  const invoice = await issueInvoiceForTable(34);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 3 })
+  });
+  for (let i = 0; i < 3; i++) {
+    const res = await api(`/invoices/${invoice.id}/splits/${i}/mark-paid`, {
+      auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.parent_settled, i === 2, 'parent settles on the last split only');
+    if (i < 2) assert.equal(body.invoice.payment_status, 'pending');
+    else {
+      assert.equal(body.invoice.payment_status, 'paid');
+      assert.equal(body.invoice.payment_method, 'split');
+    }
+  }
+});
+
+test('M1: double-paying the same split is refused', async () => {
+  const invoice = await issueInvoiceForTable(35);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  const dup = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  assert.equal(dup.status, 400);
+  assert.equal((await dup.json()).code, 'ALREADY_PAID');
+});
+
+test('M1: unknown split index is refused', async () => {
+  const invoice = await issueInvoiceForTable(36);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  const res = await api(`/invoices/${invoice.id}/splits/9/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, 'UNKNOWN_SPLIT');
+});
+
+test('M1: unsplit works while all splits pending, refused after any split paid', async () => {
+  const invoice = await issueInvoiceForTable(37);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 3 })
+  });
+
+  const undo = await api(`/invoices/${invoice.id}/splits`, { auth: true, method: 'DELETE' });
+  assert.equal(undo.status, 200);
+  assert.equal((await undo.json()).invoice.splits, undefined);
+
+  // Re-split, pay one, then try to unsplit — refused.
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  const undo2 = await api(`/invoices/${invoice.id}/splits`, { auth: true, method: 'DELETE' });
+  assert.equal(undo2.status, 400);
+  assert.equal((await undo2.json()).code, 'SPLIT_PAID');
+});
+
+test('M1: voiding a split invoice with a paid share is refused', async () => {
+  const invoice = await issueInvoiceForTable(38);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  const res = await api(`/invoices/${invoice.id}/void`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'oops' })
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, 'SPLIT_PAID');
+});

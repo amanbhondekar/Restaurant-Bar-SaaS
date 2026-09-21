@@ -530,6 +530,70 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
   res.json({ success: true, invoice: result.invoice });
 });
 
+// 7f. POST /invoices/:id/split-by-seats — Divide grand_total into N equal shares
+app.post('/invoices/:id/split-by-seats', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const result = invoiceStore.splitBySeats(req.params.id, pairing.restaurant_id, {
+    count: body.count,
+    actor: body.actor
+  });
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  broadcast('INVOICE_SPLIT', { invoice: result.invoice });
+  console.log(`🪓 Split ${result.invoice.invoice_number} into ${result.invoice.splits.length} seat share(s)`);
+  res.json({ success: true, invoice: result.invoice });
+});
+
+// 7g. DELETE /invoices/:id/splits — Undo the split (only if nothing is paid yet)
+app.delete('/invoices/:id/splits', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = invoiceStore.unsplit(req.params.id, pairing.restaurant_id);
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  broadcast('INVOICE_UNSPLIT', { invoice: result.invoice });
+  console.log(`↩︎ Unsplit ${result.invoice.invoice_number}`);
+  res.json({ success: true, invoice: result.invoice });
+});
+
+// 7h. POST /invoices/:id/splits/:index/mark-paid — Settle one seat share
+app.post('/invoices/:id/splits/:index/mark-paid', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const result = invoiceStore.markSplitPaid(req.params.id, pairing.restaurant_id, {
+    splitIndex: Number(req.params.index),
+    method: body.payment_method,
+    actor: body.actor
+  });
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  broadcast('INVOICE_SPLIT_PAID', {
+    invoice: result.invoice,
+    split_index: Number(req.params.index),
+    parent_settled: result.parent_settled
+  });
+  if (result.parent_settled) {
+    broadcast('INVOICE_PAID', { invoice: result.invoice });
+  }
+  console.log(`💰 Split ${Number(req.params.index) + 1}/${result.invoice.splits.length} of ${result.invoice.invoice_number} paid · ${body.payment_method}${result.parent_settled ? ' · parent settled' : ''}`);
+
+  res.json({ success: true, invoice: result.invoice, parent_settled: result.parent_settled });
+});
+
 function issueInvoiceForTable(tableId, pairing, adjustments) {
   const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
   if (openTickets.length === 0) return { ok: true, invoice: null };
