@@ -816,3 +816,129 @@ test('M1: voiding a split invoice with a paid share is refused', async () => {
   assert.equal(res.status, 400);
   assert.equal((await res.json()).code, 'SPLIT_PAID');
 });
+
+// ---------------------------------------------------------------------------
+// M1 — split-bill by amounts (custom amount per split)
+// ---------------------------------------------------------------------------
+
+test('M1: split-by-amounts requires auth', async () => {
+  const res = await api('/invoices/inv_x/split-by-amounts', {
+    method: 'POST', body: JSON.stringify({ splits: [{ share_amount: 100 }, { share_amount: 100 }] })
+  });
+  assert.equal(res.status, 401);
+});
+
+test('M1: split-by-amounts accepts custom labelled shares summing to grand_total', async () => {
+  // m1 x2 = 460 + 5% GST = 483 grand
+  const invoice = await issueInvoiceForTable(40, [{ id: 'm1', qty: 2 }]);
+  assert.equal(invoice.grand_total, 483);
+
+  const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [
+        { label: 'Rohit', share_amount: 200 },
+        { label: 'Priya', share_amount: 183 },
+        { label: 'Ankit', share_amount: 100 }
+      ]
+    })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.invoice.split_mode, 'amounts');
+  assert.equal(body.invoice.splits.length, 3);
+  assert.equal(body.invoice.splits[0].label, 'Rohit');
+  assert.equal(body.invoice.splits[0].share_amount, 200);
+  const sum = body.invoice.splits.reduce((s, x) => s + x.share_amount, 0);
+  assert.equal(sum, invoice.grand_total, 'amounts must sum to grand_total');
+});
+
+test('M1: split-by-amounts uses default labels when caller omits them', async () => {
+  const invoice = await issueInvoiceForTable(41, [{ id: 'm1', qty: 2 }]);
+  const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ share_amount: 250 }, { share_amount: 233 }]
+    })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.invoice.splits[0].label, 'Split 1');
+  assert.equal(body.invoice.splits[1].label, 'Split 2');
+});
+
+test('M1: split-by-amounts refuses when sum ≠ grand_total (short and over)', async () => {
+  const invoice = await issueInvoiceForTable(42, [{ id: 'm1', qty: 2 }]);
+
+  const short = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ share_amount: 100 }, { share_amount: 100 }]
+    })
+  });
+  assert.equal(short.status, 400);
+  const shortBody = await short.json();
+  assert.equal(shortBody.code, 'INVALID_AMOUNTS');
+  assert.match(shortBody.error, /short by ₹283/);
+
+  const over = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ share_amount: 300 }, { share_amount: 300 }]
+    })
+  });
+  assert.equal(over.status, 400);
+  assert.match((await over.json()).error, /over by ₹117/);
+});
+
+test('M1: split-by-amounts rejects negative, zero, non-integer, and single-split payloads', async () => {
+  const invoice = await issueInvoiceForTable(43, [{ id: 'm1', qty: 2 }]);
+
+  const cases = [
+    { splits: [{ share_amount: -50 }, { share_amount: 533 }] },  // negative
+    { splits: [{ share_amount: 0 }, { share_amount: 483 }] },     // zero
+    { splits: [{ share_amount: 100.5 }, { share_amount: 382.5 }] }, // non-integer
+    { splits: [{ share_amount: 483 }] },                          // single split (< min 2)
+    { splits: 'not-an-array' }                                    // wrong type
+  ];
+  for (const body of cases) {
+    const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+      auth: true, method: 'POST', body: JSON.stringify(body)
+    });
+    assert.equal(res.status, 400, `payload ${JSON.stringify(body).slice(0, 60)} must be rejected`);
+  }
+});
+
+test('M1: split-by-amounts refuses on already-split invoice', async () => {
+  const invoice = await issueInvoiceForTable(44, [{ id: 'm1', qty: 2 }]);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ share_amount: 250 }, { share_amount: 233 }]
+    })
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, 'ALREADY_SPLIT');
+});
+
+test('M1: amount-split shares settle the same way as seat splits', async () => {
+  const invoice = await issueInvoiceForTable(45, [{ id: 'm1', qty: 2 }]);
+  await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ share_amount: 200 }, { share_amount: 283 }]
+    })
+  });
+
+  const first = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).invoice.payment_status, 'pending');
+
+  const second = await api(`/invoices/${invoice.id}/splits/1/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  assert.equal(second.status, 200);
+  const body = await second.json();
+  assert.equal(body.parent_settled, true);
+  assert.equal(body.invoice.payment_status, 'paid');
+  assert.equal(body.invoice.payment_method, 'split');
+});

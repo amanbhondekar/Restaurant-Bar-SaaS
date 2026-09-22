@@ -550,6 +550,26 @@ app.post('/invoices/:id/split-by-seats', requireDevice, (req, res) => {
   res.json({ success: true, invoice: result.invoice });
 });
 
+// 7f-2. POST /invoices/:id/split-by-amounts — Reception-supplied per-split amounts
+app.post('/invoices/:id/split-by-amounts', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const result = invoiceStore.splitByAmounts(req.params.id, pairing.restaurant_id, {
+    splits: body.splits,
+    actor: body.actor
+  });
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  broadcast('INVOICE_SPLIT', { invoice: result.invoice });
+  console.log(`🪓 Split ${result.invoice.invoice_number} by amount into ${result.invoice.splits.length} share(s)`);
+  res.json({ success: true, invoice: result.invoice });
+});
+
 // 7g. DELETE /invoices/:id/splits — Undo the split (only if nothing is paid yet)
 app.delete('/invoices/:id/splits', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();

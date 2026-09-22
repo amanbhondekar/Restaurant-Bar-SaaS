@@ -30,6 +30,9 @@ const KitchenHubApp = () => {
     service_charge_percent: ''
   });
 
+  // Custom-amount split state (M1 PR 5). null when the sub-panel is closed.
+  const [amountSplitDraft, setAmountSplitDraft] = useState(null);
+
   const hubHost = typeof window !== 'undefined'
     ? (window.location.port === '4000'
         ? window.location.origin
@@ -293,6 +296,7 @@ const KitchenHubApp = () => {
     setBillTableId(null);
     setBillInvoice(null);
     setBillError('');
+    setAmountSplitDraft(null);
   };
 
   // Close the bill with whatever the modal is currently showing.
@@ -365,6 +369,55 @@ const KitchenHubApp = () => {
         setBillError('');
       } else {
         setBillError(data.error || 'Could not split the bill.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  // Kick off the "custom amounts" sub-panel with N empty rows, seeded with
+  // an equal-split hint so reception can edit from a sensible starting point.
+  const openAmountSplit = (count = 2) => {
+    if (!billInvoice?.grand_total) return;
+    const grand = billInvoice.grand_total;
+    const base = Math.floor(grand / count);
+    const remainder = grand - base * count;
+    setAmountSplitDraft({
+      rows: Array.from({ length: count }, (_, i) => ({
+        label: '',
+        share_amount: String(i < remainder ? base + 1 : base)
+      }))
+    });
+  };
+
+  const closeAmountSplit = () => setAmountSplitDraft(null);
+
+  const submitAmountSplit = async () => {
+    if (!billInvoice?.id || !amountSplitDraft) return;
+    const payload = {
+      splits: amountSplitDraft.rows
+        .filter(r => r.share_amount !== '')
+        .map(r => ({
+          label: r.label ? r.label.trim() : undefined,
+          share_amount: Number(r.share_amount)
+        }))
+    };
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/split-by-amounts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+        setAmountSplitDraft(null);
+      } else {
+        setBillError(data.error || 'Could not split by amount.');
       }
     } catch (err) {
       setBillError(`Hub unreachable: ${err.message}`);
@@ -982,7 +1035,7 @@ const KitchenHubApp = () => {
                                     </button>
                                   ))}
                                 </div>
-                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                                   <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
                                     Split by seats
                                   </span>
@@ -1001,7 +1054,139 @@ const KitchenHubApp = () => {
                                       {n}
                                     </button>
                                   ))}
+                                  <button
+                                    onClick={() => openAmountSplit(2)}
+                                    disabled={billLoading || !!amountSplitDraft}
+                                    style={{
+                                      padding: '6px 10px', borderRadius: 'var(--radius-full)',
+                                      background: 'transparent', color: 'var(--color-muted)',
+                                      border: '1px dashed var(--color-hairline)', fontWeight: 700, fontSize: '12px',
+                                      cursor: (billLoading || amountSplitDraft) ? 'not-allowed' : 'pointer'
+                                    }}
+                                  >
+                                    Custom amounts…
+                                  </button>
                                 </div>
+
+                                {amountSplitDraft && (() => {
+                                  const rows = amountSplitDraft.rows;
+                                  const nums = rows.map(r => Number(r.share_amount)).filter(n => Number.isFinite(n));
+                                  const sum = nums.reduce((s, n) => s + n, 0);
+                                  const grand = billInvoice.grand_total;
+                                  const delta = grand - sum;
+                                  const balanced = delta === 0;
+                                  const anyDecimal = rows.some(r => r.share_amount !== '' && !Number.isInteger(Number(r.share_amount)));
+                                  const canSubmit = balanced && !anyDecimal && rows.every(r => Number(r.share_amount) > 0);
+                                  return (
+                                    <div style={{
+                                      border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-sm)',
+                                      padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '6px',
+                                      background: 'var(--color-surface-soft)'
+                                    }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                                          Custom split · {rows.length} shares
+                                        </span>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                          <button
+                                            onClick={() => setAmountSplitDraft(d => ({ rows: [...d.rows, { label: '', share_amount: '' }] }))}
+                                            disabled={billLoading || rows.length >= 40}
+                                            style={{
+                                              padding: '4px 8px', borderRadius: 'var(--radius-xs)',
+                                              background: 'transparent', color: 'var(--color-primary)',
+                                              border: '1px solid var(--color-primary)', fontSize: '11px', fontWeight: 700,
+                                              cursor: (billLoading || rows.length >= 40) ? 'not-allowed' : 'pointer'
+                                            }}
+                                          >
+                                            + row
+                                          </button>
+                                          <button
+                                            onClick={() => setAmountSplitDraft(d => d.rows.length > 2 ? { rows: d.rows.slice(0, -1) } : d)}
+                                            disabled={billLoading || rows.length <= 2}
+                                            style={{
+                                              padding: '4px 8px', borderRadius: 'var(--radius-xs)',
+                                              background: 'transparent', color: 'var(--color-muted)',
+                                              border: '1px solid var(--color-hairline)', fontSize: '11px', fontWeight: 700,
+                                              cursor: (billLoading || rows.length <= 2) ? 'not-allowed' : 'pointer'
+                                            }}
+                                          >
+                                            − row
+                                          </button>
+                                        </div>
+                                      </div>
+                                      {rows.map((row, idx) => (
+                                        <div key={idx} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                          <input
+                                            type="text"
+                                            placeholder={`Split ${idx + 1}`}
+                                            value={row.label}
+                                            onChange={e => setAmountSplitDraft(d => ({ rows: d.rows.map((r, i) => i === idx ? { ...r, label: e.target.value } : r) }))}
+                                            style={{
+                                              flex: 1, minWidth: 0, padding: '5px 8px', fontSize: '12px',
+                                              border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)', color: 'var(--color-ink)'
+                                            }}
+                                          />
+                                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-muted)' }}>
+                                            {billInvoice.currency}
+                                          </span>
+                                          <input
+                                            type="number"
+                                            min="1"
+                                            step="1"
+                                            placeholder="0"
+                                            value={row.share_amount}
+                                            onChange={e => setAmountSplitDraft(d => ({ rows: d.rows.map((r, i) => i === idx ? { ...r, share_amount: e.target.value } : r) }))}
+                                            style={{
+                                              width: '90px', padding: '5px 8px', fontSize: '13px', fontFamily: 'var(--font-mono)',
+                                              border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)', color: 'var(--color-ink)'
+                                            }}
+                                          />
+                                        </div>
+                                      ))}
+                                      <div style={{
+                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                        fontSize: '11px', fontFamily: 'var(--font-mono)', fontWeight: 700,
+                                        color: balanced ? 'var(--status-green-text)' : 'var(--status-rust-text)'
+                                      }}>
+                                        <span>Target: {billInvoice.currency}{grand}</span>
+                                        <span>
+                                          {balanced
+                                            ? '✓ Balanced'
+                                            : delta > 0
+                                              ? `Short by ${billInvoice.currency}${delta}`
+                                              : `Over by ${billInvoice.currency}${-delta}`}
+                                        </span>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                          onClick={closeAmountSplit}
+                                          disabled={billLoading}
+                                          style={{
+                                            flex: 1, padding: '7px 10px', borderRadius: 'var(--radius-full)',
+                                            background: 'transparent', color: 'var(--color-muted)',
+                                            border: '1px solid var(--color-hairline)', fontSize: '12px', fontWeight: 700,
+                                            cursor: billLoading ? 'not-allowed' : 'pointer'
+                                          }}
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          onClick={submitAmountSplit}
+                                          disabled={!canSubmit || billLoading}
+                                          style={{
+                                            flex: 2, padding: '7px 10px', borderRadius: 'var(--radius-full)',
+                                            background: canSubmit && !billLoading ? 'var(--color-primary)' : 'var(--color-surface-soft)',
+                                            color: canSubmit && !billLoading ? '#fff' : 'var(--color-muted)',
+                                            border: 'none', fontSize: '12px', fontWeight: 700,
+                                            cursor: canSubmit && !billLoading ? 'pointer' : 'not-allowed'
+                                          }}
+                                        >
+                                          Apply split
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                                 <button
                                   onClick={voidInvoice}
                                   disabled={billLoading}
@@ -1021,7 +1206,7 @@ const KitchenHubApp = () => {
                               <>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                   <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
-                                    Split into {billInvoice.splits.length} seats
+                                    Split into {billInvoice.splits.length} {billInvoice.split_mode === 'amounts' ? 'shares' : 'seats'}
                                   </span>
                                   {billInvoice.splits.every(s => s.payment_status !== 'paid') && (
                                     <button

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildInvoicePreview } from './invoice.js';
-import { computeSeatSplits, validateSeatCount } from './split.js';
+import { computeSeatSplits, validateSeatCount, validateAmountSplits } from './split.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -202,6 +202,47 @@ class InvoiceStore {
         ...inv,
         splits,
         split_mode: 'seats',
+        split_at: new Date().toISOString(),
+        split_by: typeof actor === 'string' ? actor.slice(0, 60) : null
+      };
+    });
+    this.save();
+    return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
+  }
+
+  /**
+   * Split by reception-supplied amounts. Same idempotency and state
+   * guardrails as splitBySeats; the only extra work is running the
+   * caller's amounts through validateAmountSplits so the sum must
+   * equal grand_total exactly.
+   */
+  splitByAmounts(invoiceId, restaurantId, { splits: rawSplits, actor } = {}) {
+    const invoice = this.getInvoice(invoiceId, restaurantId);
+    if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
+    if (invoice.payment_status === 'paid') {
+      return { ok: false, error: 'Cannot split a paid invoice.', code: 'ALREADY_PAID' };
+    }
+    if (invoice.payment_status === 'voided') {
+      return { ok: false, error: 'Cannot split a voided invoice.', code: 'ALREADY_VOIDED' };
+    }
+    if (invoice.payment_status === 'refunded') {
+      return { ok: false, error: 'Cannot split a refunded invoice.', code: 'ALREADY_REFUNDED' };
+    }
+    if (Array.isArray(invoice.splits) && invoice.splits.length > 0) {
+      return { ok: false, error: 'Invoice is already split; unsplit before re-splitting.', code: 'ALREADY_SPLIT' };
+    }
+
+    const validation = validateAmountSplits(rawSplits, invoice.grand_total);
+    if (!validation.ok) {
+      return { ok: false, error: validation.error, code: 'INVALID_AMOUNTS' };
+    }
+
+    this.invoices = this.invoices.map(inv => {
+      if (inv.id !== invoice.id) return inv;
+      return {
+        ...inv,
+        splits: validation.splits,
+        split_mode: 'amounts',
         split_at: new Date().toISOString(),
         split_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
