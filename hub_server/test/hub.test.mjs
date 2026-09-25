@@ -38,7 +38,10 @@ const MENU = {
   items: [
     { id: 'm1', name: 'Paneer Tikka', price: 230, category: 'Starters', isVeg: true, available: true },
     { id: 'm2', name: 'Chicken Sukka', price: 220, category: 'Starters', isVeg: false, available: true },
-    { id: 'm3', name: 'Sold Out Dish', price: 100, category: 'Starters', isVeg: true, available: false }
+    { id: 'm3', name: 'Sold Out Dish', price: 100, category: 'Starters', isVeg: true, available: false },
+    // m4/m5 exist so item-split tests can exercise the three-way case with
+    // three distinct prices for a rounding-remainder scenario.
+    { id: 'm4', name: 'Mutton Saoji', price: 340, category: 'Starters', isVeg: false, available: true }
   ]
 };
 
@@ -937,6 +940,152 @@ test('M1: amount-split shares settle the same way as seat splits', async () => {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
   assert.equal(second.status, 200);
+  const body = await second.json();
+  assert.equal(body.parent_settled, true);
+  assert.equal(body.invoice.payment_status, 'paid');
+  assert.equal(body.invoice.payment_method, 'split');
+});
+
+// ---------------------------------------------------------------------------
+// M1 — split-bill by items (per-line assignment)
+// ---------------------------------------------------------------------------
+
+test('M1: split-by-items requires auth', async () => {
+  const res = await api('/invoices/inv_x/split-by-items', {
+    method: 'POST', body: JSON.stringify({ splits: [{ item_indices: [0] }, { item_indices: [1] }] })
+  });
+  assert.equal(res.status, 401);
+});
+
+test('M1: split-by-items assigns proportional shares that sum exactly to grand_total', async () => {
+  // Two lines: m1 x2 (460) + m2 x1 (220) = 680 subtotal; +5% GST = 714 grand.
+  // Split into two: {items:[0]} → 460/680 * 714 = 483.0, {items:[1]} → 220/680 * 714 = 231.0.
+  // Both are integers already so no rounding contest.
+  await createOrder(50, [{ id: 'm1', qty: 2 }]);
+  await createOrder(50, [{ id: 'm2', qty: 1 }], { reqId: 'req_50_b' });
+  const { invoice } = await closeTable(50);
+  assert.equal(invoice.subtotal, 680);
+  assert.equal(invoice.grand_total, 714);
+
+  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [
+        { label: 'Veg only', item_indices: [0] },
+        { label: 'Non-veg only', item_indices: [1] }
+      ]
+    })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.invoice.split_mode, 'items');
+  assert.equal(body.invoice.splits.length, 2);
+  assert.equal(body.invoice.splits[0].item_indices[0], 0);
+  assert.equal(body.invoice.splits[0].split_subtotal, 460);
+  assert.equal(body.invoice.splits[0].share_amount, 483, '460/680 * 714 = 483');
+  assert.equal(body.invoice.splits[1].split_subtotal, 220);
+  assert.equal(body.invoice.splits[1].share_amount, 231, '220/680 * 714 = 231');
+  const sum = body.invoice.splits.reduce((s, x) => s + x.share_amount, 0);
+  assert.equal(sum, 714, 'shares must sum to grand_total');
+});
+
+test('M1: item-split allocates rounding remainder without breaking the sum invariant', async () => {
+  // Rounding-sensitive: m1 (230) + m2 (220) + m4 (340) = 790 subtotal,
+  // +5% GST = 830 grand. Split three ways one item each:
+  //   230/790 * 830 = 241.6456…  floor 241  frac .6456
+  //   220/790 * 830 = 231.1392…  floor 231  frac .1392
+  //   340/790 * 830 = 357.2151…  floor 357  frac .2151
+  //   floors sum 829, remainder 1 → +1 to the split with the largest frac (idx 0).
+  await createOrder(51, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }, { id: 'm4', qty: 1 }]);
+  const { invoice } = await closeTable(51);
+  assert.equal(invoice.subtotal, 790);
+  assert.equal(invoice.grand_total, 830);
+
+  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [
+        { item_indices: [0] },
+        { item_indices: [1] },
+        { item_indices: [2] }
+      ]
+    })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const shares = body.invoice.splits.map(s => s.share_amount);
+  const sum = shares.reduce((s, x) => s + x, 0);
+  assert.equal(sum, 830, 'shares must sum to grand_total exactly');
+  assert.equal(shares[0], 242, 'largest fractional part gets the +1');
+});
+
+test('M1: split-by-items rejects orphan items', async () => {
+  await createOrder(52, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }]);
+  const { invoice } = await closeTable(52);
+  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [
+        { item_indices: [0] },
+        { item_indices: [0] } // duplicate assignment, item 1 orphaned
+      ]
+    })
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'INVALID_ITEM_SPLITS');
+  assert.match(body.error, /assigned to both split/);
+});
+
+test('M1: split-by-items rejects an empty split', async () => {
+  await createOrder(53, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }]);
+  const { invoice } = await closeTable(53);
+  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ item_indices: [0, 1] }, { item_indices: [] }]
+    })
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /non-empty array/);
+});
+
+test('M1: split-by-items rejects unassigned items with a helpful message', async () => {
+  await createOrder(54, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }, { id: 'm4', qty: 1 }]);
+  const { invoice } = await closeTable(54);
+  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ item_indices: [0] }, { item_indices: [1] }] // item 2 dropped
+    })
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /Item 2 not assigned/);
+});
+
+test('M1: split-by-items rejects out-of-range indices', async () => {
+  await createOrder(55, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }]);
+  const { invoice } = await closeTable(55);
+  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ item_indices: [0] }, { item_indices: [99] }]
+    })
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /out of range/);
+});
+
+test('M1: item-split shares settle and roll up parent identically', async () => {
+  await createOrder(56, [{ id: 'm1', qty: 2 }, { id: 'm2', qty: 1 }]);
+  const { invoice } = await closeTable(56);
+  await api(`/invoices/${invoice.id}/split-by-items`, {
+    auth: true, method: 'POST', body: JSON.stringify({
+      splits: [{ item_indices: [0] }, { item_indices: [1] }]
+    })
+  });
+  const first = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+  assert.equal((await first.json()).invoice.payment_status, 'pending');
+
+  const second = await api(`/invoices/${invoice.id}/splits/1/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'card' })
+  });
   const body = await second.json();
   assert.equal(body.parent_settled, true);
   assert.equal(body.invoice.payment_status, 'paid');

@@ -32,6 +32,9 @@ const KitchenHubApp = () => {
 
   // Custom-amount split state (M1 PR 5). null when the sub-panel is closed.
   const [amountSplitDraft, setAmountSplitDraft] = useState(null);
+  // Item-split state (M1 PR 6). Kept as an array `assignments[itemIndex] = splitIndex`
+  // plus a `count` so the picker can render N pills per row.
+  const [itemSplitDraft, setItemSplitDraft] = useState(null);
 
   const hubHost = typeof window !== 'undefined'
     ? (window.location.port === '4000'
@@ -297,6 +300,7 @@ const KitchenHubApp = () => {
     setBillInvoice(null);
     setBillError('');
     setAmountSplitDraft(null);
+    setItemSplitDraft(null);
   };
 
   // Close the bill with whatever the modal is currently showing.
@@ -418,6 +422,53 @@ const KitchenHubApp = () => {
         setAmountSplitDraft(null);
       } else {
         setBillError(data.error || 'Could not split by amount.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  // "By items" sub-panel state. Every line starts on split 1; reception
+  // clicks a pill (1..N) to reassign a line to that split.
+  const openItemSplit = (count = 2) => {
+    if (!billInvoice?.items?.length) return;
+    setItemSplitDraft({
+      count,
+      assignments: new Array(billInvoice.items.length).fill(0)
+    });
+  };
+
+  const closeItemSplit = () => setItemSplitDraft(null);
+
+  const submitItemSplit = async () => {
+    if (!billInvoice?.id || !itemSplitDraft) return;
+    // Group item indices by the split they're assigned to.
+    const buckets = Array.from({ length: itemSplitDraft.count }, () => []);
+    itemSplitDraft.assignments.forEach((s, i) => {
+      if (s >= 0 && s < buckets.length) buckets[s].push(i);
+    });
+    const payload = {
+      splits: buckets.map((item_indices, i) => ({
+        label: `Split ${i + 1}`,
+        item_indices
+      }))
+    };
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/split-by-items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+        setItemSplitDraft(null);
+      } else {
+        setBillError(data.error || 'Could not split by items.');
       }
     } catch (err) {
       setBillError(`Hub unreachable: ${err.message}`);
@@ -1056,17 +1107,169 @@ const KitchenHubApp = () => {
                                   ))}
                                   <button
                                     onClick={() => openAmountSplit(2)}
-                                    disabled={billLoading || !!amountSplitDraft}
+                                    disabled={billLoading || !!amountSplitDraft || !!itemSplitDraft}
                                     style={{
                                       padding: '6px 10px', borderRadius: 'var(--radius-full)',
                                       background: 'transparent', color: 'var(--color-muted)',
                                       border: '1px dashed var(--color-hairline)', fontWeight: 700, fontSize: '12px',
-                                      cursor: (billLoading || amountSplitDraft) ? 'not-allowed' : 'pointer'
+                                      cursor: (billLoading || amountSplitDraft || itemSplitDraft) ? 'not-allowed' : 'pointer'
                                     }}
                                   >
                                     Custom amounts…
                                   </button>
+                                  <button
+                                    onClick={() => openItemSplit(2)}
+                                    disabled={billLoading || !!amountSplitDraft || !!itemSplitDraft || !billInvoice.items?.length}
+                                    style={{
+                                      padding: '6px 10px', borderRadius: 'var(--radius-full)',
+                                      background: 'transparent', color: 'var(--color-muted)',
+                                      border: '1px dashed var(--color-hairline)', fontWeight: 700, fontSize: '12px',
+                                      cursor: (billLoading || amountSplitDraft || itemSplitDraft) ? 'not-allowed' : 'pointer'
+                                    }}
+                                  >
+                                    By items…
+                                  </button>
                                 </div>
+
+                                {itemSplitDraft && (() => {
+                                  const { count, assignments } = itemSplitDraft;
+                                  const perSplitSubtotal = Array.from({ length: count }, () => 0);
+                                  assignments.forEach((s, i) => {
+                                    if (s >= 0 && s < count) perSplitSubtotal[s] += billInvoice.items[i]?.line_total || 0;
+                                  });
+                                  const emptySplits = perSplitSubtotal.filter(v => v === 0).length;
+                                  const canApply = emptySplits === 0;
+                                  return (
+                                    <div style={{
+                                      border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-sm)',
+                                      padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px',
+                                      background: 'var(--color-surface-soft)'
+                                    }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                                          By items · {count} splits
+                                        </span>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                          <button
+                                            onClick={() => setItemSplitDraft(d => d.count < 6 ? { count: d.count + 1, assignments: d.assignments } : d)}
+                                            disabled={billLoading || count >= 6}
+                                            style={{
+                                              padding: '4px 8px', borderRadius: 'var(--radius-xs)',
+                                              background: 'transparent', color: 'var(--color-primary)',
+                                              border: '1px solid var(--color-primary)', fontSize: '11px', fontWeight: 700,
+                                              cursor: (billLoading || count >= 6) ? 'not-allowed' : 'pointer'
+                                            }}
+                                          >
+                                            + split
+                                          </button>
+                                          <button
+                                            onClick={() => setItemSplitDraft(d => {
+                                              if (d.count <= 2) return d;
+                                              // Clamp any assignment pointing at the removed split back to split 0.
+                                              const nextCount = d.count - 1;
+                                              return {
+                                                count: nextCount,
+                                                assignments: d.assignments.map(s => s >= nextCount ? 0 : s)
+                                              };
+                                            })}
+                                            disabled={billLoading || count <= 2}
+                                            style={{
+                                              padding: '4px 8px', borderRadius: 'var(--radius-xs)',
+                                              background: 'transparent', color: 'var(--color-muted)',
+                                              border: '1px solid var(--color-hairline)', fontSize: '11px', fontWeight: 700,
+                                              cursor: (billLoading || count <= 2) ? 'not-allowed' : 'pointer'
+                                            }}
+                                          >
+                                            − split
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        {billInvoice.items.map((line, itemIdx) => (
+                                          <div key={itemIdx} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <div style={{ flex: 1, minWidth: 0, fontSize: '12px', color: 'var(--color-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                              <span style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', marginRight: 4, fontWeight: 700 }}>
+                                                {line.qty}×
+                                              </span>
+                                              {line.name}
+                                            </div>
+                                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, color: 'var(--color-ink)', width: 60, textAlign: 'right' }}>
+                                              {billInvoice.currency}{line.line_total}
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '3px' }}>
+                                              {Array.from({ length: count }).map((_, splitIdx) => {
+                                                const active = assignments[itemIdx] === splitIdx;
+                                                return (
+                                                  <button
+                                                    key={splitIdx}
+                                                    onClick={() => setItemSplitDraft(d => ({
+                                                      count: d.count,
+                                                      assignments: d.assignments.map((s, i) => i === itemIdx ? splitIdx : s)
+                                                    }))}
+                                                    disabled={billLoading}
+                                                    style={{
+                                                      width: 24, height: 24, borderRadius: '50%',
+                                                      background: active ? 'var(--color-primary)' : 'transparent',
+                                                      color: active ? '#fff' : 'var(--color-muted)',
+                                                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-hairline)'}`,
+                                                      fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700,
+                                                      cursor: billLoading ? 'not-allowed' : 'pointer'
+                                                    }}
+                                                  >
+                                                    {splitIdx + 1}
+                                                  </button>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
+                                        {perSplitSubtotal.map((v, i) => (
+                                          <div key={i} style={{
+                                            display: 'flex', justifyContent: 'space-between',
+                                            color: v === 0 ? 'var(--status-rust-text)' : 'var(--color-muted)'
+                                          }}>
+                                            <span>Split {i + 1} subtotal</span>
+                                            <span>{v === 0 ? 'empty' : `${billInvoice.currency}${v}`}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {emptySplits > 0 && (
+                                        <div style={{ fontSize: '11px', color: 'var(--status-rust-text)', fontWeight: 700 }}>
+                                          Every split needs at least one item ({emptySplits} empty).
+                                        </div>
+                                      )}
+                                      <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                          onClick={closeItemSplit}
+                                          disabled={billLoading}
+                                          style={{
+                                            flex: 1, padding: '7px 10px', borderRadius: 'var(--radius-full)',
+                                            background: 'transparent', color: 'var(--color-muted)',
+                                            border: '1px solid var(--color-hairline)', fontSize: '12px', fontWeight: 700,
+                                            cursor: billLoading ? 'not-allowed' : 'pointer'
+                                          }}
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          onClick={submitItemSplit}
+                                          disabled={!canApply || billLoading}
+                                          style={{
+                                            flex: 2, padding: '7px 10px', borderRadius: 'var(--radius-full)',
+                                            background: canApply && !billLoading ? 'var(--color-primary)' : 'var(--color-surface-soft)',
+                                            color: canApply && !billLoading ? '#fff' : 'var(--color-muted)',
+                                            border: 'none', fontSize: '12px', fontWeight: 700,
+                                            cursor: canApply && !billLoading ? 'pointer' : 'not-allowed'
+                                          }}
+                                        >
+                                          Apply split
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
 
                                 {amountSplitDraft && (() => {
                                   const rows = amountSplitDraft.rows;
@@ -1206,7 +1409,7 @@ const KitchenHubApp = () => {
                               <>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                   <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
-                                    Split into {billInvoice.splits.length} {billInvoice.split_mode === 'amounts' ? 'shares' : 'seats'}
+                                    Split into {billInvoice.splits.length} {billInvoice.split_mode === 'seats' ? 'seats' : 'shares'}
                                   </span>
                                   {billInvoice.splits.every(s => s.payment_status !== 'paid') && (
                                     <button

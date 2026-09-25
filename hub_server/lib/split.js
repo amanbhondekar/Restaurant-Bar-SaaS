@@ -19,6 +19,10 @@ const MAX_SEATS = 40;
 // its rejection text reads correctly ("splits" vs "seats").
 const MIN_AMOUNT_SPLITS = 2;
 const MAX_AMOUNT_SPLITS = 40;
+// Item splits: same cap on the number of splits; upper bound on how many
+// distinct items a bill can contain lives with the invoice itself.
+const MIN_ITEM_SPLITS = 2;
+const MAX_ITEM_SPLITS = 40;
 
 export function validateSeatCount(rawCount, { min = MIN_SEATS, max = MAX_SEATS } = {}) {
   const n = Number(rawCount);
@@ -124,4 +128,138 @@ export function validateAmountSplits(rawSplits, grandTotal) {
   }
 
   return { ok: true, splits: cleaned };
+}
+
+/**
+ * Validate reception-supplied per-split item assignments against the
+ * invoice's items list, then compute per-split share amounts by
+ * distributing grand_total proportionally to each split's raw subtotal.
+ *
+ * Rules:
+ *   - Each split has `item_indices: [0, 3, ...]` referring to positions in
+ *     invoice.items (0-based).
+ *   - Every item index in 0..items.length-1 must appear in EXACTLY one
+ *     split (no orphans, no double-assignment).
+ *   - Each split must have at least one item (an empty split makes no
+ *     sense — nothing to charge for).
+ *   - 2..40 splits (matches seat / amount caps).
+ *
+ * Rounding: raw share = split_subtotal / invoice_subtotal * grand_total.
+ * Largest-remainder allocation floors each raw share then hands out the
+ * remaining rupees to the splits with the largest fractional parts, so
+ * shares are always integer rupees AND sum EXACTLY to grand_total.
+ *
+ * Returns { ok: true, splits: [{ item_indices, share_amount, label, ...}] }
+ * or { ok: false, error }.
+ */
+export function validateItemSplits(rawSplits, invoice) {
+  if (!Array.isArray(rawSplits)) {
+    return { ok: false, error: 'splits must be an array.' };
+  }
+  if (rawSplits.length < MIN_ITEM_SPLITS) {
+    return { ok: false, error: `Need at least ${MIN_ITEM_SPLITS} splits.` };
+  }
+  if (rawSplits.length > MAX_ITEM_SPLITS) {
+    return { ok: false, error: `Cannot exceed ${MAX_ITEM_SPLITS} splits.` };
+  }
+  const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  if (items.length === 0) {
+    return { ok: false, error: 'Invoice has no items to split.' };
+  }
+
+  const grand = Math.round(Number(invoice?.grand_total) || 0);
+  const subtotal = Number(invoice?.subtotal) || 0;
+  if (subtotal <= 0) {
+    return { ok: false, error: 'Invoice subtotal is zero; cannot split by items.' };
+  }
+
+  const assignedTo = new Array(items.length).fill(-1);
+  const perSplit = [];
+
+  for (let i = 0; i < rawSplits.length; i++) {
+    const row = rawSplits[i];
+    if (!row || typeof row !== 'object') {
+      return { ok: false, error: `splits[${i}] is not an object.` };
+    }
+    const raw = row.item_indices;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return { ok: false, error: `splits[${i}].item_indices must be a non-empty array.` };
+    }
+
+    const seen = new Set();
+    for (const rawIdx of raw) {
+      const idx = Number(rawIdx);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= items.length) {
+        return { ok: false, error: `splits[${i}] references item index ${rawIdx}, which is out of range.` };
+      }
+      if (seen.has(idx)) {
+        return { ok: false, error: `splits[${i}] repeats item index ${idx}.` };
+      }
+      if (assignedTo[idx] !== -1) {
+        return { ok: false, error: `Item ${idx} is assigned to both split ${assignedTo[idx]} and split ${i}.` };
+      }
+      seen.add(idx);
+      assignedTo[idx] = i;
+    }
+
+    const item_indices = [...seen].sort((a, b) => a - b);
+    let split_subtotal = 0;
+    for (const idx of item_indices) {
+      split_subtotal += Number(items[idx]?.line_total) || 0;
+    }
+    split_subtotal = Math.round(split_subtotal * 100) / 100;
+
+    const rawLabel = typeof row.label === 'string' ? row.label.trim() : '';
+    perSplit.push({
+      index: i,
+      label: rawLabel ? rawLabel.slice(0, 40) : `Split ${i + 1}`,
+      item_indices,
+      split_subtotal,
+      payment_status: 'pending',
+      payment_method: null,
+      paid_at: null
+    });
+  }
+
+  const unassigned = [];
+  for (let idx = 0; idx < items.length; idx++) {
+    if (assignedTo[idx] === -1) unassigned.push(idx);
+  }
+  if (unassigned.length > 0) {
+    return {
+      ok: false,
+      error: `Item${unassigned.length === 1 ? '' : 's'} ${unassigned.join(', ')} not assigned to any split.`
+    };
+  }
+
+  // Largest-remainder allocation: floor of the proportional share, then hand
+  // out leftover rupees to the splits with the largest fractional part.
+  const rawShares = perSplit.map(s => (s.split_subtotal / subtotal) * grand);
+  const floors = rawShares.map(r => Math.floor(r));
+  let remainder = grand - floors.reduce((s, x) => s + x, 0);
+
+  // Order split indices by fractional-part descending; original order breaks ties.
+  const order = perSplit
+    .map((s, i) => ({ i, frac: rawShares[i] - floors[i] }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i)
+    .map(x => x.i);
+
+  const shares = floors.slice();
+  for (const idx of order) {
+    if (remainder <= 0) break;
+    shares[idx] += 1;
+    remainder -= 1;
+  }
+
+  const finalised = perSplit.map((s, i) => ({
+    ...s,
+    share_amount: shares[i]
+  }));
+
+  const sum = finalised.reduce((s, x) => s + x.share_amount, 0);
+  if (sum !== grand) {
+    throw new Error(`internal: item-split shares (${sum}) do not sum to grand_total (${grand})`);
+  }
+
+  return { ok: true, splits: finalised };
 }

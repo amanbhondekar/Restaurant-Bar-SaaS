@@ -177,11 +177,12 @@ CREATE TABLE IF NOT EXISTS public.invoices (
     voided_at TIMESTAMPTZ,
     voided_reason TEXT,
     voided_by VARCHAR(60),
-    -- Split-bill: JSONB list of seat shares; sum(share_amount) === grand_total
+    -- Split-bill: JSONB list of shares; sum(share_amount) === grand_total
     -- when set. Each entry: { index, label, share_amount, payment_status,
-    -- payment_method, paid_at, paid_by }
+    -- payment_method, paid_at, paid_by }. Item splits also carry
+    -- `item_indices: [n, n]` and `split_subtotal`.
     splits JSONB,
-    split_mode VARCHAR(20), -- 'seats' | (future) 'items' | 'amounts'
+    split_mode VARCHAR(20), -- 'seats' | 'amounts' | 'items'
     split_at TIMESTAMPTZ,
     split_by VARCHAR(60),
     issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
