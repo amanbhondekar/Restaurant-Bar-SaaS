@@ -319,7 +319,7 @@ class InvoiceStore {
    * Mark a single seat share as paid. When all shares are paid, the parent
    * invoice.payment_status flips to 'paid' with payment_method = 'split'.
    */
-  markSplitPaid(invoiceId, restaurantId, { splitIndex, method, actor } = {}) {
+  markSplitPaid(invoiceId, restaurantId, { splitIndex, method, actor, payment_ref } = {}) {
     const invoice = this.getInvoice(invoiceId, restaurantId);
     if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
     if (!Array.isArray(invoice.splits) || invoice.splits.length === 0) {
@@ -351,6 +351,7 @@ class InvoiceStore {
         ...s,
         payment_status: 'paid',
         payment_method: method,
+        payment_ref: cleanPaymentRef(payment_ref),
         paid_at: now,
         paid_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
@@ -386,7 +387,7 @@ class InvoiceStore {
    * Refuses: unknown id, already paid, voided, refunded, unknown method,
    * or when the invoice is split (settle each split individually).
    */
-  markPaid(invoiceId, restaurantId, { method, actor } = {}) {
+  markPaid(invoiceId, restaurantId, { method, actor, payment_ref } = {}) {
     const invoice = this.getInvoice(invoiceId, restaurantId);
     if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
     if (invoice.payment_status === 'paid') {
@@ -412,6 +413,7 @@ class InvoiceStore {
         ...inv,
         payment_status: 'paid',
         payment_method: method,
+        payment_ref: cleanPaymentRef(payment_ref),
         paid_at: new Date().toISOString(),
         paid_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
@@ -419,6 +421,69 @@ class InvoiceStore {
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
+
+  /**
+   * Refund an invoice. Full refund only in this PR — reverses every
+   * paid record and flips `payment_status` to `refunded`. Works on
+   * both non-split and split invoices; for split invoices, every
+   * previously-paid share is marked refunded too, so the audit trail
+   * shows exactly which methods took money and which need reversing.
+   *
+   * Refuses: unknown id, wrong tenant, not paid, already refunded,
+   * voided, missing reason.
+   */
+  refund(invoiceId, restaurantId, { reason, actor } = {}) {
+    const invoice = this.getInvoice(invoiceId, restaurantId);
+    if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
+    if (invoice.payment_status === 'refunded') {
+      return { ok: false, error: 'Invoice already refunded.', code: 'ALREADY_REFUNDED' };
+    }
+    if (invoice.payment_status === 'voided') {
+      return { ok: false, error: 'A voided invoice cannot be refunded.', code: 'ALREADY_VOIDED' };
+    }
+    if (invoice.payment_status !== 'paid') {
+      return { ok: false, error: 'Only paid invoices can be refunded.', code: 'NOT_PAID' };
+    }
+    const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!cleanReason) {
+      return { ok: false, error: 'A reason is required to refund an invoice.', code: 'REASON_REQUIRED' };
+    }
+
+    const now = new Date().toISOString();
+    const cleanActor = typeof actor === 'string' ? actor.slice(0, 60) : null;
+
+    this.invoices = this.invoices.map(inv => {
+      if (inv.id !== invoice.id) return inv;
+      const patched = {
+        ...inv,
+        payment_status: 'refunded',
+        refund_at: now,
+        refund_reason: cleanReason.slice(0, 240),
+        refund_by: cleanActor
+      };
+      if (Array.isArray(inv.splits) && inv.splits.length > 0) {
+        patched.splits = inv.splits.map(s => (
+          s.payment_status === 'paid'
+            ? { ...s, payment_status: 'refunded', refund_at: now, refund_reason: cleanReason.slice(0, 240), refund_by: cleanActor }
+            : s
+        ));
+      }
+      return patched;
+    });
+    this.save();
+    return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
+  }
+}
+
+function cleanPaymentRef(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Payment reference is opaque to the hub — it's whatever the provider
+  // hands back (UPI txn id, card auth code, etc.). Cap the length so a
+  // paste of a whole payload can't blow the invoice JSON up.
+  return trimmed.slice(0, 80);
 }
 
 export const invoiceStore = new InvoiceStore();

@@ -172,11 +172,15 @@ CREATE TABLE IF NOT EXISTS public.invoices (
     ticket_ids JSONB NOT NULL DEFAULT '[]'::jsonb, -- Local hub ticket ids folded into this bill
     payment_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'refunded', 'voided')),
     payment_method VARCHAR(20), -- 'cash' | 'upi' | 'card' | 'other' | 'split' (populated on mark-paid)
+    payment_ref VARCHAR(80), -- Provider-supplied reference (UPI txn id, card auth code, …)
     paid_at TIMESTAMPTZ,
     paid_by VARCHAR(60),
     voided_at TIMESTAMPTZ,
     voided_reason TEXT,
     voided_by VARCHAR(60),
+    refund_at TIMESTAMPTZ,
+    refund_reason TEXT,
+    refund_by VARCHAR(60),
     -- Split-bill: JSONB list of shares; sum(share_amount) === grand_total
     -- when set. Each entry: { index, label, share_amount, payment_status,
     -- payment_method, paid_at, paid_by }. Item splits also carry

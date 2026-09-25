@@ -516,7 +516,8 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
 
   const result = invoiceStore.markPaid(req.params.id, pairing.restaurant_id, {
     method: body.payment_method,
-    actor: body.actor
+    actor: body.actor,
+    payment_ref: body.payment_ref
   });
 
   if (!result.ok) {
@@ -527,6 +528,26 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
   broadcast('INVOICE_PAID', { invoice: result.invoice });
   console.log(`💰 Marked ${result.invoice.invoice_number} paid · ${result.invoice.payment_method} · ${result.invoice.currency || '₹'}${result.invoice.grand_total}`);
 
+  res.json({ success: true, invoice: result.invoice });
+});
+
+// 7e-2. POST /invoices/:id/refund — Reverse a paid invoice (parent + all paid splits)
+app.post('/invoices/:id/refund', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const result = invoiceStore.refund(req.params.id, pairing.restaurant_id, {
+    reason: body.reason,
+    actor: body.actor
+  });
+
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+
+  broadcast('INVOICE_REFUNDED', { invoice: result.invoice });
+  console.log(`↩︎ Refunded ${result.invoice.invoice_number} · ${result.invoice.currency || '₹'}${result.invoice.grand_total} · reason: ${result.invoice.refund_reason}`);
   res.json({ success: true, invoice: result.invoice });
 });
 
@@ -613,7 +634,8 @@ app.post('/invoices/:id/splits/:index/mark-paid', requireDevice, (req, res) => {
   const result = invoiceStore.markSplitPaid(req.params.id, pairing.restaurant_id, {
     splitIndex: Number(req.params.index),
     method: body.payment_method,
-    actor: body.actor
+    actor: body.actor,
+    payment_ref: body.payment_ref
   });
 
   if (!result.ok) {

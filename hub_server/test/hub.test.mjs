@@ -1070,6 +1070,124 @@ test('M1: split-by-items rejects out-of-range indices', async () => {
   assert.match((await res.json()).error, /out of range/);
 });
 
+// ---------------------------------------------------------------------------
+// M1 — refund + payment reference
+// ---------------------------------------------------------------------------
+
+test('M1: refund requires auth', async () => {
+  const res = await api('/invoices/inv_x/refund', {
+    method: 'POST', body: JSON.stringify({ reason: 'x' })
+  });
+  assert.equal(res.status, 401);
+});
+
+test('M1: refund on an unpaid invoice is refused', async () => {
+  const invoice = await issueInvoiceForTable(60);
+  const res = await api(`/invoices/${invoice.id}/refund`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'oops' })
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, 'NOT_PAID');
+});
+
+test('M1: refund without a reason is refused', async () => {
+  const invoice = await issueInvoiceForTable(61);
+  await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+  const res = await api(`/invoices/${invoice.id}/refund`, {
+    auth: true, method: 'POST', body: JSON.stringify({})
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, 'REASON_REQUIRED');
+});
+
+test('M1: refund flips paid → refunded and records reason + timestamp', async () => {
+  const invoice = await issueInvoiceForTable(62);
+  await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'card', payment_ref: 'auth_98765' })
+  });
+  const res = await api(`/invoices/${invoice.id}/refund`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'Customer complaint' })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.invoice.payment_status, 'refunded');
+  assert.equal(body.invoice.refund_reason, 'Customer complaint');
+  assert.ok(body.invoice.refund_at);
+  // Original payment metadata stays put for audit
+  assert.equal(body.invoice.payment_method, 'card');
+  assert.equal(body.invoice.payment_ref, 'auth_98765');
+});
+
+test('M1: double refund is refused', async () => {
+  const invoice = await issueInvoiceForTable(63);
+  await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+  await api(`/invoices/${invoice.id}/refund`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
+  });
+  const second = await api(`/invoices/${invoice.id}/refund`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
+  });
+  assert.equal(second.status, 400);
+  assert.equal((await second.json()).code, 'ALREADY_REFUNDED');
+});
+
+test('M1: refunding a split invoice reverses every paid share', async () => {
+  const invoice = await issueInvoiceForTable(64, [{ id: 'm1', qty: 2 }]);
+  await api(`/invoices/${invoice.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
+  });
+  await api(`/invoices/${invoice.id}/splits/1/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
+  });
+
+  const res = await api(`/invoices/${invoice.id}/refund`, {
+    auth: true, method: 'POST', body: JSON.stringify({ reason: 'Card rejected in reconcile' })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.invoice.payment_status, 'refunded');
+  assert.equal(body.invoice.splits[0].payment_status, 'refunded');
+  assert.equal(body.invoice.splits[0].payment_method, 'cash', 'original method stays for audit');
+  assert.equal(body.invoice.splits[0].refund_reason, 'Card rejected in reconcile');
+  assert.equal(body.invoice.splits[1].payment_status, 'refunded');
+});
+
+test('M1: payment_ref survives mark-paid → refund roundtrip on both parent and split', async () => {
+  // Parent
+  const invoiceA = await issueInvoiceForTable(65);
+  const paid = await api(`/invoices/${invoiceA.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi', payment_ref: 'UPI/2026/xyz' })
+  });
+  assert.equal((await paid.json()).invoice.payment_ref, 'UPI/2026/xyz');
+
+  // Split
+  const invoiceB = await issueInvoiceForTable(66);
+  await api(`/invoices/${invoiceB.id}/split-by-seats`, {
+    auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
+  });
+  const splitPaid = await api(`/invoices/${invoiceB.id}/splits/0/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'card', payment_ref: 'auth_abc123' })
+  });
+  assert.equal((await splitPaid.json()).invoice.splits[0].payment_ref, 'auth_abc123');
+});
+
+test('M1: payment_ref longer than 80 chars is trimmed', async () => {
+  const invoice = await issueInvoiceForTable(67);
+  const long = 'x'.repeat(200);
+  const paid = await api(`/invoices/${invoice.id}/mark-paid`, {
+    auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi', payment_ref: long })
+  });
+  const body = await paid.json();
+  assert.equal(body.invoice.payment_ref.length, 80);
+});
+
 test('M1: item-split shares settle and roll up parent identically', async () => {
   await createOrder(56, [{ id: 'm1', qty: 2 }, { id: 'm2', qty: 1 }]);
   const { invoice } = await closeTable(56);

@@ -35,6 +35,9 @@ const KitchenHubApp = () => {
   // Item-split state (M1 PR 6). Kept as an array `assignments[itemIndex] = splitIndex`
   // plus a `count` so the picker can render N pills per row.
   const [itemSplitDraft, setItemSplitDraft] = useState(null);
+  // Optional payment reference (UPI txn id, card auth code…). Cleared when the
+  // modal is dismissed. Applies to both parent mark-paid and per-split mark-paid.
+  const [paymentRef, setPaymentRef] = useState('');
 
   const hubHost = typeof window !== 'undefined'
     ? (window.location.port === '4000'
@@ -301,6 +304,7 @@ const KitchenHubApp = () => {
     setBillError('');
     setAmountSplitDraft(null);
     setItemSplitDraft(null);
+    setPaymentRef('');
   };
 
   // Close the bill with whatever the modal is currently showing.
@@ -336,17 +340,50 @@ const KitchenHubApp = () => {
     if (!billInvoice?.id) return;
     setBillLoading(true);
     try {
+      const payload = { payment_method: method };
+      const ref = paymentRef.trim();
+      if (ref) payload.payment_ref = ref;
       const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/mark-paid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_method: method })
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.invoice) {
+        setBillInvoice(data.invoice);
+        setBillError('');
+        setPaymentRef('');
+      } else {
+        setBillError(data.error || 'Could not mark invoice paid.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
+  };
+
+  // Refund a paid invoice — reception is prompted for a required reason.
+  // For split invoices, every paid share flips to refunded server-side too.
+  const refundInvoice = async () => {
+    if (!billInvoice?.id) return;
+    const reason = window.prompt(
+      `Refund ${billInvoice.invoice_number} (${billInvoice.currency}${billInvoice.grand_total})?\n\nReason:`
+    );
+    if (!reason || !reason.trim()) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/refund`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim() })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.invoice) {
         setBillInvoice(data.invoice);
         setBillError('');
       } else {
-        setBillError(data.error || 'Could not mark invoice paid.');
+        setBillError(data.error || 'Could not refund the invoice.');
       }
     } catch (err) {
       setBillError(`Hub unreachable: ${err.message}`);
@@ -500,15 +537,19 @@ const KitchenHubApp = () => {
     if (!billInvoice?.id) return;
     setBillLoading(true);
     try {
+      const payload = { payment_method: method };
+      const ref = paymentRef.trim();
+      if (ref) payload.payment_ref = ref;
       const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/splits/${splitIndex}/mark-paid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_method: method })
+        body: JSON.stringify(payload)
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.invoice) {
         setBillInvoice(data.invoice);
         setBillError('');
+        setPaymentRef('');
       } else {
         setBillError(data.error || 'Could not mark split paid.');
       }
@@ -1061,14 +1102,54 @@ const KitchenHubApp = () => {
                             }}>
                               {billInvoice.payment_status === 'paid' && `✓ ${billInvoice.invoice_number} · Paid · ${billInvoice.payment_method?.toUpperCase()}`}
                               {billInvoice.payment_status === 'voided' && `✕ ${billInvoice.invoice_number} · Voided`}
+                              {billInvoice.payment_status === 'refunded' && `↩ ${billInvoice.invoice_number} · Refunded`}
                               {billInvoice.payment_status === 'pending' && `⏳ ${billInvoice.invoice_number} · Awaiting payment`}
                             </div>
+
+                            {billInvoice.payment_status === 'paid' && billInvoice.payment_ref && (
+                              <div style={{ fontSize: '11px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', textAlign: 'center' }}>
+                                Ref: {billInvoice.payment_ref}
+                              </div>
+                            )}
+
+                            {billInvoice.payment_status === 'paid' && (
+                              <button
+                                onClick={refundInvoice}
+                                disabled={billLoading}
+                                style={{
+                                  padding: '8px 10px', borderRadius: 'var(--radius-full)',
+                                  background: 'transparent', color: 'var(--status-rust-text)',
+                                  border: '1px solid var(--status-rust-border)', fontWeight: 700, fontSize: '12px',
+                                  cursor: billLoading ? 'not-allowed' : 'pointer'
+                                }}
+                              >
+                                Refund invoice
+                              </button>
+                            )}
+
+                            {billInvoice.payment_status === 'refunded' && billInvoice.refund_reason && (
+                              <div style={{ fontSize: '11px', color: 'var(--color-muted)', textAlign: 'center', fontStyle: 'italic' }}>
+                                Reason: {billInvoice.refund_reason}
+                              </div>
+                            )}
 
                             {billInvoice.payment_status === 'pending' && !billInvoice.splits && (
                               <>
                                 <div style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
                                   Mark paid
                                 </div>
+                                <input
+                                  type="text"
+                                  value={paymentRef}
+                                  onChange={e => setPaymentRef(e.target.value)}
+                                  placeholder="Payment reference (optional, e.g. UPI txn id)"
+                                  maxLength={80}
+                                  style={{
+                                    padding: '6px 8px', fontSize: '12px', fontFamily: 'var(--font-mono)',
+                                    border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)',
+                                    color: 'var(--color-ink)'
+                                  }}
+                                />
                                 <div style={{ display: 'flex', gap: '6px' }}>
                                   {['cash', 'upi', 'card', 'other'].map(m => (
                                     <button
@@ -1407,6 +1488,18 @@ const KitchenHubApp = () => {
 
                             {billInvoice.payment_status === 'pending' && Array.isArray(billInvoice.splits) && billInvoice.splits.length > 0 && (
                               <>
+                                <input
+                                  type="text"
+                                  value={paymentRef}
+                                  onChange={e => setPaymentRef(e.target.value)}
+                                  placeholder="Payment reference for next split (optional)"
+                                  maxLength={80}
+                                  style={{
+                                    padding: '6px 8px', fontSize: '12px', fontFamily: 'var(--font-mono)',
+                                    border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-xs)',
+                                    color: 'var(--color-ink)'
+                                  }}
+                                />
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                   <span style={{ fontSize: '11px', color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
                                     Split into {billInvoice.splits.length} {billInvoice.split_mode === 'seats' ? 'seats' : 'shares'}
