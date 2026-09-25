@@ -17,6 +17,7 @@ import { restaurantCache } from './lib/restaurantCache.js';
 import { priceOrder } from './lib/pricing.js';
 import { buildInvoicePreview } from './lib/invoice.js';
 import { invoiceStore } from './lib/invoiceStore.js';
+import { renderKot, renderReceipt, sendToPrinter } from './lib/printer.js';
 import { deviceAuth, requireDevice, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -284,6 +285,12 @@ app.post('/orders', requireDevice, (req, res) => {
   // Step 3: Asynchronously trigger background cloud sync
   syncQueue.enqueueTicket(newTicket);
 
+  // Step 4: Fire-and-forget auto-KOT print if a printer is configured.
+  // Never blocks the order response — a stuck printer must not lose the
+  // order in the kitchen. Success/failure is logged and observable via
+  // POST /orders/:id/print-kot as a manual retry.
+  autoPrintKot(newTicket, pairing).catch(() => {});
+
   // Immediate success response to waiter handset
   res.status(201).json({
     success: true,
@@ -291,6 +298,20 @@ app.post('/orders', requireDevice, (req, res) => {
     ticket: newTicket
   });
 });
+
+async function autoPrintKot(ticket, pairing) {
+  const printers = hubConfig.getPrinters('kot');
+  if (printers.length === 0) return; // No KOT printer configured — silent no-op.
+  const job = renderKot(ticket, pairing);
+  for (const p of printers) {
+    const res = await sendToPrinter(job, { host: p.host, port: p.port });
+    if (res.ok) {
+      console.log(`🖨  KOT ${ticket.table_name || 'Table'} · #${ticket.ticket_number} → ${p.id} (${res.sent_bytes ?? 0} bytes)`);
+    } else {
+      console.warn(`🖨  KOT print failed on ${p.id}: ${res.error} [${res.code}]`);
+    }
+  }
+}
 
 // 4. GET /orders/active — Kitchen display restores open tickets on connect/reload
 app.get('/orders/active', requireDevice, (req, res) => {
@@ -529,6 +550,56 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
   console.log(`💰 Marked ${result.invoice.invoice_number} paid · ${result.invoice.payment_method} · ${result.invoice.currency || '₹'}${result.invoice.grand_total}`);
 
   res.json({ success: true, invoice: result.invoice });
+});
+
+// 7d-2. GET /printers — Configured printers (safe to expose to reception UI)
+app.get('/printers', requireDevice, (req, res) => {
+  res.json({ success: true, printers: hubConfig.getPrinters() });
+});
+
+// 7d-3. POST /orders/:id/print-kot — Explicit reprint of a ticket's KOT
+app.post('/orders/:id/print-kot', requireDevice, async (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const id = req.params.id;
+  const ticket = ticketStore.getAllTickets(pairing.restaurant_id).find(t =>
+    t.id === id || String(t.ticket_number) === String(id)
+  );
+  if (!ticket) return res.status(404).json({ success: false, error: 'Ticket not found.', code: 'NOT_FOUND' });
+
+  const job = renderKot(ticket, pairing);
+  const printers = hubConfig.getPrinters('kot');
+  const results = [];
+  if (printers.length === 0) {
+    results.push({ printer_id: 'preview', ok: true, preview: true });
+  } else {
+    for (const p of printers) {
+      const r = await sendToPrinter(job, { host: p.host, port: p.port });
+      results.push({ printer_id: p.id, ...r });
+    }
+  }
+  console.log(`🖨  KOT reprint #${ticket.ticket_number} → ${results.map(r => `${r.printer_id}:${r.ok ? 'ok' : r.code}`).join(', ')}`);
+  res.json({ success: true, ticket_id: ticket.id, results, preview_text: job.preview_text });
+});
+
+// 7d-4. POST /invoices/:id/print-receipt — Customer receipt for the reception printer
+app.post('/invoices/:id/print-receipt', requireDevice, async (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const invoice = invoiceStore.getInvoice(req.params.id, pairing.restaurant_id);
+  if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found.', code: 'NOT_FOUND' });
+
+  const job = renderReceipt(invoice, pairing);
+  const printers = hubConfig.getPrinters('receipt');
+  const results = [];
+  if (printers.length === 0) {
+    results.push({ printer_id: 'preview', ok: true, preview: true });
+  } else {
+    for (const p of printers) {
+      const r = await sendToPrinter(job, { host: p.host, port: p.port });
+      results.push({ printer_id: p.id, ...r });
+    }
+  }
+  console.log(`🧾 Receipt ${invoice.invoice_number} → ${results.map(r => `${r.printer_id}:${r.ok ? 'ok' : r.code}`).join(', ')}`);
+  res.json({ success: true, invoice_number: invoice.invoice_number, results, preview_text: job.preview_text });
 });
 
 // 7e-2. POST /invoices/:id/refund — Reverse a paid invoice (parent + all paid splits)

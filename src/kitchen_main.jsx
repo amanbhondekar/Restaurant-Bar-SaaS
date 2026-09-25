@@ -38,6 +38,9 @@ const KitchenHubApp = () => {
   // Optional payment reference (UPI txn id, card auth code…). Cleared when the
   // modal is dismissed. Applies to both parent mark-paid and per-split mark-paid.
   const [paymentRef, setPaymentRef] = useState('');
+  // Rendered receipt preview shown after a print request completes. When set,
+  // an overlay renders the monospace preview_text with a Close button.
+  const [printPreview, setPrintPreview] = useState(null); // { title, text, previewOnly }
 
   const hubHost = typeof window !== 'undefined'
     ? (window.location.port === '4000'
@@ -305,6 +308,35 @@ const KitchenHubApp = () => {
     setAmountSplitDraft(null);
     setItemSplitDraft(null);
     setPaymentRef('');
+    setPrintPreview(null);
+  };
+
+  // Ask the hub to print (or preview, if no printer is configured) the
+  // customer receipt for the currently-open invoice.
+  const printReceipt = async () => {
+    if (!billInvoice?.id) return;
+    setBillLoading(true);
+    try {
+      const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/print-receipt`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const target = data.results?.[0];
+        setPrintPreview({
+          title: `Receipt · ${billInvoice.invoice_number}`,
+          text: data.preview_text || '',
+          previewOnly: !!target?.preview,
+          status: target ? (target.ok ? (target.preview ? 'preview' : 'sent') : 'error') : 'preview',
+          error: target && !target.ok ? target.error : null
+        });
+        setBillError('');
+      } else {
+        setBillError(data.error || 'Could not print receipt.');
+      }
+    } catch (err) {
+      setBillError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBillLoading(false);
+    }
   };
 
   // Close the bill with whatever the modal is currently showing.
@@ -1112,6 +1144,21 @@ const KitchenHubApp = () => {
                               </div>
                             )}
 
+                            {(billInvoice.payment_status === 'paid' || billInvoice.payment_status === 'refunded') && (
+                              <button
+                                onClick={printReceipt}
+                                disabled={billLoading}
+                                style={{
+                                  padding: '8px 10px', borderRadius: 'var(--radius-full)',
+                                  background: 'var(--color-primary)', color: '#fff',
+                                  border: 'none', fontWeight: 700, fontSize: '12px',
+                                  cursor: billLoading ? 'not-allowed' : 'pointer'
+                                }}
+                              >
+                                Print receipt
+                              </button>
+                            )}
+
                             {billInvoice.payment_status === 'paid' && (
                               <button
                                 onClick={refundInvoice}
@@ -1599,6 +1646,68 @@ const KitchenHubApp = () => {
                       </>
                     )}
                   </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Print preview overlay (M1 PR 8) */}
+          <AnimatePresence>
+            {printPreview && (
+              <motion.div
+                key="print-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                onClick={() => setPrintPreview(null)}
+                style={{
+                  position: 'fixed', inset: 0, background: 'rgba(15, 15, 15, 0.65)',
+                  zIndex: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+                }}
+              >
+                <motion.div
+                  key="print-card"
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: '#ffffff', borderRadius: 'var(--radius-md)', width: '100%',
+                    maxWidth: '520px', border: '1px solid var(--color-hairline)',
+                    boxShadow: '0 24px 64px rgba(0,0,0,0.25)',
+                    display: 'flex', flexDirection: 'column', maxHeight: '85vh'
+                  }}
+                >
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '12px 16px', borderBottom: '1px solid var(--color-hairline)'
+                  }}>
+                    <div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '15px', color: 'var(--color-ink)' }}>
+                        {printPreview.title}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                        {printPreview.status === 'sent' && '✓ Sent to printer'}
+                        {printPreview.status === 'preview' && '👁 Preview only · no printer configured'}
+                        {printPreview.status === 'error' && `✕ Printer error: ${printPreview.error}`}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setPrintPreview(null)}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: 4 }}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <pre style={{
+                    margin: 0, padding: '14px 16px', overflow: 'auto',
+                    fontFamily: 'var(--font-mono)', fontSize: '11px', lineHeight: 1.35,
+                    color: 'var(--color-ink)', background: 'var(--color-surface-soft)',
+                    whiteSpace: 'pre'
+                  }}>
+{printPreview.text || '(nothing to preview)'}
+                  </pre>
                 </motion.div>
               </motion.div>
             )}

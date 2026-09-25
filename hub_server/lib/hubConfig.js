@@ -75,6 +75,33 @@ class HubConfig {
     return { ...this.config };
   }
 
+  /**
+   * Return the tenant's configured printers. Optional `role` filter picks
+   * only 'kot' or 'receipt' printers. When no printers are configured for
+   * a role, the printer routes fall back to preview mode so the flow works
+   * end-to-end without hardware.
+   *
+   * Config shape on hub_config.json:
+   *   "printers": [
+   *     { "id": "kitchen-1", "role": "kot",     "host": "192.168.1.60", "port": 9100 },
+   *     { "id": "front-1",   "role": "receipt", "host": "192.168.1.61", "port": 9100 }
+   *   ]
+   */
+  getPrinters(role) {
+    const raw = Array.isArray(this.config?.printers) ? this.config.printers : [];
+    const cleaned = raw
+      .filter(p => p && typeof p === 'object' && p.host)
+      .map(p => ({
+        id: String(p.id || `${p.role || 'printer'}-${p.host}`),
+        role: p.role === 'kot' ? 'kot' : 'receipt',
+        host: String(p.host),
+        port: Number(p.port) || 9100,
+        name: p.name ? String(p.name).slice(0, 40) : null
+      }));
+    if (!role) return cleaned;
+    return cleaned.filter(p => p.role === role);
+  }
+
   async pairWithCode(code) {
     if (!code || typeof code !== 'string') {
       return { success: false, error: 'Pairing code is required' };

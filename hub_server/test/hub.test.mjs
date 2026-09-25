@@ -1209,3 +1209,162 @@ test('M1: item-split shares settle and roll up parent identically', async () => 
   assert.equal(body.invoice.payment_status, 'paid');
   assert.equal(body.invoice.payment_method, 'split');
 });
+
+// ---------------------------------------------------------------------------
+// M1 — ESC/POS thermal printing (KOT + receipt)
+// ---------------------------------------------------------------------------
+
+// Pure encoder / renderer tests — run in-process without hitting the child hub.
+import { init, alignCenter, bold, cut, size, sanitiseForPrinter, build } from '../lib/escpos.js';
+import { renderKot, renderReceipt, sendToPrinter } from '../lib/printer.js';
+
+test('escpos: init and cut emit the documented ESC @ and GS V 0 sequences', () => {
+  assert.deepEqual([...init()], [0x1B, 0x40]);
+  assert.deepEqual([...cut()], [0x1D, 0x56, 0x00]);
+});
+
+test('escpos: alignCenter, bold(true), size(2,2) match ESC/POS reference bytes', () => {
+  assert.deepEqual([...alignCenter()], [0x1B, 0x61, 0x01]);
+  assert.deepEqual([...bold(true)], [0x1B, 0x45, 0x01]);
+  assert.deepEqual([...size(2, 2)], [0x1D, 0x21, 0x11]);
+});
+
+test('escpos: sanitiseForPrinter rewrites Rupee and other CP437-unsafe characters', () => {
+  assert.equal(sanitiseForPrinter('₹500'), 'Rs 500');
+  assert.equal(sanitiseForPrinter('a–b—c'), 'a-b-c');
+});
+
+test('escpos: build concatenates commands and strings in order', () => {
+  const buf = build(init(), 'X', cut());
+  assert.deepEqual([...buf], [0x1B, 0x40, 0x58, 0x1D, 0x56, 0x00]);
+});
+
+test('renderKot contains table, ticket number, waiter, and every item in preview_text', () => {
+  const ticket = {
+    id: 't_x',
+    ticket_number: 42,
+    table_name: 'T8',
+    created_by_waiter: 'Vikram (W1)',
+    created_at: '2026-09-25T12:30:00.000Z',
+    items: [
+      { name: 'Paneer Tikka', qty: 2, price: 230 },
+      { name: 'Chicken Sukka', qty: 1, price: 220 }
+    ],
+    note: 'Extra spicy'
+  };
+  const { escpos: bytes, preview_text } = renderKot(ticket, { name: 'Hotel Mejwani' });
+  assert.match(preview_text, /KITCHEN ORDER TICKET/);
+  assert.match(preview_text, /T8.*#42/);
+  assert.match(preview_text, /Vikram \(W1\)/);
+  assert.match(preview_text, /2x Paneer Tikka/);
+  assert.match(preview_text, /1x Chicken Sukka/);
+  assert.match(preview_text, /Note: Extra spicy/);
+  assert.equal(bytes[0], 0x1B); assert.equal(bytes[1], 0x40);
+  assert.deepEqual([...bytes.subarray(-3)], [0x1D, 0x56, 0x00]);
+});
+
+test('renderReceipt shows tenant name, invoice number, discount/service/tax rows, and grand total', () => {
+  const tenant = { name: 'Hotel Mejwani', city: 'Nagpur', phone: '+91-9422133445' };
+  const invoice = {
+    invoice_number: 'INV-000042',
+    table_name: 'T8',
+    currency: '₹',
+    issued_at: '2026-09-25T12:45:00.000Z',
+    subtotal: 833,
+    discount_rows: [{ type: 'percent', value: 10, reason: 'Loyalty', amount: 83.3 }],
+    discount_total: 83.3,
+    subtotal_after_discount: 749.7,
+    service_charge_percent: 5,
+    service_charge_amount: 37.49,
+    taxable_base: 787.19,
+    tax_rows: [
+      { label: 'CGST', rate_percent: 2.5, taxable_amount: 787.19, amount: 19.68 },
+      { label: 'SGST', rate_percent: 2.5, taxable_amount: 787.19, amount: 19.68 }
+    ],
+    tax_total: 39.36,
+    grand_total: 827,
+    items: [
+      { name: 'Paneer Tikka', qty: 1, price: 230, line_total: 230, ticket_number: 133 },
+      { name: 'Chicken Sukka', qty: 1, price: 220, line_total: 220, ticket_number: 133 }
+    ],
+    payment_status: 'paid',
+    payment_method: 'upi',
+    payment_ref: 'UPI/2026/9F82AB'
+  };
+  const { preview_text, escpos: bytes } = renderReceipt(invoice, tenant);
+  assert.match(preview_text, /Hotel Mejwani/);
+  assert.match(preview_text, /Nagpur/);
+  assert.match(preview_text, /INV-000042/);
+  assert.match(preview_text, /Paneer Tikka/);
+  assert.match(preview_text, /Discount \(10%\)/);
+  assert.match(preview_text, /Service charge \(5%\)/);
+  assert.match(preview_text, /CGST \(2\.5%\)/);
+  assert.match(preview_text, /SGST \(2\.5%\)/);
+  assert.match(preview_text, /GRAND TOTAL/);
+  // preview_text keeps the ₹ glyph so reception's monospace view reads naturally.
+  assert.match(preview_text, /₹827/);
+  assert.match(preview_text, /Paid: UPI/);
+  assert.match(preview_text, /Ref: UPI\/2026\/9F82AB/);
+  // The ESC/POS byte stream, on the other hand, MUST rewrite ₹ to Rs so a
+  // CP437 printer doesn't emit `?`s.
+  const asString = bytes.toString('binary');
+  assert.ok(asString.includes('Rs 827'), 'escpos bytes must rewrite ₹ to Rs for CP437 printers');
+});
+
+test('renderReceipt banners unpaid preview and refunded receipts differently', () => {
+  const base = { invoice_number: 'X', items: [{name:'a', qty:1, price:1, line_total:1}], subtotal:1, grand_total:1, tax_rows:[], currency:'₹' };
+  assert.match(renderReceipt({ ...base, payment_status: 'pending' }, {}).preview_text, /UNPAID/);
+  assert.match(renderReceipt({ ...base, payment_status: 'refunded' }, {}).preview_text, /REFUNDED/);
+});
+
+test('sendToPrinter in preview mode returns ok without dialling out', async () => {
+  const job = renderKot({ ticket_number: 1, table_name: 'T1', created_at: new Date().toISOString(), items: [{ name: 'X', qty: 1 }] });
+  const res = await sendToPrinter(job, { mode: 'preview' });
+  assert.equal(res.ok, true);
+  assert.equal(res.preview, true);
+});
+
+test('sendToPrinter surfaces a network error for an unreachable host', async () => {
+  const job = renderKot({ ticket_number: 1, table_name: 'T1', created_at: new Date().toISOString(), items: [{ name: 'X', qty: 1 }] });
+  const res = await sendToPrinter(job, { host: '127.0.0.1', port: 1 });
+  assert.equal(res.ok, false);
+  assert.ok(['CONNECT_FAILED', 'WRITE_FAILED', 'TIMEOUT'].includes(res.code));
+});
+
+test('M1: /orders/:id/print-kot returns preview text for a known ticket', async () => {
+  const created = await api('/orders', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ table_id: 80, table_name: 'T80', items: [{ id: 'm1', qty: 1 }] })
+  });
+  const { ticket } = await created.json();
+  const res = await api(`/orders/${ticket.id}/print-kot`, { auth: true, method: 'POST' });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.preview_text);
+  assert.match(body.preview_text, /KITCHEN ORDER TICKET/);
+  assert.match(body.preview_text, new RegExp(`T80.*#${ticket.ticket_number}`));
+  assert.equal(body.results[0].preview, true, 'no printer configured → preview target');
+});
+
+test('M1: /orders/:id/print-kot 404s on unknown ticket', async () => {
+  const res = await api('/orders/t_missing/print-kot', { auth: true, method: 'POST' });
+  assert.equal(res.status, 404);
+});
+
+test('M1: /invoices/:id/print-receipt returns preview text for the issued invoice', async () => {
+  const invoice = await issueInvoiceForTable(81);
+  const res = await api(`/invoices/${invoice.id}/print-receipt`, { auth: true, method: 'POST' });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.match(body.preview_text, /Test Kitchen/);
+  assert.match(body.preview_text, new RegExp(invoice.invoice_number));
+  assert.match(body.preview_text, /GRAND TOTAL/);
+});
+
+test('M1: /printers requires auth and lists nothing when no printers are configured', async () => {
+  const un = await api('/printers');
+  assert.equal(un.status, 401);
+  const ok = await api('/printers', { auth: true });
+  assert.equal(ok.status, 200);
+  assert.deepEqual((await ok.json()).printers, []);
+});
