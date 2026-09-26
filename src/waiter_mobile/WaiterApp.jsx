@@ -2,10 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FloorGrid } from './FloorGrid';
 import { RapidOrderBuilder } from './RapidOrderBuilder';
 import { OrderDraftDrawer } from './OrderDraftDrawer';
-import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw } from 'lucide-react';
+import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw, LogOut, UserCircle2 } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { usePos } from '../context/PosContext';
 import { authFetch, captureTokenFromUrl, enrollWithCode, hasToken } from '../services/hubAuth';
+import { WaiterLogin } from './WaiterLogin';
+
+const WAITER_SESSION_KEY = 'kullina_waiter_session';
 
 export const WaiterApp = () => {
   const { currentRestaurant, isMenuUninitialized: posMenuUninitialized } = usePos() || {};
@@ -38,6 +41,22 @@ export const WaiterApp = () => {
   });
   const [pairError, setPairError] = useState('');
   const [isTestingConn, setIsTestingConn] = useState(false);
+  // Which waiter is signed in on this handset. Persisted across reloads so
+  // reception doesn't have to re-enter the PIN mid-shift, cleared on Sign out.
+  const [waiterSession, setWaiterSession] = useState(() => {
+    try {
+      const raw = localStorage.getItem(WAITER_SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  const handleWaiterLogin = (waiter) => {
+    setWaiterSession(waiter);
+    try { localStorage.setItem(WAITER_SESSION_KEY, JSON.stringify(waiter)); } catch {}
+  };
+  const signOutWaiter = () => {
+    setWaiterSession(null);
+    try { localStorage.removeItem(WAITER_SESSION_KEY); } catch {}
+  };
 
   // Live Dynamic State from Hub Server
   const [liveTables, setLiveTables] = useState([]);
@@ -377,6 +396,21 @@ export const WaiterApp = () => {
     { id: 'cart',  icon: ShoppingBag, label: 'Cart', badge: totalCartCount },
   ];
 
+  // Gate the whole app on a signed-in waiter. Runs the moment the hub is
+  // reachable — device enrolment is orthogonal (the reception laptop is
+  // trusted-local and never enrols, but its waiter still needs to identify
+  // themselves). Sits before the header so a stale session can't leak a
+  // table into the wrong shift.
+  if (hubConnected && !waiterSession) {
+    return (
+      <WaiterLogin
+        hubUrl={hubUrl}
+        onLogin={handleWaiterLogin}
+        currentRestaurant={hubInfo || currentRestaurant}
+      />
+    );
+  }
+
   return (
     <div style={{
       width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column',
@@ -399,14 +433,28 @@ export const WaiterApp = () => {
               background: 'var(--color-primary)', color: 'var(--color-on-primary)', fontWeight: 800, fontSize: '12px',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-              W1
+              {waiterSession?.name ? waiterSession.name.slice(0, 1).toUpperCase() : 'W'}
             </div>
             <div>
               <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-ink)' }}>
-                {hubInfo?.name || currentRestaurant?.name || 'Hotel Mejwani'}
+                {hubInfo?.name || currentRestaurant?.name || 'Kullina POS'}
               </div>
-              <div style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)' }}>
-                Hub: {hubUrl.replace('http://', '').replace('https://', '')}
+              <div style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                {waiterSession?.name && (
+                  <>
+                    <UserCircle2 size={10} />
+                    <span>{waiterSession.name}</span>
+                    <button
+                      onClick={signOutWaiter}
+                      title="Sign out"
+                      style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center' }}
+                    >
+                      <LogOut size={10} />
+                    </button>
+                    <span style={{ opacity: 0.4 }}>·</span>
+                  </>
+                )}
+                <span>Hub: {hubUrl.replace('http://', '').replace('https://', '')}</span>
               </div>
             </div>
           </div>
@@ -567,6 +615,7 @@ export const WaiterApp = () => {
                 onClearDraft={clearDraft}
                 hubUrl={hubUrl}
                 hubConnected={hubConnected}
+                waiter={waiterSession}
               />
             </>
           )}
@@ -600,6 +649,7 @@ export const WaiterApp = () => {
               onClearDraft={clearDraft}
               hubUrl={hubUrl}
               hubConnected={hubConnected}
+              waiter={waiterSession}
             />
           )}
         </div>

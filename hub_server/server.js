@@ -18,6 +18,7 @@ import { priceOrder } from './lib/pricing.js';
 import { buildInvoicePreview } from './lib/invoice.js';
 import { invoiceStore } from './lib/invoiceStore.js';
 import { renderKot, renderReceipt, sendToPrinter } from './lib/printer.js';
+import { waiterStore } from './lib/waiterStore.js';
 import { deviceAuth, requireDevice, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -233,6 +234,22 @@ app.post('/orders', requireDevice, (req, res) => {
   const orderData = req.body;
   if (!orderData || !orderData.items || !orderData.items.length) {
     return res.status(400).json({ error: 'Order must contain at least 1 item.' });
+  }
+
+  // Stamp the ticket with the logged-in waiter's name when the handset supplies
+  // a valid waiter_id. Unknown ids are refused so a bad handset can't attribute
+  // its orders to someone else; missing ids fall back to the handset's own
+  // `created_by_waiter` string (backwards-compatible with pre-PR-9 clients).
+  if (orderData.waiter_id) {
+    const waiter = waiterStore.getById(orderData.waiter_id);
+    if (!waiter || waiter.active === false) {
+      return res.status(400).json({
+        error: 'Unknown or inactive waiter for this order.',
+        code: 'UNKNOWN_WAITER'
+      });
+    }
+    orderData.created_by_waiter = waiter.name;
+    orderData.waiter_id = waiter.id;
   }
 
   // Idempotency check: if order_request_id seen within 60s, return original ticket immediately
@@ -550,6 +567,41 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
   console.log(`💰 Marked ${result.invoice.invoice_number} paid · ${result.invoice.payment_method} · ${result.invoice.currency || '₹'}${result.invoice.grand_total}`);
 
   res.json({ success: true, invoice: result.invoice });
+});
+
+// 7c-2. GET /waiters — Active waiters (public shape only; PIN hashes never leave the hub)
+app.get('/waiters', requireDevice, (req, res) => {
+  res.json({ success: true, waiters: waiterStore.listActive() });
+});
+
+// 7c-3. POST /waiters/login — Verify a 4-digit PIN for a specific waiter
+app.post('/waiters/login', requireDevice, (req, res) => {
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = waiterStore.verify(body.waiter_id, body.pin);
+  if (!result.ok) {
+    return res.status(401).json({ success: false, error: result.error, code: result.code });
+  }
+  res.json({ success: true, waiter: result.waiter });
+});
+
+// 7c-4. POST /waiters — Add a new waiter (reception / admin flow)
+app.post('/waiters', requireDevice, (req, res) => {
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = waiterStore.addWaiter({ name: body.name, pin: body.pin });
+  if (!result.ok) {
+    return res.status(400).json({ success: false, error: result.error, code: result.code });
+  }
+  res.status(201).json({ success: true, waiter: result.waiter });
+});
+
+// 7c-5. DELETE /waiters/:id — Deactivate (soft delete preserves ticket history)
+app.delete('/waiters/:id', requireDevice, (req, res) => {
+  const result = waiterStore.deactivate(req.params.id);
+  if (!result.ok) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return res.status(status).json({ success: false, error: result.error, code: result.code });
+  }
+  res.json({ success: true });
 });
 
 // 7d-2. GET /printers — Configured printers (safe to expose to reception UI)

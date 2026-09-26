@@ -1368,3 +1368,138 @@ test('M1: /printers requires auth and lists nothing when no printers are configu
   assert.equal(ok.status, 200);
   assert.deepEqual((await ok.json()).printers, []);
 });
+
+// ---------------------------------------------------------------------------
+// M1 — Waiter PIN login (PR 9)
+// ---------------------------------------------------------------------------
+
+test('M1: /waiters requires auth and returns public shape only (no pin hashes)', async () => {
+  const un = await api('/waiters');
+  assert.equal(un.status, 401);
+  const ok = await api('/waiters', { auth: true });
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.ok(Array.isArray(body.waiters));
+  assert.ok(body.waiters.length >= 3, 'seeded waiters must be present on a fresh hub');
+  for (const w of body.waiters) {
+    assert.ok(w.id && w.name);
+    assert.equal(w.pin_hash, undefined, 'pin hash must never leave the hub');
+    assert.equal(w.pin_salt, undefined, 'pin salt must never leave the hub');
+  }
+});
+
+test('M1: /waiters/login refuses wrong PIN with 401 and a generic code', async () => {
+  const list = await (await api('/waiters', { auth: true })).json();
+  const target = list.waiters[0];
+  const res = await api('/waiters/login', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ waiter_id: target.id, pin: '0000' })
+  });
+  assert.equal(res.status, 401);
+  assert.equal((await res.json()).code, 'INVALID_CREDENTIALS');
+});
+
+test('M1: /waiters/login accepts the correct PIN and returns { waiter }', async () => {
+  const list = await (await api('/waiters', { auth: true })).json();
+  const vikram = list.waiters.find(w => w.name === 'Vikram');
+  assert.ok(vikram, 'seed waiter Vikram must exist');
+  const res = await api('/waiters/login', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ waiter_id: vikram.id, pin: '1111' })
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.waiter.id, vikram.id);
+  assert.equal(body.waiter.name, 'Vikram');
+});
+
+test('M1: unknown waiter_id also fails with the same generic 401 (no leak)', async () => {
+  const res = await api('/waiters/login', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ waiter_id: 'w_nope', pin: '1111' })
+  });
+  assert.equal(res.status, 401);
+  assert.equal((await res.json()).code, 'INVALID_CREDENTIALS');
+});
+
+test('M1: POST /waiters adds a new waiter; duplicate name refused', async () => {
+  const created = await api('/waiters', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ name: 'Aarti', pin: '4444' })
+  });
+  assert.equal(created.status, 201);
+  const body = await created.json();
+  assert.equal(body.waiter.name, 'Aarti');
+
+  const dup = await api('/waiters', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ name: 'Aarti', pin: '5555' })
+  });
+  assert.equal(dup.status, 400);
+  assert.equal((await dup.json()).code, 'DUPLICATE_NAME');
+});
+
+test('M1: POST /waiters rejects a non-4-digit PIN', async () => {
+  for (const pin of ['abc', '123', '12345', '', null]) {
+    const res = await api('/waiters', {
+      auth: true, method: 'POST',
+      body: JSON.stringify({ name: `bad-${Math.random()}`, pin })
+    });
+    assert.equal(res.status, 400, `pin ${JSON.stringify(pin)} must be rejected`);
+  }
+});
+
+test('M1: DELETE /waiters/:id deactivates and removes them from /waiters listing', async () => {
+  const created = await (await api('/waiters', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({ name: 'Temp-' + Date.now(), pin: '9999' })
+  })).json();
+  const del = await api(`/waiters/${created.waiter.id}`, { auth: true, method: 'DELETE' });
+  assert.equal(del.status, 200);
+  const listAfter = await (await api('/waiters', { auth: true })).json();
+  assert.ok(!listAfter.waiters.some(w => w.id === created.waiter.id));
+});
+
+test('M1: POST /orders with valid waiter_id stamps the waiter name on the ticket', async () => {
+  const list = await (await api('/waiters', { auth: true })).json();
+  const sanjay = list.waiters.find(w => w.name === 'Sanjay');
+  const res = await api('/orders', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({
+      table_id: 90, table_name: 'T90',
+      items: [{ id: 'm1', qty: 1 }],
+      waiter_id: sanjay.id,
+      created_by_waiter: 'lying handset string'
+    })
+  });
+  assert.equal(res.status, 201);
+  const { ticket } = await res.json();
+  assert.equal(ticket.created_by_waiter, 'Sanjay', 'server must trust the id, not the handset string');
+});
+
+test('M1: POST /orders with unknown waiter_id refuses with UNKNOWN_WAITER', async () => {
+  const res = await api('/orders', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({
+      table_id: 91, table_name: 'T91',
+      items: [{ id: 'm1', qty: 1 }],
+      waiter_id: 'w_ghost'
+    })
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, 'UNKNOWN_WAITER');
+});
+
+test('M1: POST /orders without waiter_id still works (backwards-compat)', async () => {
+  const res = await api('/orders', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({
+      table_id: 92, table_name: 'T92',
+      items: [{ id: 'm1', qty: 1 }],
+      created_by_waiter: 'Legacy Handset'
+    })
+  });
+  assert.equal(res.status, 201);
+  const { ticket } = await res.json();
+  assert.equal(ticket.created_by_waiter, 'Legacy Handset');
+});

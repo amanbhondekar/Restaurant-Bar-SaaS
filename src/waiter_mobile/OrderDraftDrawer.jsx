@@ -4,7 +4,7 @@ import { Send, Trash2, Edit3, Wifi } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { authFetch } from '../services/hubAuth';
 
-export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, onClearDraft, hubUrl, hubConnected }) => {
+export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, onClearDraft, hubUrl, hubConnected, waiter = null }) => {
   const { menu, tables, currentRestaurant } = usePos();
   const [note, setNote] = useState('');
   const [sent, setSent] = useState(false);
@@ -38,7 +38,10 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
       table_name: table ? table.name : `Table ${selectedTableId}`,
       items: draftMenu.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.price })),
       note: note.trim(),
-      created_by_waiter: 'Waiter Handset (PWA)'
+      // Server ignores this string and stamps waiter.name from waiter_id, so
+      // the value here is only a display fallback.
+      created_by_waiter: waiter?.name ? `${waiter.name} (PWA)` : 'Waiter Handset (PWA)',
+      waiter_id: waiter?.id || undefined
     };
 
     try {

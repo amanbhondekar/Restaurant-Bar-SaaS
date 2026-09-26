@@ -77,7 +77,10 @@ export function buildInvoicePreview({ tickets, tableId, tableName, restaurantId,
   const orderedTickets = [...tickets].sort((a, b) => {
     const at = new Date(a.created_at || 0).getTime();
     const bt = new Date(b.created_at || 0).getTime();
-    return at - bt;
+    if (at !== bt) return at - bt;
+    // Sub-ms tie: fall back to the monotonically-increasing per-tenant
+    // ticket_number so the invoice is deterministic across runs.
+    return (Number(a.ticket_number) || 0) - (Number(b.ticket_number) || 0);
   });
 
   const items = [];
