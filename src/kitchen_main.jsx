@@ -2,7 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode, Receipt, X } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { installCrashReporter } from './services/crashReporter';
 import './index.css';
+
+installCrashReporter({ source: 'kds' });
 
 const KitchenHubApp = () => {
   const [pairingInfo, setPairingInfo] = useState(null);

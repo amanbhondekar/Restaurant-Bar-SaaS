@@ -1503,3 +1503,60 @@ test('M1: POST /orders without waiter_id still works (backwards-compat)', async 
   const { ticket } = await res.json();
   assert.equal(ticket.created_by_waiter, 'Legacy Handset');
 });
+
+// ---------------------------------------------------------------------------
+// M1 — Crash reporting (PR 10)
+// ---------------------------------------------------------------------------
+
+import { crashReporter } from '../lib/crashReporter.js';
+
+test('M1: crashReporter caps entries, trims oversized fields, coerces unknown sources to hub', () => {
+  const before = crashReporter.list().length;
+  const entry = crashReporter.report({
+    source: 'martian',
+    message: 'x'.repeat(5000),
+    stack: 'y'.repeat(20000),
+    url: 'z'.repeat(2000),
+    extra: { info: 'ok' }
+  });
+  assert.equal(entry.source, 'hub', 'unknown source coerces to hub');
+  assert.equal(entry.message.length, 1000, 'message trimmed to MAX_MESSAGE_LEN');
+  assert.equal(entry.stack.length, 6000, 'stack trimmed to MAX_STACK_LEN');
+  assert.equal(entry.url.length, 500);
+  assert.deepEqual(entry.extra, { info: 'ok' });
+  const after = crashReporter.list().length;
+  assert.equal(after, before + 1);
+});
+
+test('M1: POST /crash-report accepts unauthenticated calls (fail-open) and returns 202', async () => {
+  const res = await api('/crash-report', {
+    method: 'POST',
+    body: JSON.stringify({
+      source: 'kds',
+      message: 'TypeError: Cannot read properties of undefined',
+      stack: 'at KitchenKdsView (kitchen_main.jsx:412)',
+      url: 'http://localhost:4000/'
+    })
+  });
+  assert.equal(res.status, 202);
+  const body = await res.json();
+  assert.match(body.id, /^crash_/);
+});
+
+test('M1: GET /crash-log requires auth and lists the entry we just posted', async () => {
+  // Post a distinctive marker first.
+  const marker = 'MARK-CRASH-' + Math.random().toString(36).slice(2, 8);
+  await api('/crash-report', {
+    method: 'POST',
+    body: JSON.stringify({ source: 'waiter', message: marker })
+  });
+
+  const un = await api('/crash-log');
+  assert.equal(un.status, 401);
+
+  const ok = await api('/crash-log?limit=5', { auth: true });
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.ok(Array.isArray(body.entries));
+  assert.ok(body.entries.some(e => e.message === marker && e.source === 'waiter'));
+});

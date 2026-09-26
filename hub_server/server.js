@@ -19,6 +19,9 @@ import { buildInvoicePreview } from './lib/invoice.js';
 import { invoiceStore } from './lib/invoiceStore.js';
 import { renderKot, renderReceipt, sendToPrinter } from './lib/printer.js';
 import { waiterStore } from './lib/waiterStore.js';
+import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
+
+attachHubProcessHandlers();
 import { deviceAuth, requireDevice, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -909,6 +912,33 @@ app.get('/sync-status', requireDevice, (req, res) => {
     ...syncQueue.getStatus(),
     pairing: hubConfig.getPairingInfo()
   });
+});
+
+// 8b. POST /crash-report — Client-side crash sink for the KDS + waiter PWA
+//
+// Intentionally NOT gated behind requireDevice — a crash could happen before
+// the handset finished enrolling, and losing that crash to a 401 is worse
+// than accepting one from a device that doesn't own a token yet. Payloads are
+// heavily size-capped in the reporter itself, and CORS is already restricted
+// to LAN/loopback so this isn't reachable from a public tab.
+app.post('/crash-report', (req, res) => {
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const entry = crashReporter.report({
+    source: body.source,
+    message: body.message,
+    stack: body.stack,
+    url: body.url,
+    user_agent: body.user_agent || req.get('user-agent'),
+    extra: body.extra
+  });
+  console.warn(`💥 crash reported · ${entry.source} · ${entry.message}`);
+  res.status(202).json({ success: true, id: entry.id });
+});
+
+// 8c. GET /crash-log — Recent crashes (auth'd, for reception debugging)
+app.get('/crash-log', requireDevice, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+  res.json({ success: true, entries: crashReporter.list({ limit }) });
 });
 
 // 9. POST /toggle-outage — Outage simulator. Demo tooling only: it forces the hub
