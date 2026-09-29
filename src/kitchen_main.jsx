@@ -856,6 +856,11 @@ const KitchenHubApp = () => {
                                 <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-ink)' }}>
                                   {item.qty > 1 && <strong style={{ color: 'var(--color-primary)' }}>{item.qty}× </strong>}
                                   {item.name}
+                                  {item.variant_label && (
+                                    <span style={{ fontSize: '12px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 4 }}>
+                                      · {item.variant_label}
+                                    </span>
+                                  )}
                                 </span>
                               </div>
                             );
@@ -996,6 +1001,11 @@ const KitchenHubApp = () => {
                                     {line.qty}×
                                   </span>
                                   {line.name}
+                                  {line.variant_label && (
+                                    <span style={{ fontSize: '11px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 6 }}>
+                                      · {line.variant_label}
+                                    </span>
+                                  )}
                                 </div>
                                 <div style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
                                   #{line.ticket_number} · {billInvoice.currency}{line.price} each

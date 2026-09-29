@@ -56,7 +56,8 @@ export function renderKot(ticket, tenant = {}) {
   const itemLines = ticket.items.map(i => {
     const qty = Number(i?.qty) || 0;
     const name = String(i?.name || '');
-    return `${qty}x ${name}`;
+    const variant = i?.variant_label ? ` (${i.variant_label})` : '';
+    return `${qty}x ${name}${variant}`;
   });
 
   const noteLines = ticket.note
@@ -124,7 +125,11 @@ export function renderReceipt(invoice, tenant = {}) {
   // "Item".padRight(20) + "Qty".padLeft(4) + "Price".padLeft(8) + "Total".padLeft(9)
   const colHeader = padRight('Item', 20) + padLeft('Qty', 4) + padLeft('Price', 8) + padLeft('Total', 9);
   const itemLines = invoice.items.map(l => {
-    const nm = String(l.name || '').slice(0, 20);
+    const base = String(l.name || '');
+    const variantSuffix = l.variant_label ? ` — ${l.variant_label}` : '';
+    // Item column is 20 chars wide; trim once the variant has been appended
+    // so "Chicken 65 — Boneless" reads correctly on an 80 mm print.
+    const nm = (base + variantSuffix).slice(0, 20);
     return padRight(nm, 20)
          + padLeft(String(l.qty), 4)
          + padLeft(String(l.price), 8)

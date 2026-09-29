@@ -71,12 +71,49 @@ export function priceOrder(rawItems, restaurantId) {
       continue;
     }
 
+    // Variant handling. When the menu item ships a `variants` array, the
+    // handset MUST pick one (the item's own `price` is a fallback for
+    // legacy items that never grew variants). If the handset supplies a
+    // variant_id that doesn't match one of them, reject the line — a
+    // silent fallback would price the whole cart at a stale amount.
+    let variantId = null;
+    let variantLabel = null;
+    let unitPrice = price;
+    const hasVariants = Array.isArray(menuItem.variants) && menuItem.variants.length > 0;
+    if (hasVariants) {
+      const raw_variant_id = raw?.variant_id;
+      if (!raw_variant_id) {
+        rejected.push({ id, name: menuItem.name, reason: 'VARIANT_REQUIRED' });
+        continue;
+      }
+      const variant = menuItem.variants.find(v => String(v.id) === String(raw_variant_id));
+      if (!variant) {
+        rejected.push({ id, name: menuItem.name, reason: 'UNKNOWN_VARIANT', variant_id: raw_variant_id });
+        continue;
+      }
+      const vp = Number(variant.price);
+      if (!Number.isFinite(vp) || vp < 0) {
+        rejected.push({ id, name: menuItem.name, reason: 'VARIANT_NOT_PRICED', variant_id: variant.id });
+        continue;
+      }
+      variantId = variant.id;
+      variantLabel = variant.label;
+      unitPrice = vp;
+    } else if (raw?.variant_id) {
+      // Item has no variants but the handset supplied one — reject rather
+      // than silently ignore, so a stale menu on the phone gets caught.
+      rejected.push({ id, name: menuItem.name, reason: 'UNKNOWN_VARIANT', variant_id: raw.variant_id });
+      continue;
+    }
+
     priced.push({
       id: menuItem.id,
       // Name and price both come from the hub, never from the request body.
       name: menuItem.name,
       qty,
-      price
+      price: unitPrice,
+      variant_id: variantId,
+      variant_label: variantLabel
     });
   }
 

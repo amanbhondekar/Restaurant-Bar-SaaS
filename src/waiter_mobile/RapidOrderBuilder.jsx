@@ -12,12 +12,42 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
   const table = tables.find(t => t.id === selectedTableId);
   const categories = ['All', ...new Set(menu.map(m => m.category))];
 
-  const filtered = menu.filter(item => {
-    if (!item.available) return false;
-    if (activeCategory !== 'All' && item.category !== activeCategory) return false;
-    if (vegFilter === 'veg' && !item.isVeg) return false;
-    if (vegFilter === 'nonveg' && item.isVeg) return false;
-    if (query.trim() && !item.name.toLowerCase().includes(query.toLowerCase())) return false;
+  // Expand items with variants into one visible row per variant. Each row
+  // carries a stable `lineKey` and the resolved shape addItem() expects.
+  // No-variant items render as a single row with `lineKey === item.id`.
+  const expandedRows = menu.flatMap(item => {
+    if (!item.available) return [];
+    if (Array.isArray(item.variants) && item.variants.length > 0) {
+      return item.variants.map(v => ({
+        lineKey: `${item.id}|${v.id}`,
+        item_id: item.id,
+        variant_id: v.id,
+        variant_label: v.label,
+        name: item.name,
+        display_name: `${item.name} — ${v.label}`,
+        price: Number(v.price) || 0,
+        isVeg: item.isVeg,
+        category: item.category
+      }));
+    }
+    return [{
+      lineKey: String(item.id),
+      item_id: item.id,
+      variant_id: null,
+      variant_label: null,
+      name: item.name,
+      display_name: item.name,
+      price: Number(item.price) || 0,
+      isVeg: item.isVeg,
+      category: item.category
+    }];
+  });
+
+  const filtered = expandedRows.filter(row => {
+    if (activeCategory !== 'All' && row.category !== activeCategory) return false;
+    if (vegFilter === 'veg' && !row.isVeg) return false;
+    if (vegFilter === 'nonveg' && row.isVeg) return false;
+    if (query.trim() && !row.display_name.toLowerCase().includes(query.toLowerCase())) return false;
     return true;
   });
 
@@ -90,11 +120,11 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
             No items match your search.
           </div>
         ) : null}
-        {filtered.map(item => {
-          const qty = draftItems[item.id] || 0;
+        {filtered.map(row => {
+          const qty = draftItems[row.lineKey]?.qty || 0;
           return (
             <div
-              key={item.id}
+              key={row.lineKey}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 background: qty > 0 ? 'var(--status-amber-bg)' : 'var(--color-canvas)',
@@ -105,13 +135,18 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                <span style={{ fontSize: '11px', flexShrink: 0 }}>{item.isVeg ? '🟢' : '🔴'}</span>
+                <span style={{ fontSize: '11px', flexShrink: 0 }}>{row.isVeg ? '🟢' : '🔴'}</span>
                 <div style={{ minWidth: 0 }}>
                   <div className="typography-title-md" style={{ color: 'var(--color-ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.name}
+                    {row.name}
+                    {row.variant_label && (
+                      <span style={{ fontSize: '11px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 6 }}>
+                        · {row.variant_label}
+                      </span>
+                    )}
                   </div>
                   <div className="typography-body-sm" style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: '1px' }}>
-                    {currency}{item.price}
+                    {currency}{row.price}
                   </div>
                 </div>
               </div>
@@ -120,7 +155,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                 {qty > 0 ? (
                   <>
                     <button
-                      onClick={() => onRemoveItem(item.id)} disabled={!selectedTableId}
+                      onClick={() => onRemoveItem(row.lineKey)} disabled={!selectedTableId}
                       style={{
                         width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
                         background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)',
@@ -134,7 +169,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                     </span>
 
                     <button
-                      onClick={() => onAddItem(item.id)} disabled={!selectedTableId}
+                      onClick={() => onAddItem(row)} disabled={!selectedTableId}
                       style={{
                         width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
                         background: 'var(--color-primary)', color: '#ffffff', border: 'none',
@@ -145,7 +180,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                   </>
                 ) : (
                   <button
-                    onClick={() => onAddItem(item.id)} disabled={!selectedTableId}
+                    onClick={() => onAddItem(row)} disabled={!selectedTableId}
                     style={{
                       padding: '6px 14px', borderRadius: 'var(--radius-sm)', fontSize: '12px', fontWeight: 500,
                       background: selectedTableId ? 'var(--color-primary)' : 'var(--color-surface-soft)',

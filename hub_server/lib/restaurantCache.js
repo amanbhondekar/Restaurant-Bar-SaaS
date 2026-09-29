@@ -17,13 +17,44 @@ if (!fs.existsSync(DATA_DIR)) {
 // Fallback seed data if Supabase tables don't exist or DB is unpopulated on first online boot
 const DEFAULT_CATEGORIES = ['Starters', 'Main Course', 'Breads & Rice', 'Desserts', 'Beverages'];
 const DEFAULT_MENU_ITEMS = [
-  { id: 'm1', name: 'Paneer Butter Masala', price: 280, category: 'Main Course', isVeg: true, available: true },
+  // Items with variants ship a `variants: [{ id, label, price }]` array. When
+  // a variant array is present, the handset MUST pick one — the top-level
+  // `price` acts as a display fallback only and is ignored by lib/pricing.js.
+  {
+    id: 'm1', name: 'Paneer Butter Masala', category: 'Main Course', isVeg: true, available: true,
+    price: 280,
+    variants: [
+      { id: 'v_half', label: 'Half', price: 180 },
+      { id: 'v_full', label: 'Full', price: 280 }
+    ]
+  },
   { id: 'm2', name: 'Dal Tadka', price: 190, category: 'Main Course', isVeg: true, available: true },
-  { id: 'm3', name: 'Chicken Tikka Masala', price: 340, category: 'Main Course', isVeg: false, available: true },
+  {
+    id: 'm3', name: 'Chicken Tikka Masala', category: 'Main Course', isVeg: false, available: true,
+    price: 340,
+    variants: [
+      { id: 'v_half', label: 'Half', price: 220 },
+      { id: 'v_full', label: 'Full', price: 340 }
+    ]
+  },
   { id: 'm4', name: 'Butter Naan', price: 45, category: 'Breads & Rice', isVeg: true, available: true },
-  { id: 'm5', name: 'Jeera Rice', price: 140, category: 'Breads & Rice', isVeg: true, available: true },
+  {
+    id: 'm5', name: 'Jeera Rice', category: 'Breads & Rice', isVeg: true, available: true,
+    price: 140,
+    variants: [
+      { id: 'v_half', label: 'Half', price: 90 },
+      { id: 'v_full', label: 'Full', price: 140 }
+    ]
+  },
   { id: 'm6', name: 'Veg Crispy', price: 220, category: 'Starters', isVeg: true, available: true },
-  { id: 'm7', name: 'Chicken 65', price: 290, category: 'Starters', isVeg: false, available: true },
+  {
+    id: 'm7', name: 'Chicken 65', category: 'Starters', isVeg: false, available: true,
+    price: 290,
+    variants: [
+      { id: 'v_boneless', label: 'Boneless', price: 320 },
+      { id: 'v_bone_in',  label: 'Bone-in',  price: 290 }
+    ]
+  },
   { id: 'm8', name: 'Gulab Jamun (2 pcs)', price: 90, category: 'Desserts', isVeg: true, available: true },
   { id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true },
 ];
@@ -125,14 +156,23 @@ class RestaurantCache {
       } catch (e) {}
 
       let categories = (catData && catData.length) ? catData.map(c => c.name || c) : [];
-      let items = (itemData && itemData.length) ? itemData.map(i => ({
-        id: i.id,
-        name: i.name,
-        price: Number(i.price) || 0,
-        category: i.category || i.category_name || 'General',
-        isVeg: i.is_veg !== undefined ? Boolean(i.is_veg) : Boolean(i.isVeg ?? true),
-        available: i.available !== undefined ? Boolean(i.available) : true
-      })) : [];
+      let items = (itemData && itemData.length) ? itemData.map(i => {
+        // Variants ship as JSONB from Supabase (`variants: [{ id, label, price }]`).
+        // Fall back to the top-level price if nothing valid comes through.
+        const rawVariants = Array.isArray(i.variants) ? i.variants : [];
+        const variants = rawVariants
+          .filter(v => v && v.id && v.label && Number.isFinite(Number(v.price)))
+          .map(v => ({ id: String(v.id), label: String(v.label).slice(0, 40), price: Number(v.price) }));
+        return {
+          id: i.id,
+          name: i.name,
+          price: Number(i.price) || 0,
+          category: i.category || i.category_name || 'General',
+          isVeg: i.is_veg !== undefined ? Boolean(i.is_veg) : Boolean(i.isVeg ?? true),
+          available: i.available !== undefined ? Boolean(i.available) : true,
+          ...(variants.length > 0 ? { variants } : {})
+        };
+      }) : [];
 
       // Fallback to default seed if Supabase table returns empty
       if (!categories.length && !items.length) {

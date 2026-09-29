@@ -1560,3 +1560,137 @@ test('M1: GET /crash-log requires auth and lists the entry we just posted', asyn
   assert.ok(Array.isArray(body.entries));
   assert.ok(body.entries.some(e => e.message === marker && e.source === 'waiter'));
 });
+
+// ---------------------------------------------------------------------------
+// M2 — Menu variants (PR 11)
+// ---------------------------------------------------------------------------
+//
+// The test-fixture menu has to grow a variant-carrying item so we can
+// exercise the pricing path end-to-end. `m5` becomes "Butter Chicken" with
+// Half ₹220 and Full ₹340 variants; existing tests don't reference it so
+// nothing else needs to change. Fixture writes happen at `before(...)`
+// which already ran, so the extension is achieved by POSTing a fresh
+// menu into the hub via a distinct table — instead we take advantage of
+// the fixture menu already containing m1/m2/m4 with flat prices and
+// simulate the variant behaviour with a `variants` field on m5 at write
+// time... but we can't write to the fixture retroactively. So instead the
+// tests below exercise the priceOrder module directly against a
+// hand-rolled menu — pure unit tests, no round-trip needed to prove the
+// pricing contract.
+
+import { priceOrder as priceOrderImpl } from '../lib/pricing.js';
+import { restaurantCache } from '../lib/restaurantCache.js';
+
+test('M2: priceOrder honours the variant price and rejects unknown / missing variants', () => {
+  // Directly stub the module-level menu cache the pricer reads from. Restore
+  // it at the end so we don't leak state into other tests. `RESTAURANT_ID`
+  // is the fixture tenant id used everywhere else in this file.
+  const originalGetMenuCache = restaurantCache.getMenuCache;
+  restaurantCache.getMenuCache = () => ({
+    uninitialized: false,
+    items: [
+      { id: 'flat', name: 'Dal Tadka', price: 190, available: true },
+      {
+        id: 'varied', name: 'Butter Chicken', price: 340, available: true,
+        variants: [
+          { id: 'v_half', label: 'Half', price: 220 },
+          { id: 'v_full', label: 'Full', price: 340 }
+        ]
+      }
+    ]
+  });
+
+  try {
+    // Legacy flat item still works with no variant_id.
+    const flat = priceOrderImpl([{ id: 'flat', qty: 2 }], RESTAURANT_ID);
+    assert.equal(flat.ok, true);
+    assert.equal(flat.items[0].price, 190);
+    assert.equal(flat.items[0].variant_id, null);
+    assert.equal(flat.total_amount, 380);
+
+    // Variant item: correct variant_id → variant price + label on the line.
+    const half = priceOrderImpl([{ id: 'varied', qty: 1, variant_id: 'v_half' }], RESTAURANT_ID);
+    assert.equal(half.ok, true);
+    assert.equal(half.items[0].price, 220);
+    assert.equal(half.items[0].variant_id, 'v_half');
+    assert.equal(half.items[0].variant_label, 'Half');
+
+    // Same item, other variant.
+    const full = priceOrderImpl([{ id: 'varied', qty: 2, variant_id: 'v_full' }], RESTAURANT_ID);
+    assert.equal(full.items[0].price, 340);
+    assert.equal(full.total_amount, 680);
+
+    // Handset-supplied price is ignored (kept from PR 1, worth re-asserting here).
+    const priceInject = priceOrderImpl([{ id: 'varied', qty: 1, variant_id: 'v_half', price: 1 }], RESTAURANT_ID);
+    assert.equal(priceInject.items[0].price, 220, 'variant price wins over any injected price');
+
+    // Missing variant_id on a variant-carrying item → line rejected with a
+    // specific reason so the UI can point reception at the culprit.
+    const missing = priceOrderImpl([{ id: 'varied', qty: 1 }], RESTAURANT_ID);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.code, 'INVALID_ITEMS');
+    assert.equal(missing.details[0].reason, 'VARIANT_REQUIRED');
+
+    // Unknown variant_id on a variant-carrying item.
+    const unknownVariant = priceOrderImpl([{ id: 'varied', qty: 1, variant_id: 'v_ghost' }], RESTAURANT_ID);
+    assert.equal(unknownVariant.ok, false);
+    assert.equal(unknownVariant.details[0].reason, 'UNKNOWN_VARIANT');
+    assert.equal(unknownVariant.details[0].variant_id, 'v_ghost');
+
+    // Variant supplied for a flat item → rejected rather than silently
+    // ignored, so a stale menu on the phone is caught.
+    const spuriousVariant = priceOrderImpl([{ id: 'flat', qty: 1, variant_id: 'v_full' }], RESTAURANT_ID);
+    assert.equal(spuriousVariant.ok, false);
+    assert.equal(spuriousVariant.details[0].reason, 'UNKNOWN_VARIANT');
+  } finally {
+    restaurantCache.getMenuCache = originalGetMenuCache;
+  }
+});
+
+test('M2: mixed cart with a variant and a flat line prices each independently', () => {
+  const originalGetMenuCache = restaurantCache.getMenuCache;
+  restaurantCache.getMenuCache = () => ({
+    uninitialized: false,
+    items: [
+      { id: 'flat', name: 'Dal Tadka', price: 190, available: true },
+      {
+        id: 'varied', name: 'Butter Chicken', price: 340, available: true,
+        variants: [
+          { id: 'v_half', label: 'Half', price: 220 },
+          { id: 'v_full', label: 'Full', price: 340 }
+        ]
+      }
+    ]
+  });
+
+  try {
+    const res = priceOrderImpl([
+      { id: 'flat', qty: 1 },
+      { id: 'varied', qty: 2, variant_id: 'v_half' }
+    ], RESTAURANT_ID);
+    assert.equal(res.ok, true);
+    assert.equal(res.items.length, 2);
+    assert.equal(res.items[0].price, 190);
+    assert.equal(res.items[0].variant_label, null);
+    assert.equal(res.items[1].price, 220);
+    assert.equal(res.items[1].variant_label, 'Half');
+    assert.equal(res.total_amount, 190 + 220 * 2);
+  } finally {
+    restaurantCache.getMenuCache = originalGetMenuCache;
+  }
+});
+
+// Round-trip through the child hub: the fixture menu on m5 doesn't have
+// variants (we don't want to touch state used by every prior test), so the
+// end-to-end path is exercised only for the flat legacy case here — the
+// variant path is fully covered by the two unit-style tests above.
+test('M2: end-to-end order without variant_id still succeeds for a legacy flat item', async () => {
+  const res = await api('/orders', {
+    auth: true, method: 'POST',
+    body: JSON.stringify({
+      table_id: 100, table_name: 'T100',
+      items: [{ id: 'm1', qty: 1 }]
+    })
+  });
+  assert.equal(res.status, 201);
+});

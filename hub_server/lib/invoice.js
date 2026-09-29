@@ -25,7 +25,11 @@ function enrichLine(ticket, line, menuById) {
     price: Number(line?.price) || 0,
     line_total: (Number(line?.qty) || 0) * (Number(line?.price) || 0),
     isVeg: menuItem?.isVeg,
-    category: menuItem?.category
+    category: menuItem?.category,
+    // Passed through so the modal, receipt renderer, and KDS ticket can
+    // render "Paneer Butter Masala — Half" without touching the menu cache.
+    variant_id: line?.variant_id || null,
+    variant_label: line?.variant_label || null
   };
 }
 

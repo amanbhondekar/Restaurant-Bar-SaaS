@@ -14,11 +14,11 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
 
   const currency = currentRestaurant?.currency || '₹';
   const table = tables.find(t => t.id === selectedTableId);
+  // M2 · PR 11 variants: draftItems is now `{ [lineKey]: { item_id, variant_id?,
+  // variant_label?, name, price, isVeg, qty } }`. Just iterate values — each
+  // row already carries the resolved variant display + price at add-time.
   const draftMenu = Object.entries(draftItems)
-    .map(([id, qty]) => {
-      const item = menu.find(m => m.id === id);
-      return item ? { ...item, qty } : null;
-    })
+    .map(([lineKey, row]) => (row ? { lineKey, ...row } : null))
     .filter(Boolean);
 
   const subtotal = draftMenu.reduce((s, i) => s + i.price * i.qty, 0);
@@ -36,7 +36,15 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
       order_request_id: orderRequestId,
       table_id: selectedTableId,
       table_name: table ? table.name : `Table ${selectedTableId}`,
-      items: draftMenu.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.price })),
+      items: draftMenu.map(i => ({
+        id: i.item_id,
+        name: i.name,
+        qty: i.qty,
+        price: i.price,
+        // Server ignores handset-supplied prices and re-prices from its own menu
+        // cache; variant_id is the only routing bit reception can't fake.
+        ...(i.variant_id ? { variant_id: i.variant_id } : {})
+      })),
       note: note.trim(),
       // Server ignores this string and stamps waiter.name from waiter_id, so
       // the value here is only a display fallback.
@@ -146,12 +154,17 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
       ) : (
         <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {draftMenu.map(item => (
-            <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div key={item.lineKey} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
                 <span style={{ fontSize: '10px', flexShrink: 0 }}>{item.isVeg ? '🟢' : '🔴'}</span>
                 <span className="typography-body-sm" style={{ color: 'var(--color-ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {item.qty > 1 && <span style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', marginRight: '4px', fontWeight: 700 }}>{item.qty}×</span>}
                   {item.name}
+                  {item.variant_label && (
+                    <span style={{ fontSize: '11px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 4 }}>
+                      · {item.variant_label}
+                    </span>
+                  )}
                 </span>
               </div>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-ink)', fontWeight: 700, flexShrink: 0 }}>

@@ -367,20 +367,50 @@ export const WaiterApp = () => {
     }
   };
 
+  // Draft shape (M2 · PR 11 variants): a map keyed by `lineKey` — either the
+  // menu item id when the item has no variants, or `<itemId>|<variantId>` when
+  // it does. Each entry carries the resolved display data at add-time so the
+  // cart drawer never needs to re-lookup the menu (which would return the base
+  // item, not the variant).
+  //
+  //   drafts[tableId] = {
+  //     [lineKey]: { item_id, variant_id?, variant_label?, name, price, isVeg, qty }
+  //   }
   const currentDraftItems = selectedTableId ? (drafts[selectedTableId] || {}) : {};
-  const totalCartCount = Object.values(currentDraftItems).reduce((s, q) => s + q, 0);
+  const totalCartCount = Object.values(currentDraftItems).reduce((s, row) => s + (row?.qty || 0), 0);
 
-  const addItem = (itemId) => {
-    if (!selectedTableId) return;
-    setDrafts(p => ({ ...p, [selectedTableId]: { ...(p[selectedTableId] || {}), [itemId]: ((p[selectedTableId] || {})[itemId] || 0) + 1 } }));
+  const lineKey = (row) => row.variant_id ? `${row.item_id}|${row.variant_id}` : String(row.item_id);
+
+  const addItem = (row) => {
+    if (!selectedTableId || !row?.item_id) return;
+    const key = lineKey(row);
+    setDrafts(p => {
+      const tableDraft = { ...(p[selectedTableId] || {}) };
+      const existing = tableDraft[key];
+      tableDraft[key] = existing
+        ? { ...existing, qty: (existing.qty || 0) + 1 }
+        : {
+            item_id: row.item_id,
+            variant_id: row.variant_id || null,
+            variant_label: row.variant_label || null,
+            name: row.name,
+            price: row.price,
+            isVeg: row.isVeg,
+            qty: 1
+          };
+      return { ...p, [selectedTableId]: tableDraft };
+    });
   };
 
-  const removeItem = (itemId) => {
+  const removeItem = (key) => {
     if (!selectedTableId) return;
     setDrafts(p => {
       const d = { ...(p[selectedTableId] || {}) };
-      d[itemId] = (d[itemId] || 0) - 1;
-      if (d[itemId] <= 0) delete d[itemId];
+      const row = d[key];
+      if (!row) return p;
+      const nextQty = (row.qty || 0) - 1;
+      if (nextQty <= 0) delete d[key];
+      else d[key] = { ...row, qty: nextQty };
       return { ...p, [selectedTableId]: d };
     });
   };
