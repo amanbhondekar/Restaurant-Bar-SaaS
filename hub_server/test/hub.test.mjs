@@ -2083,6 +2083,94 @@ test('M2: priceOrder folds active day-part into the priced line + modifier delta
   }
 });
 
+// ---------------------------------------------------------------------------
+// M2 — Per-variant + per-option availability (PR 14)
+// ---------------------------------------------------------------------------
+//
+// 86'd items are the same fail-loud game as variants/modifiers: the handset
+// should already have hidden or disabled the row/chip, but the hub still
+// rejects on POST /orders so a stale phone menu can't sneak an out-of-stock
+// portion or extra past pricing. Legacy variants/options without an
+// `available` field default to true — nothing existing has to change.
+
+test('M2: priceOrder rejects an 86-d variant and an 86-d modifier option', () => {
+  const originalGetMenuCache = restaurantCache.getMenuCache;
+  restaurantCache.getMenuCache = () => ({
+    uninitialized: false,
+    items: [
+      {
+        id: 'chick', name: 'Chicken 65', price: 290, available: true,
+        variants: [
+          { id: 'v_boneless', label: 'Boneless', price: 320, available: false },
+          { id: 'v_bone_in',  label: 'Bone-in',  price: 290 } // legacy: no field = available
+        ]
+      },
+      {
+        id: 'tikka', name: 'Chicken Tikka Masala', price: 340, available: true,
+        modifier_groups: [
+          {
+            id: 'mg_extras', label: 'Extras', min: 0, max: 3,
+            options: [
+              { id: 'extra_cheese', label: 'Extra cheese', price_delta: 40 },
+              { id: 'extra_gravy',  label: 'Extra gravy',  price_delta: 30, available: false }
+            ]
+          }
+        ]
+      }
+    ]
+  });
+
+  try {
+    // 86'd variant → dedicated reject code so the UI can toast "Boneless is
+    // 86'd tonight" rather than a generic "unknown variant" (which would
+    // be misleading — the variant IS known, it just isn't takeable).
+    const badVariant = priceOrderImpl(
+      [{ id: 'chick', qty: 1, variant_id: 'v_boneless' }],
+      RESTAURANT_ID
+    );
+    assert.equal(badVariant.ok, false);
+    assert.equal(badVariant.details[0].reason, 'VARIANT_UNAVAILABLE');
+    assert.equal(badVariant.details[0].variant_id, 'v_boneless');
+    assert.equal(badVariant.details[0].variant_label, 'Boneless');
+
+    // The still-available variant on the same item works — the 86'd sibling
+    // doesn't poison the whole line.
+    const goodVariant = priceOrderImpl(
+      [{ id: 'chick', qty: 2, variant_id: 'v_bone_in' }],
+      RESTAURANT_ID
+    );
+    assert.equal(goodVariant.ok, true);
+    assert.equal(goodVariant.total_amount, 580);
+
+    // 86'd modifier option → dedicated reject code, same distinguishing
+    // rationale as the variant case above.
+    const badOption = priceOrderImpl(
+      [{
+        id: 'tikka', qty: 1,
+        modifiers: [{ group_id: 'mg_extras', option_id: 'extra_gravy' }]
+      }],
+      RESTAURANT_ID
+    );
+    assert.equal(badOption.ok, false);
+    assert.equal(badOption.details[0].reason, 'MODIFIER_OPTION_UNAVAILABLE');
+    assert.equal(badOption.details[0].option_id, 'extra_gravy');
+    assert.equal(badOption.details[0].option_label, 'Extra gravy');
+
+    // Another option in the same group still works.
+    const okOption = priceOrderImpl(
+      [{
+        id: 'tikka', qty: 1,
+        modifiers: [{ group_id: 'mg_extras', option_id: 'extra_cheese' }]
+      }],
+      RESTAURANT_ID
+    );
+    assert.equal(okOption.ok, true);
+    assert.equal(okOption.items[0].price, 340 + 40);
+  } finally {
+    restaurantCache.getMenuCache = originalGetMenuCache;
+  }
+});
+
 test('M2: KOT + receipt annotate the active day-part on the item line', async () => {
   const { renderKot, renderReceipt } = await import('../lib/printer.js');
   const ticket = {

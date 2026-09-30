@@ -56,7 +56,9 @@ const DEFAULT_MENU_ITEMS = [
         id: 'mg_extras', label: 'Extras', min: 0, max: 3,
         options: [
           { id: 'extra_cheese', label: 'Extra cheese',  price_delta: 40 },
-          { id: 'extra_gravy',  label: 'Extra gravy',   price_delta: 30 },
+          // Extra gravy is 86'd for the demo — sheet renders it disabled
+          // with an "86'd" tag; hub rejects any stale attempt.
+          { id: 'extra_gravy',  label: 'Extra gravy',   price_delta: 30, available: false },
           { id: 'no_onion',     label: 'No onion',      price_delta: 0 },
           { id: 'no_cream',     label: 'No cream',      price_delta: 0 }
         ]
@@ -89,7 +91,10 @@ const DEFAULT_MENU_ITEMS = [
     id: 'm7', name: 'Chicken 65', category: 'Starters', isVeg: false, available: true,
     price: 290,
     variants: [
-      { id: 'v_boneless', label: 'Boneless', price: 320 },
+      // Boneless is temporarily 86'd (M2 · PR 14 demo). Reception sees the
+      // row disabled with an "86'D" chip; the row can't be tapped and the
+      // hub rejects any stale-menu attempt with VARIANT_UNAVAILABLE.
+      { id: 'v_boneless', label: 'Boneless', price: 320, available: false },
       { id: 'v_bone_in',  label: 'Bone-in',  price: 290 }
     ]
   },
@@ -223,7 +228,14 @@ class RestaurantCache {
         const rawVariants = Array.isArray(i.variants) ? i.variants : [];
         const variants = rawVariants
           .filter(v => v && v.id && v.label && Number.isFinite(Number(v.price)))
-          .map(v => ({ id: String(v.id), label: String(v.label).slice(0, 40), price: Number(v.price) }));
+          .map(v => ({
+            id: String(v.id),
+            label: String(v.label).slice(0, 40),
+            price: Number(v.price),
+            // Per-variant availability (M2 · PR 14). Legacy variants without
+            // the field default to true; only an explicit `false` marks 86'd.
+            available: v.available !== false
+          }));
         // Modifier groups ship as JSONB (`modifier_groups: [{ id, label, min,
         // max, options: [{ id, label, price_delta }] }]`). Every level is
         // defensively normalised so a partial row never crashes the pricer;
@@ -239,7 +251,10 @@ class RestaurantCache {
               .map(o => ({
                 id: String(o.id),
                 label: String(o.label).slice(0, 40),
-                price_delta: Number(o.price_delta)
+                price_delta: Number(o.price_delta),
+                // Per-option availability (M2 · PR 14). Same default-true
+                // discipline as variants — only explicit `false` marks 86'd.
+                available: o.available !== false
               }));
             if (options.length === 0) return null;
             const min = Number.isFinite(Number(g.min)) ? Math.max(0, Math.floor(Number(g.min))) : 0;

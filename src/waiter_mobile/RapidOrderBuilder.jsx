@@ -50,7 +50,12 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
         isVeg: item.isVeg,
         category: item.category,
         hasModifiers,
-        modifier_groups: hasModifiers ? item.modifier_groups : null
+        modifier_groups: hasModifiers ? item.modifier_groups : null,
+        // Per-variant availability (M2 · PR 14): a variant marked
+        // `available: false` on the menu keeps its row visible but
+        // disabled with an 86'd chip, so reception sees WHY the size
+        // they wanted isn't takeable tonight.
+        available: v.available !== false
       }));
     }
     return [{
@@ -66,7 +71,8 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       isVeg: item.isVeg,
       category: item.category,
       hasModifiers,
-      modifier_groups: hasModifiers ? item.modifier_groups : null
+      modifier_groups: hasModifiers ? item.modifier_groups : null,
+      available: true
     }];
   });
 
@@ -159,15 +165,19 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
           const plainQty = draftItems[rowKey]?.qty || 0;
           const openSheet = () => setSheetRow(row);
           const handleAdd = row.hasModifiers ? openSheet : () => onAddItem(row);
+          const isEightySixd = row.available === false;
           return (
             <div
               key={row.lineKey}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                background: qty > 0 ? 'var(--status-amber-bg)' : 'var(--color-canvas)',
+                background: isEightySixd
+                  ? 'var(--color-surface-soft)'
+                  : (qty > 0 ? 'var(--status-amber-bg)' : 'var(--color-canvas)'),
                 border: `1px solid ${qty > 0 ? 'var(--status-amber-border)' : 'var(--color-hairline)'}`,
                 borderRadius: 'var(--radius-md)', padding: '10px 14px',
                 boxShadow: 'var(--shadow-flat)',
+                opacity: isEightySixd ? 0.55 : 1,
                 transition: 'all 0.15s ease'
               }}
             >
@@ -192,7 +202,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                         <SlidersHorizontal size={9} /> CUSTOMIZE
                       </span>
                     )}
-                    {row.active_day_part && (
+                    {row.active_day_part && !isEightySixd && (
                       <span
                         title={`Active promotion: ${row.active_day_part.label}`}
                         style={{
@@ -204,6 +214,21 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                         }}
                       >
                         <Clock size={9} /> {String(row.active_day_part.label).toUpperCase()}
+                      </span>
+                    )}
+                    {isEightySixd && (
+                      <span
+                        title="86'd — currently unavailable"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6,
+                          fontSize: '9px', color: 'var(--status-rust-text)', fontFamily: 'var(--font-mono)',
+                          background: 'var(--status-rust-bg)',
+                          padding: '1px 5px', borderRadius: 'var(--radius-full)',
+                          border: '1px solid var(--status-rust-border)', verticalAlign: 'middle',
+                          fontWeight: 700
+                        }}
+                      >
+                        86'D
                       </span>
                     )}
                   </div>
@@ -221,7 +246,14 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                {qty > 0 ? (
+                {isEightySixd ? (
+                  <span style={{
+                    padding: '6px 12px', fontSize: '11px', fontWeight: 600,
+                    color: 'var(--status-rust-text)', fontFamily: 'var(--font-mono)'
+                  }}>
+                    Unavailable
+                  </span>
+                ) : qty > 0 ? (
                   <>
                     <button
                       // Only touch the plain (no-modifier) draft line here;

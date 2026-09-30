@@ -106,6 +106,15 @@ export function priceOrder(rawItems, restaurantId) {
         rejected.push({ id, name: menuItem.name, reason: 'VARIANT_NOT_PRICED', variant_id: variant.id });
         continue;
       }
+      // Per-variant availability (M2 · PR 14). `available: false` on a
+      // variant means it's 86'd — the handset should already have hidden
+      // or disabled it, but we still fail loud on the server so a stale
+      // menu on the phone can't sneak an 86'd portion onto the KOT.
+      // Legacy variants without an `available` field default to true.
+      if (variant.available === false) {
+        rejected.push({ id, name: menuItem.name, reason: 'VARIANT_UNAVAILABLE', variant_id: variant.id, variant_label: variant.label });
+        continue;
+      }
       variantId = variant.id;
       variantLabel = variant.label;
       const eff = resolveEffectivePrice(menuItem, variant);
@@ -149,6 +158,13 @@ export function priceOrder(rawItems, restaurantId) {
         if (!group) { modifierReject = { reason: 'UNKNOWN_MODIFIER_GROUP', group_id: gid }; break; }
         const option = (group.options || []).find(o => String(o.id) === oid);
         if (!option) { modifierReject = { reason: 'UNKNOWN_MODIFIER_OPTION', group_id: gid, option_id: oid }; break; }
+        // Per-option availability (M2 · PR 14). Fail loud so a stale phone
+        // menu can't sneak "+Extra cream" onto a ticket when the kitchen
+        // ran out. Legacy options without `available` default to true.
+        if (option.available === false) {
+          modifierReject = { reason: 'MODIFIER_OPTION_UNAVAILABLE', group_id: gid, option_id: oid, option_label: option.label };
+          break;
+        }
         const bucket = picksByGroup.get(gid) || [];
         // Same option twice in the same group is treated as a max violation,
         // not a silent dedupe — the handset should not be sending duplicates.

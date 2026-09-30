@@ -194,7 +194,12 @@ export const ModifierSheet = ({ row, currency = '₹', onConfirm, onClose }) => 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {group.options.map(opt => {
                     const isPicked = picked.includes(opt.id);
-                    const disabled = !isPicked && !isSingle && atMax;
+                    // Per-option availability (M2 · PR 14): a modifier option
+                    // marked `available: false` renders greyed with an "86'd"
+                    // chip and cannot be picked. Hub rejects any stale-menu
+                    // attempt with MODIFIER_OPTION_UNAVAILABLE.
+                    const eightySixd = opt.available === false;
+                    const disabled = eightySixd || (!isPicked && !isSingle && atMax);
                     const delta = Number(opt.price_delta) || 0;
                     return (
                       <button
@@ -225,8 +230,20 @@ export const ModifierSheet = ({ row, currency = '₹', onConfirm, onClose }) => 
                             {isPicked && <Check size={12} strokeWidth={3} />}
                           </div>
                           <span style={{ fontSize: 13, fontWeight: isPicked ? 600 : 500 }}>{opt.label}</span>
+                          {eightySixd && (
+                            <span
+                              title="Currently 86'd"
+                              style={{
+                                fontSize: 9, color: 'var(--status-rust-text)', fontFamily: 'var(--font-mono)',
+                                background: 'var(--status-rust-bg)', border: '1px solid var(--status-rust-border)',
+                                padding: '1px 5px', borderRadius: 'var(--radius-full)', fontWeight: 700
+                              }}
+                            >
+                              86'D
+                            </span>
+                          )}
                         </div>
-                        {delta !== 0 && (
+                        {delta !== 0 && !eightySixd && (
                           <span style={{
                             fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700,
                             color: delta > 0 ? 'var(--color-primary)' : 'var(--status-green-text)'
