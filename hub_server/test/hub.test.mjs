@@ -2171,6 +2171,120 @@ test('M2: priceOrder rejects an 86-d variant and an 86-d modifier option', () =>
   }
 });
 
+// ---------------------------------------------------------------------------
+// M2 — Multi-station KOT routing (PR 15)
+// ---------------------------------------------------------------------------
+//
+// Same "compose on top" discipline as PR 12-14. Each menu item optionally
+// declares a `station` ('hot' | 'cold' | 'bar', default 'hot'). Pricing
+// stamps the resolved station on every priced line; groupTicketByStation
+// splits a mixed ticket into one sub-ticket per station; renderKot takes
+// a station_label so each split KOT shows which station's queue it
+// belongs to. Legacy items (no station field) resolve to 'hot' — the
+// pre-PR-15 single-KOT behaviour is preserved for the common case.
+
+import { groupTicketByStation, resolveStation, STATION_LABELS, DEFAULT_STATION } from '../lib/kotRouting.js';
+
+test('M2: resolveStation whitelists known stations and defaults unknown to hot', () => {
+  assert.equal(resolveStation('hot'), 'hot');
+  assert.equal(resolveStation('cold'), 'cold');
+  assert.equal(resolveStation('bar'), 'bar');
+  // Case + whitespace insensitivity via lowercase; unknown → default so a
+  // mistagged item still fires to the main line rather than disappearing.
+  assert.equal(resolveStation('BAR'), 'bar');
+  assert.equal(resolveStation('garnish'), DEFAULT_STATION);
+  assert.equal(resolveStation(undefined), DEFAULT_STATION);
+  assert.equal(resolveStation(null), DEFAULT_STATION);
+  assert.equal(resolveStation(''), DEFAULT_STATION);
+  // The label table has to stay authoritative — new stations added there
+  // are automatically accepted by resolveStation.
+  for (const id of Object.keys(STATION_LABELS)) {
+    assert.equal(resolveStation(id), id);
+  }
+});
+
+test('M2: groupTicketByStation splits mixed cart, keeps single-station cart intact', () => {
+  const mixed = {
+    ticket_number: 90, table_name: 'T7', created_at: new Date().toISOString(),
+    items: [
+      { name: 'Paneer Butter Masala', qty: 1, station: 'hot' },
+      { name: 'Masala Chaas',          qty: 2, station: 'bar' },
+      { name: 'Butter Naan',           qty: 3, station: 'hot' },
+      { name: 'Gulab Jamun',           qty: 1, station: 'cold' }
+    ]
+  };
+  const groups = groupTicketByStation(mixed);
+  assert.equal(groups.length, 3);
+  // Iteration order follows first-seen so a printer setup with several
+  // stations prints in a stable order for the same cart shape.
+  assert.deepEqual(groups.map(g => g.station), ['hot', 'bar', 'cold']);
+  // Each sub-ticket carries only its own items but preserves the parent's
+  // identifying fields.
+  const hot = groups.find(g => g.station === 'hot');
+  assert.equal(hot.ticket.ticket_number, 90);
+  assert.equal(hot.ticket.table_name, 'T7');
+  assert.equal(hot.ticket.items.length, 2);
+  assert.deepEqual(hot.ticket.items.map(i => i.name), ['Paneer Butter Masala', 'Butter Naan']);
+  assert.equal(groups.find(g => g.station === 'bar').ticket.items.length, 1);
+  assert.equal(groups.find(g => g.station === 'cold').ticket.items.length, 1);
+  // Labels come from STATION_LABELS.
+  assert.equal(hot.label, STATION_LABELS.hot);
+  assert.equal(groups.find(g => g.station === 'bar').label, STATION_LABELS.bar);
+
+  // Single-station cart returns one group with all items — no needless
+  // header suffix on the common case.
+  const single = { items: [
+    { name: 'Dal Tadka', qty: 1 },    // no station → default 'hot'
+    { name: 'Butter Naan', qty: 2 }   // no station → default 'hot'
+  ], ticket_number: 91, table_name: 'T8' };
+  const one = groupTicketByStation(single);
+  assert.equal(one.length, 1);
+  assert.equal(one[0].station, 'hot');
+  assert.equal(one[0].ticket.items.length, 2);
+});
+
+test('M2: priceOrder stamps station on every priced line', () => {
+  const originalGetMenuCache = restaurantCache.getMenuCache;
+  restaurantCache.getMenuCache = () => ({
+    uninitialized: false,
+    items: [
+      { id: 'curry', name: 'Curry',    price: 200, available: true /* no station */ },
+      { id: 'chaas', name: 'Chaas',    price: 50,  available: true, station: 'bar' },
+      { id: 'jamun', name: 'Jamun',    price: 90,  available: true, station: 'cold' },
+      { id: 'weird', name: 'Weird',    price: 30,  available: true, station: 'garnish' } // unknown
+    ]
+  });
+  try {
+    const res = priceOrderImpl([
+      { id: 'curry', qty: 1 }, { id: 'chaas', qty: 1 }, { id: 'jamun', qty: 1 }, { id: 'weird', qty: 1 }
+    ], RESTAURANT_ID);
+    assert.equal(res.ok, true);
+    assert.equal(res.items[0].station, 'hot');   // legacy default
+    assert.equal(res.items[1].station, 'bar');
+    assert.equal(res.items[2].station, 'cold');
+    assert.equal(res.items[3].station, 'hot');   // unknown collapses to default
+  } finally {
+    restaurantCache.getMenuCache = originalGetMenuCache;
+  }
+});
+
+test('M2: renderKot suffixes the header when a station label is passed', async () => {
+  const { renderKot } = await import('../lib/printer.js');
+  const base = {
+    ticket_number: 92, table_name: 'T9', created_at: new Date().toISOString(),
+    items: [{ qty: 1, name: 'Masala Chaas' }]
+  };
+  // Legacy call (no opts) → header unchanged from PR 11 baseline. Every
+  // M1 test asserting `/KITCHEN ORDER TICKET/` still passes.
+  const plain = renderKot(base);
+  assert.match(plain.preview_text, /KITCHEN ORDER TICKET/);
+  assert.doesNotMatch(plain.preview_text, /BAR|COLD LINE|HOT LINE/);
+  // With a station label → header carries it, all-caps, after a middot.
+  const withBar = renderKot(base, {}, { station_label: 'Bar' });
+  assert.match(withBar.preview_text, /KITCHEN ORDER · BAR/);
+  assert.doesNotMatch(withBar.preview_text, /KITCHEN ORDER TICKET/);
+});
+
 test('M2: KOT + receipt annotate the active day-part on the item line', async () => {
   const { renderKot, renderReceipt } = await import('../lib/printer.js');
   const ticket = {

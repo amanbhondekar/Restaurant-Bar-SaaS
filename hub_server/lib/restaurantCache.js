@@ -98,9 +98,12 @@ const DEFAULT_MENU_ITEMS = [
       { id: 'v_bone_in',  label: 'Bone-in',  price: 290 }
     ]
   },
-  { id: 'm8', name: 'Gulab Jamun (2 pcs)', price: 90, category: 'Desserts', isVeg: true, available: true },
+  // Cold-line item: desserts fire to a separate KOT so the pastry
+  // station doesn't share a printer queue with the hot line (M2 · PR 15).
+  { id: 'm8', name: 'Gulab Jamun (2 pcs)', price: 90, category: 'Desserts', isVeg: true, available: true, station: 'cold' },
   {
-    id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true,
+    // Bar-line item: beverages fire to the bar station's KOT/KDS view.
+    id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true, station: 'bar',
     modifier_groups: [
       {
         id: 'mg_sweet', label: 'Sweetness', min: 1, max: 1,
@@ -297,6 +300,11 @@ class RestaurantCache {
             return out;
           })
           .filter(Boolean);
+        // Station routing (M2 · PR 15): 'hot' | 'cold' | 'bar' | (default
+        // 'hot' when the column is missing / unknown). Whitelist happens
+        // in lib/kotRouting.js at read time, so a mistagged row still
+        // fires to the main kitchen rather than into an unlabeled queue.
+        const station = i.station ? String(i.station).toLowerCase() : undefined;
         return {
           id: i.id,
           name: i.name,
@@ -306,7 +314,8 @@ class RestaurantCache {
           available: i.available !== undefined ? Boolean(i.available) : true,
           ...(variants.length > 0 ? { variants } : {}),
           ...(modifier_groups.length > 0 ? { modifier_groups } : {}),
-          ...(day_parts.length > 0 ? { day_parts } : {})
+          ...(day_parts.length > 0 ? { day_parts } : {}),
+          ...(station ? { station } : {})
         };
       }) : [];
 

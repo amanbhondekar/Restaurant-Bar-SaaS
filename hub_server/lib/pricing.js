@@ -1,5 +1,6 @@
 import { restaurantCache } from './restaurantCache.js';
 import { resolveEffectivePrice } from './dayParts.js';
+import { resolveStation } from './kotRouting.js';
 
 /**
  * Server-side order pricing.
@@ -238,7 +239,12 @@ export function priceOrder(rawItems, restaurantId) {
       // active at pricing time — the KOT/receipt/KDS then render the item
       // unchanged, just as they did before PR 13.
       day_part_id: dayPartId,
-      day_part_label: dayPartLabel
+      day_part_label: dayPartLabel,
+      // Station routing (M2 · PR 15). Resolved once at pricing time so
+      // ticket-store / KOT-splitter / KDS never re-consult the menu cache
+      // and every downstream reader agrees on which line goes where.
+      // Items without `station` route to the default (see kotRouting.js).
+      station: resolveStation(menuItem.station)
     });
   }
 

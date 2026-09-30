@@ -874,6 +874,25 @@ const KitchenHubApp = () => {
                                         {String(item.day_part_label).toUpperCase()}
                                       </span>
                                     )}
+                                    {/* Station routing tag (M2 · PR 15). Only
+                                        surfaced when the item was explicitly
+                                        routed off the default hot line, so
+                                        curries don't get a "HOT" tag on every
+                                        ticket — only bar drinks and cold-
+                                        prep items call for a routing note. */}
+                                    {item.station && item.station !== 'hot' && (
+                                      <span
+                                        title={`Fires to ${item.station} station`}
+                                        style={{
+                                          fontSize: 10, color: 'var(--color-primary)', fontFamily: 'var(--font-mono)',
+                                          background: 'var(--status-amber-bg)', border: '1px solid var(--status-amber-border)',
+                                          padding: '1px 6px', borderRadius: 'var(--radius-full)', marginLeft: 6, verticalAlign: 'middle',
+                                          fontWeight: 700
+                                        }}
+                                      >
+                                        {String(item.station).toUpperCase()}
+                                      </span>
+                                    )}
                                   </span>
                                   {/* KDS modifier lines (M2 · PR 12). The kitchen
                                       sees "· Spice level: Hot" for prep instructions

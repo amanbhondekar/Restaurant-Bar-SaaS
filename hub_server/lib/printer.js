@@ -43,12 +43,21 @@ function line(width, ch) { return ch.repeat(width); }
 // Kitchen Order Ticket (KOT)
 // ---------------------------------------------------------------------------
 
-export function renderKot(ticket, tenant = {}) {
+export function renderKot(ticket, tenant = {}, opts = {}) {
   if (!ticket || !Array.isArray(ticket.items)) {
     throw new Error('renderKot requires a ticket with items[]');
   }
   const width = KOT_WIDTH;
-  const header = center('KITCHEN ORDER TICKET', width);
+  // Optional station label (M2 · PR 15): when a ticket is split across
+  // stations we render one KOT per station, each carrying its own header
+  // suffix ("KITCHEN ORDER · BAR") so the cook can eyeball at a glance
+  // where the ticket belongs. Legacy single-KOT callers pass no opts and
+  // the header stays exactly as before.
+  const stationLabel = opts && opts.station_label ? String(opts.station_label) : '';
+  const headerText = stationLabel
+    ? `KITCHEN ORDER · ${stationLabel.toUpperCase()}`
+    : 'KITCHEN ORDER TICKET';
+  const header = center(headerText, width);
   const table  = center(`${ticket.table_name || 'Table'}   ·   #${ticket.ticket_number ?? ''}`, width);
   const when   = center(formatDate(ticket.created_at || Date.now()), width);
   const by     = center(`By: ${ticket.created_by_waiter || 'Waiter'}`, width);
@@ -105,7 +114,7 @@ export function renderKot(ticket, tenant = {}) {
     escpos.alignCenter(),
     escpos.rule(width, '='),
     escpos.bold(true), escpos.size(2, 2),
-    escpos.line('KITCHEN ORDER TICKET'),
+    escpos.line(headerText),
     escpos.size(1, 1), escpos.bold(false),
     escpos.rule(width, '='),
     escpos.bold(true), escpos.size(2, 1),
