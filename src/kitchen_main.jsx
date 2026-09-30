@@ -853,15 +853,40 @@ const KitchenHubApp = () => {
                                 }}>
                                   {isChecked && '✓'}
                                 </div>
-                                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-ink)' }}>
-                                  {item.qty > 1 && <strong style={{ color: 'var(--color-primary)' }}>{item.qty}× </strong>}
-                                  {item.name}
-                                  {item.variant_label && (
-                                    <span style={{ fontSize: '12px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 4 }}>
-                                      · {item.variant_label}
-                                    </span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                                  <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-ink)' }}>
+                                    {item.qty > 1 && <strong style={{ color: 'var(--color-primary)' }}>{item.qty}× </strong>}
+                                    {item.name}
+                                    {item.variant_label && (
+                                      <span style={{ fontSize: '12px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 4 }}>
+                                        · {item.variant_label}
+                                      </span>
+                                    )}
+                                  </span>
+                                  {/* KDS modifier lines (M2 · PR 12). The kitchen
+                                      sees "· Spice level: Hot" for prep instructions
+                                      and "+ Extra cheese" for paid extras (delta is
+                                      priced elsewhere; on the KDS card we highlight
+                                      what the cook needs to prep). */}
+                                  {Array.isArray(item.modifiers) && item.modifiers.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 4 }}>
+                                      {item.modifiers.map((m, mi) => {
+                                        const delta = Number(m.price_delta) || 0;
+                                        return (
+                                          <span key={mi} style={{
+                                            fontSize: 11,
+                                            color: delta > 0 ? 'var(--color-primary)' : 'var(--color-muted)',
+                                            fontWeight: delta > 0 ? 600 : 500
+                                          }}>
+                                            {delta === 0
+                                              ? `· ${m.group_label ? m.group_label + ': ' : ''}${m.option_label}`
+                                              : `+ ${m.option_label}`}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
                                   )}
-                                </span>
+                                </div>
                               </div>
                             );
                           })}
@@ -1010,6 +1035,35 @@ const KitchenHubApp = () => {
                                 <div style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
                                   #{line.ticket_number} · {billInvoice.currency}{line.price} each
                                 </div>
+                                {/* Modifier detail on the bill preview (M2 · PR 12).
+                                    Zero-delta prep lines describe how the dish was
+                                    prepared; positive deltas surface the paid extra
+                                    with its per-unit contribution so reception can
+                                    explain the line to the guest. */}
+                                {Array.isArray(line.modifiers) && line.modifiers.length > 0 && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2, paddingLeft: 4 }}>
+                                    {line.modifiers.map((m, mi) => {
+                                      const delta = Number(m.price_delta) || 0;
+                                      return (
+                                        <div key={mi} style={{
+                                          fontSize: 10, color: 'var(--color-muted)',
+                                          display: 'flex', justifyContent: 'space-between', gap: 6
+                                        }}>
+                                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {delta === 0
+                                              ? `· ${m.group_label ? m.group_label + ': ' : ''}${m.option_label}`
+                                              : `+ ${m.option_label}`}
+                                          </span>
+                                          {delta !== 0 && (
+                                            <span style={{ fontFamily: 'var(--font-mono)', color: delta > 0 ? 'var(--color-primary)' : 'var(--status-green-text)' }}>
+                                              {delta > 0 ? '+' : '−'}{billInvoice.currency}{Math.abs(delta)} × {line.qty}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                               <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: 'var(--color-ink)' }}>
                                 {billInvoice.currency}{line.line_total}

@@ -106,14 +106,99 @@ export function priceOrder(rawItems, restaurantId) {
       continue;
     }
 
+    // Modifier handling. Same fail-loud discipline as variants: when the item
+    // ships `modifier_groups`, the handset MUST honour min/max on every group
+    // and every referenced group_id / option_id must resolve, or the whole
+    // line is rejected. When the item has no modifier_groups, a modifiers[]
+    // array from the handset is still rejected — same reason as spurious
+    // variants: silently dropping it would let a stale phone menu bill wrong.
+    const hasModifierGroups = Array.isArray(menuItem.modifier_groups) && menuItem.modifier_groups.length > 0;
+    const rawModifiers = Array.isArray(raw?.modifiers) ? raw.modifiers : [];
+    let resolvedModifiers = [];
+    let modifierDelta = 0;
+    let modifierReject = null;
+
+    if (hasModifierGroups) {
+      const groupsById = new Map(menuItem.modifier_groups.map(g => [String(g.id), g]));
+      // Bucket handset picks by group so min/max checks can run per group.
+      const picksByGroup = new Map();
+      for (const pick of rawModifiers) {
+        const gid = String(pick?.group_id ?? '');
+        const oid = String(pick?.option_id ?? '');
+        if (!gid || !oid) { modifierReject = { reason: 'UNKNOWN_MODIFIER_GROUP', group_id: gid }; break; }
+        const group = groupsById.get(gid);
+        if (!group) { modifierReject = { reason: 'UNKNOWN_MODIFIER_GROUP', group_id: gid }; break; }
+        const option = (group.options || []).find(o => String(o.id) === oid);
+        if (!option) { modifierReject = { reason: 'UNKNOWN_MODIFIER_OPTION', group_id: gid, option_id: oid }; break; }
+        const bucket = picksByGroup.get(gid) || [];
+        // Same option twice in the same group is treated as a max violation,
+        // not a silent dedupe — the handset should not be sending duplicates.
+        bucket.push(option);
+        picksByGroup.set(gid, bucket);
+      }
+      if (!modifierReject) {
+        for (const group of menuItem.modifier_groups) {
+          const gid = String(group.id);
+          const picks = picksByGroup.get(gid) || [];
+          const min = Number.isFinite(Number(group.min)) ? Number(group.min) : 0;
+          const max = Number.isFinite(Number(group.max)) ? Number(group.max) : (min > 0 ? 1 : 99);
+          if (picks.length < min) {
+            modifierReject = min > 0 && picks.length === 0
+              ? { reason: 'MODIFIER_GROUP_REQUIRED', group_id: gid, group_label: group.label }
+              : { reason: 'MODIFIER_GROUP_MIN_UNMET', group_id: gid, group_label: group.label, min, chosen: picks.length };
+            break;
+          }
+          if (picks.length > max) {
+            modifierReject = { reason: 'MODIFIER_GROUP_MAX_EXCEEDED', group_id: gid, group_label: group.label, max, chosen: picks.length };
+            break;
+          }
+          for (const opt of picks) {
+            const delta = Number(opt.price_delta);
+            if (!Number.isFinite(delta)) {
+              modifierReject = { reason: 'MODIFIER_NOT_PRICED', group_id: gid, option_id: String(opt.id) };
+              break;
+            }
+            modifierDelta += delta;
+            resolvedModifiers.push({
+              group_id: gid,
+              group_label: group.label,
+              option_id: String(opt.id),
+              option_label: opt.label,
+              price_delta: delta
+            });
+          }
+          if (modifierReject) break;
+        }
+      }
+    } else if (rawModifiers.length > 0) {
+      modifierReject = { reason: 'SPURIOUS_MODIFIERS' };
+    }
+
+    if (modifierReject) {
+      rejected.push({ id, name: menuItem.name, ...modifierReject });
+      continue;
+    }
+
+    // Per-unit price = variant (or base) price + sum of modifier deltas. The
+    // delta is applied once per unit, not once per line — one Chicken Tikka
+    // (Full, +Extra Cheese) ×2 costs `(340 + 40) × 2`.
+    const finalUnitPrice = Math.round((unitPrice + modifierDelta) * 100) / 100;
+    if (finalUnitPrice < 0) {
+      rejected.push({ id, name: menuItem.name, reason: 'MODIFIER_MAKES_NEGATIVE_PRICE' });
+      continue;
+    }
+
     priced.push({
       id: menuItem.id,
       // Name and price both come from the hub, never from the request body.
       name: menuItem.name,
       qty,
-      price: unitPrice,
+      price: finalUnitPrice,
       variant_id: variantId,
-      variant_label: variantLabel
+      variant_label: variantLabel,
+      // Empty array (not null) so downstream renderers can always .map without
+      // a nullish guard. Legacy items with no modifiers keep the array empty.
+      modifiers: resolvedModifiers
     });
   }
 

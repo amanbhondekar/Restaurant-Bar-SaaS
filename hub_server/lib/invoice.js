@@ -29,7 +29,11 @@ function enrichLine(ticket, line, menuById) {
     // Passed through so the modal, receipt renderer, and KDS ticket can
     // render "Paneer Butter Masala — Half" without touching the menu cache.
     variant_id: line?.variant_id || null,
-    variant_label: line?.variant_label || null
+    variant_label: line?.variant_label || null,
+    // Modifiers (M2 · PR 12) travel on the invoice line the same way
+    // variants do — resolved labels + deltas so the receipt/KDS/modal can
+    // render "  + Extra cheese +₹40" without a menu lookup.
+    modifiers: Array.isArray(line?.modifiers) ? line.modifiers : []
   };
 }
 

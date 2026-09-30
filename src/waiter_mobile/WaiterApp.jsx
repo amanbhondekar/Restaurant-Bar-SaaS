@@ -367,19 +367,37 @@ export const WaiterApp = () => {
     }
   };
 
-  // Draft shape (M2 · PR 11 variants): a map keyed by `lineKey` — either the
-  // menu item id when the item has no variants, or `<itemId>|<variantId>` when
-  // it does. Each entry carries the resolved display data at add-time so the
-  // cart drawer never needs to re-lookup the menu (which would return the base
-  // item, not the variant).
+  // Draft shape (M2 · PR 11 variants + PR 12 modifiers): a map keyed by
+  // `lineKey` — item id, optionally suffixed with `|variantId` and, when the
+  // item has modifier groups, `|<modifier signature>`. Lines with identical
+  // variant + modifier picks stack (qty++). Different picks split into
+  // separate cart lines so "Chicken Tikka (Full, Hot, +Cheese)" and
+  // "Chicken Tikka (Full, Mild)" bill correctly.
   //
   //   drafts[tableId] = {
-  //     [lineKey]: { item_id, variant_id?, variant_label?, name, price, isVeg, qty }
+  //     [lineKey]: {
+  //       item_id, variant_id?, variant_label?, name, price, isVeg, qty,
+  //       modifiers?: [{ group_id, group_label, option_id, option_label, price_delta }]
+  //     }
   //   }
   const currentDraftItems = selectedTableId ? (drafts[selectedTableId] || {}) : {};
   const totalCartCount = Object.values(currentDraftItems).reduce((s, row) => s + (row?.qty || 0), 0);
 
-  const lineKey = (row) => row.variant_id ? `${row.item_id}|${row.variant_id}` : String(row.item_id);
+  // Signature is a sorted "gid:oid;gid:oid" string so `{spice:hot, extras:cheese}`
+  // and `{extras:cheese, spice:hot}` collapse to the same lineKey. Two picks in
+  // one multi-select group stay ordered within that group by option_id.
+  const modifierSignature = (modifiers) => {
+    if (!Array.isArray(modifiers) || modifiers.length === 0) return '';
+    return [...modifiers]
+      .map(m => `${m.group_id}:${m.option_id}`)
+      .sort()
+      .join(';');
+  };
+  const lineKey = (row) => {
+    const base = row.variant_id ? `${row.item_id}|${row.variant_id}` : String(row.item_id);
+    const sig = modifierSignature(row.modifiers);
+    return sig ? `${base}|${sig}` : base;
+  };
 
   const addItem = (row) => {
     if (!selectedTableId || !row?.item_id) return;
@@ -394,9 +412,12 @@ export const WaiterApp = () => {
             variant_id: row.variant_id || null,
             variant_label: row.variant_label || null,
             name: row.name,
+            // `row.price` on a modifier'd row already includes the delta (the
+            // sheet applies it before onConfirm), so a straight assign is correct.
             price: row.price,
             isVeg: row.isVeg,
-            qty: 1
+            qty: 1,
+            modifiers: Array.isArray(row.modifiers) ? row.modifiers : []
           };
       return { ...p, [selectedTableId]: tableDraft };
     });

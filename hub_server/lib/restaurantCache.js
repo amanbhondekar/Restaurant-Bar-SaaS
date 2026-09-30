@@ -20,6 +20,13 @@ const DEFAULT_MENU_ITEMS = [
   // Items with variants ship a `variants: [{ id, label, price }]` array. When
   // a variant array is present, the handset MUST pick one — the top-level
   // `price` acts as a display fallback only and is ignored by lib/pricing.js.
+  //
+  // Items with `modifier_groups: [{ id, label, min, max, options: [{ id,
+  // label, price_delta }] }]` compose on the same shape (M2 · PR 12). Each
+  // group with min>=1 is required; picks over `max` are rejected server-side.
+  // price_delta applies per unit and is added to the variant/base price.
+  // Modifier groups and variants stack: Chicken Tikka Masala (Full) + Extra
+  // Cheese = 340 + 40 = ₹380/unit.
   {
     id: 'm1', name: 'Paneer Butter Masala', category: 'Main Course', isVeg: true, available: true,
     price: 280,
@@ -35,6 +42,25 @@ const DEFAULT_MENU_ITEMS = [
     variants: [
       { id: 'v_half', label: 'Half', price: 220 },
       { id: 'v_full', label: 'Full', price: 340 }
+    ],
+    modifier_groups: [
+      {
+        id: 'mg_spice', label: 'Spice level', min: 1, max: 1,
+        options: [
+          { id: 'mild',   label: 'Mild',   price_delta: 0 },
+          { id: 'medium', label: 'Medium', price_delta: 0 },
+          { id: 'hot',    label: 'Hot',    price_delta: 0 }
+        ]
+      },
+      {
+        id: 'mg_extras', label: 'Extras', min: 0, max: 3,
+        options: [
+          { id: 'extra_cheese', label: 'Extra cheese',  price_delta: 40 },
+          { id: 'extra_gravy',  label: 'Extra gravy',   price_delta: 30 },
+          { id: 'no_onion',     label: 'No onion',      price_delta: 0 },
+          { id: 'no_cream',     label: 'No cream',      price_delta: 0 }
+        ]
+      }
     ]
   },
   { id: 'm4', name: 'Butter Naan', price: 45, category: 'Breads & Rice', isVeg: true, available: true },
@@ -56,7 +82,19 @@ const DEFAULT_MENU_ITEMS = [
     ]
   },
   { id: 'm8', name: 'Gulab Jamun (2 pcs)', price: 90, category: 'Desserts', isVeg: true, available: true },
-  { id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true },
+  {
+    id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true,
+    modifier_groups: [
+      {
+        id: 'mg_sweet', label: 'Sweetness', min: 1, max: 1,
+        options: [
+          { id: 'regular',    label: 'Regular',    price_delta: 0 },
+          { id: 'less_sweet', label: 'Less sweet', price_delta: 0 },
+          { id: 'no_sugar',   label: 'No sugar',   price_delta: 0 }
+        ]
+      }
+    ]
+  },
 ];
 
 const DEFAULT_TABLES = [
@@ -163,6 +201,29 @@ class RestaurantCache {
         const variants = rawVariants
           .filter(v => v && v.id && v.label && Number.isFinite(Number(v.price)))
           .map(v => ({ id: String(v.id), label: String(v.label).slice(0, 40), price: Number(v.price) }));
+        // Modifier groups ship as JSONB (`modifier_groups: [{ id, label, min,
+        // max, options: [{ id, label, price_delta }] }]`). Every level is
+        // defensively normalised so a partial row never crashes the pricer;
+        // an option missing a numeric price_delta is dropped, a group missing
+        // an id or label is dropped, and the group is only kept when it has
+        // at least one valid option.
+        const rawGroups = Array.isArray(i.modifier_groups) ? i.modifier_groups : [];
+        const modifier_groups = rawGroups
+          .map(g => {
+            if (!g || !g.id || !g.label) return null;
+            const options = (Array.isArray(g.options) ? g.options : [])
+              .filter(o => o && o.id && o.label && Number.isFinite(Number(o.price_delta)))
+              .map(o => ({
+                id: String(o.id),
+                label: String(o.label).slice(0, 40),
+                price_delta: Number(o.price_delta)
+              }));
+            if (options.length === 0) return null;
+            const min = Number.isFinite(Number(g.min)) ? Math.max(0, Math.floor(Number(g.min))) : 0;
+            const max = Number.isFinite(Number(g.max)) ? Math.max(min, Math.floor(Number(g.max))) : options.length;
+            return { id: String(g.id), label: String(g.label).slice(0, 40), min, max, options };
+          })
+          .filter(Boolean);
         return {
           id: i.id,
           name: i.name,
@@ -170,7 +231,8 @@ class RestaurantCache {
           category: i.category || i.category_name || 'General',
           isVeg: i.is_veg !== undefined ? Boolean(i.is_veg) : Boolean(i.isVeg ?? true),
           available: i.available !== undefined ? Boolean(i.available) : true,
-          ...(variants.length > 0 ? { variants } : {})
+          ...(variants.length > 0 ? { variants } : {}),
+          ...(modifier_groups.length > 0 ? { modifier_groups } : {})
         };
       }) : [];
 

@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
-import { Search, Plus, Minus } from 'lucide-react';
+import { Search, Plus, Minus, SlidersHorizontal } from 'lucide-react';
+import { ModifierSheet } from './ModifierSheet';
 
 export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRemoveItem }) => {
   const { menu, tables, currentRestaurant } = usePos();
   const [activeCategory, setActiveCategory] = useState('All');
   const [query, setQuery] = useState('');
   const [vegFilter, setVegFilter] = useState('all');
+  // The row currently being customized in the modifier sheet, or null if
+  // the sheet is closed. Holds a resolved row (variant already picked) so
+  // the sheet only handles modifier picks on top.
+  const [sheetRow, setSheetRow] = useState(null);
 
   const currency = currentRestaurant?.currency || '₹';
   const table = tables.find(t => t.id === selectedTableId);
@@ -15,8 +20,12 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
   // Expand items with variants into one visible row per variant. Each row
   // carries a stable `lineKey` and the resolved shape addItem() expects.
   // No-variant items render as a single row with `lineKey === item.id`.
+  // Modifier groups (M2 · PR 12) hang off the parent item, not the variant,
+  // so both flat-item rows and variant-expanded rows inherit the same
+  // modifier_groups reference; the sheet handles the picks.
   const expandedRows = menu.flatMap(item => {
     if (!item.available) return [];
+    const hasModifiers = Array.isArray(item.modifier_groups) && item.modifier_groups.length > 0;
     if (Array.isArray(item.variants) && item.variants.length > 0) {
       return item.variants.map(v => ({
         lineKey: `${item.id}|${v.id}`,
@@ -27,7 +36,9 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
         display_name: `${item.name} — ${v.label}`,
         price: Number(v.price) || 0,
         isVeg: item.isVeg,
-        category: item.category
+        category: item.category,
+        hasModifiers,
+        modifier_groups: hasModifiers ? item.modifier_groups : null
       }));
     }
     return [{
@@ -39,7 +50,9 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       display_name: item.name,
       price: Number(item.price) || 0,
       isVeg: item.isVeg,
-      category: item.category
+      category: item.category,
+      hasModifiers,
+      modifier_groups: hasModifiers ? item.modifier_groups : null
     }];
   });
 
@@ -121,7 +134,17 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
           </div>
         ) : null}
         {filtered.map(row => {
-          const qty = draftItems[row.lineKey]?.qty || 0;
+          // Aggregate qty across every draft line whose lineKey starts with
+          // this row's key — a modifier'd item may have multiple cart lines
+          // (Hot vs Mild vs +Cheese) all sharing this menu row. The bare "-"
+          // stepper only decrements the plain, no-modifier variant; modifier
+          // combos are edited from the cart tab (each has its own line there).
+          const rowKey = row.lineKey;
+          const draftEntries = Object.entries(draftItems).filter(([k]) => k === rowKey || k.startsWith(`${rowKey}|`));
+          const qty = draftEntries.reduce((s, [, v]) => s + (v?.qty || 0), 0);
+          const plainQty = draftItems[rowKey]?.qty || 0;
+          const openSheet = () => setSheetRow(row);
+          const handleAdd = row.hasModifiers ? openSheet : () => onAddItem(row);
           return (
             <div
               key={row.lineKey}
@@ -144,9 +167,20 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                         · {row.variant_label}
                       </span>
                     )}
+                    {row.hasModifiers && (
+                      <span title="Customizable — spice, extras, prep" style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6,
+                        fontSize: '9px', color: 'var(--color-primary)', fontFamily: 'var(--font-mono)',
+                        background: 'var(--status-amber-bg)',
+                        padding: '1px 5px', borderRadius: 'var(--radius-full)',
+                        border: '1px solid var(--status-amber-border)', verticalAlign: 'middle'
+                      }}>
+                        <SlidersHorizontal size={9} /> CUSTOMIZE
+                      </span>
+                    )}
                   </div>
                   <div className="typography-body-sm" style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: '1px' }}>
-                    {currency}{row.price}
+                    {currency}{row.price}{row.hasModifiers ? ' +' : ''}
                   </div>
                 </div>
               </div>
@@ -155,12 +189,18 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                 {qty > 0 ? (
                   <>
                     <button
-                      onClick={() => onRemoveItem(row.lineKey)} disabled={!selectedTableId}
+                      // Only touch the plain (no-modifier) draft line here;
+                      // modifier lines are edited from the cart tab where
+                      // each combination is listed individually.
+                      onClick={() => onRemoveItem(rowKey)}
+                      disabled={!selectedTableId || plainQty === 0}
+                      title={plainQty === 0 ? 'Edit customized items from the Cart tab' : 'Remove one'}
                       style={{
                         width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
                         background: 'var(--color-surface-soft)', border: '1px solid var(--color-hairline)',
                         color: 'var(--color-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer'
+                        cursor: plainQty === 0 ? 'not-allowed' : 'pointer',
+                        opacity: plainQty === 0 ? 0.4 : 1
                       }}
                     ><Minus size={13} /></button>
 
@@ -169,7 +209,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                     </span>
 
                     <button
-                      onClick={() => onAddItem(row)} disabled={!selectedTableId}
+                      onClick={handleAdd} disabled={!selectedTableId}
                       style={{
                         width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
                         background: 'var(--color-primary)', color: '#ffffff', border: 'none',
@@ -180,7 +220,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                   </>
                 ) : (
                   <button
-                    onClick={() => onAddItem(row)} disabled={!selectedTableId}
+                    onClick={handleAdd} disabled={!selectedTableId}
                     style={{
                       padding: '6px 14px', borderRadius: 'var(--radius-sm)', fontSize: '12px', fontWeight: 500,
                       background: selectedTableId ? 'var(--color-primary)' : 'var(--color-surface-soft)',
@@ -189,13 +229,25 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                       cursor: selectedTableId ? 'pointer' : 'not-allowed',
                       transition: 'all 0.15s ease'
                     }}
-                  ><Plus size={13} />Add</button>
+                  ><Plus size={13} />{row.hasModifiers ? 'Customize' : 'Add'}</button>
                 )}
               </div>
             </div>
           );
         })}
       </div>
+
+      {sheetRow && (
+        <ModifierSheet
+          row={sheetRow}
+          currency={currency}
+          onClose={() => setSheetRow(null)}
+          onConfirm={(configuredRow) => {
+            onAddItem(configuredRow);
+            setSheetRow(null);
+          }}
+        />
+      )}
     </div>
   );
 };
