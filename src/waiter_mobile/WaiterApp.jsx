@@ -396,7 +396,13 @@ export const WaiterApp = () => {
   const lineKey = (row) => {
     const base = row.variant_id ? `${row.item_id}|${row.variant_id}` : String(row.item_id);
     const sig = modifierSignature(row.modifiers);
-    return sig ? `${base}|${sig}` : base;
+    // A day-part boundary crossed mid-order means the same item picked at
+    // 15:59 (base price) and 16:01 (happy hour) should be TWO separate
+    // cart lines (M2 · PR 13). Signature dedupes on `dp_<id>|` so identical
+    // day-part attributions still stack, but base vs promo split cleanly.
+    const dp = row.active_day_part?.id ? `dp_${row.active_day_part.id}` : 'dp_none';
+    const modPart = sig ? `|${sig}` : '';
+    return `${base}${modPart}|${dp}`;
   };
 
   const addItem = (row) => {
@@ -413,11 +419,16 @@ export const WaiterApp = () => {
             variant_label: row.variant_label || null,
             name: row.name,
             // `row.price` on a modifier'd row already includes the delta (the
-            // sheet applies it before onConfirm), so a straight assign is correct.
+            // sheet applies it before onConfirm) AND the active day-part
+            // override (hub-resolved on GET /menu), so a straight assign is
+            // correct — the cart total shown to the waiter matches the
+            // hub's server-authoritative re-price at POST /orders modulo up
+            // to one 5s poll of clock drift across a day-part boundary.
             price: row.price,
             isVeg: row.isVeg,
             qty: 1,
-            modifiers: Array.isArray(row.modifiers) ? row.modifiers : []
+            modifiers: Array.isArray(row.modifiers) ? row.modifiers : [],
+            active_day_part: row.active_day_part || null
           };
       return { ...p, [selectedTableId]: tableDraft };
     });

@@ -862,6 +862,18 @@ const KitchenHubApp = () => {
                                         · {item.variant_label}
                                       </span>
                                     )}
+                                    {item.day_part_label && (
+                                      <span
+                                        title={`Billed at ${item.day_part_label}`}
+                                        style={{
+                                          fontSize: 10, color: 'var(--status-green-text)', fontFamily: 'var(--font-mono)',
+                                          background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)',
+                                          padding: '1px 6px', borderRadius: 'var(--radius-full)', marginLeft: 6, verticalAlign: 'middle'
+                                        }}
+                                      >
+                                        {String(item.day_part_label).toUpperCase()}
+                                      </span>
+                                    )}
                                   </span>
                                   {/* KDS modifier lines (M2 · PR 12). The kitchen
                                       sees "· Spice level: Hot" for prep instructions
@@ -1029,6 +1041,18 @@ const KitchenHubApp = () => {
                                   {line.variant_label && (
                                     <span style={{ fontSize: '11px', color: 'var(--color-muted)', fontWeight: 500, marginLeft: 6 }}>
                                       · {line.variant_label}
+                                    </span>
+                                  )}
+                                  {line.day_part_label && (
+                                    <span
+                                      title={`Billed at ${line.day_part_label}`}
+                                      style={{
+                                        fontSize: 9, color: 'var(--status-green-text)', fontFamily: 'var(--font-mono)',
+                                        background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)',
+                                        padding: '1px 5px', borderRadius: 'var(--radius-full)', marginLeft: 6, verticalAlign: 'middle'
+                                      }}
+                                    >
+                                      {String(line.day_part_label).toUpperCase()}
                                     </span>
                                   )}
                                 </div>

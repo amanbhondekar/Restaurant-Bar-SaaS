@@ -174,6 +174,19 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
                           · {item.variant_label}
                         </span>
                       )}
+                      {item.active_day_part && (
+                        <span
+                          title={`Priced at ${item.active_day_part.label}`}
+                          style={{
+                            fontSize: 9, color: 'var(--status-green-text)', fontFamily: 'var(--font-mono)',
+                            background: 'var(--status-green-bg)', border: '1px solid var(--status-green-border)',
+                            padding: '1px 5px', borderRadius: 'var(--radius-full)', marginLeft: 6,
+                            verticalAlign: 'middle'
+                          }}
+                        >
+                          {String(item.active_day_part.label).toUpperCase()}
+                        </span>
+                      )}
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>

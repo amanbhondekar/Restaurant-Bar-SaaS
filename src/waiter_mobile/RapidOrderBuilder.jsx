@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePos } from '../context/PosContext';
-import { Search, Plus, Minus, SlidersHorizontal } from 'lucide-react';
+import { Search, Plus, Minus, SlidersHorizontal, Clock } from 'lucide-react';
 import { ModifierSheet } from './ModifierSheet';
 
 export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRemoveItem }) => {
@@ -23,9 +23,19 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
   // Modifier groups (M2 · PR 12) hang off the parent item, not the variant,
   // so both flat-item rows and variant-expanded rows inherit the same
   // modifier_groups reference; the sheet handles the picks.
+  // The hub already resolves the active day-part per request and stamps
+  // `effective_price` + `active_day_part` on each item + variant (M2 · PR 13).
+  // The handset just reads those fields — no client-side clock, no drift
+  // window between what the waiter taps and what the KDS bills. Server is
+  // the pricing authority; POST /orders re-prices from scratch anyway.
+  const priceOf = (obj) => Number.isFinite(Number(obj?.effective_price))
+    ? Number(obj.effective_price)
+    : Number(obj?.price) || 0;
+
   const expandedRows = menu.flatMap(item => {
     if (!item.available) return [];
     const hasModifiers = Array.isArray(item.modifier_groups) && item.modifier_groups.length > 0;
+    const itemDayPart = item.active_day_part || null;
     if (Array.isArray(item.variants) && item.variants.length > 0) {
       return item.variants.map(v => ({
         lineKey: `${item.id}|${v.id}`,
@@ -34,7 +44,9 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
         variant_label: v.label,
         name: item.name,
         display_name: `${item.name} — ${v.label}`,
-        price: Number(v.price) || 0,
+        price: priceOf(v),
+        base_price: Number(v.price) || 0,
+        active_day_part: v.active_day_part || itemDayPart,
         isVeg: item.isVeg,
         category: item.category,
         hasModifiers,
@@ -48,7 +60,9 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       variant_label: null,
       name: item.name,
       display_name: item.name,
-      price: Number(item.price) || 0,
+      price: priceOf(item),
+      base_price: Number(item.price) || 0,
+      active_day_part: itemDayPart,
       isVeg: item.isVeg,
       category: item.category,
       hasModifiers,
@@ -178,9 +192,30 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                         <SlidersHorizontal size={9} /> CUSTOMIZE
                       </span>
                     )}
+                    {row.active_day_part && (
+                      <span
+                        title={`Active promotion: ${row.active_day_part.label}`}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6,
+                          fontSize: '9px', color: 'var(--status-green-text)', fontFamily: 'var(--font-mono)',
+                          background: 'var(--status-green-bg)',
+                          padding: '1px 5px', borderRadius: 'var(--radius-full)',
+                          border: '1px solid var(--status-green-border)', verticalAlign: 'middle'
+                        }}
+                      >
+                        <Clock size={9} /> {String(row.active_day_part.label).toUpperCase()}
+                      </span>
+                    )}
                   </div>
-                  <div className="typography-body-sm" style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: '1px' }}>
-                    {currency}{row.price}{row.hasModifiers ? ' +' : ''}
+                  <div className="typography-body-sm" style={{ fontSize: '12px', color: 'var(--color-muted)', marginTop: '1px', display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                    <span style={{ color: row.active_day_part ? 'var(--status-green-text)' : 'var(--color-muted)', fontWeight: row.active_day_part ? 700 : 500 }}>
+                      {currency}{row.price}{row.hasModifiers ? ' +' : ''}
+                    </span>
+                    {row.active_day_part && row.base_price !== row.price && (
+                      <span style={{ textDecoration: 'line-through', fontSize: 11, opacity: 0.6 }}>
+                        {currency}{row.base_price}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

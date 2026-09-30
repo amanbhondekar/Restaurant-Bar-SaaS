@@ -72,7 +72,12 @@ export function renderKot(ticket, tenant = {}) {
     const qty = Number(i?.qty) || 0;
     const name = String(i?.name || '');
     const variant = i?.variant_label ? ` (${i.variant_label})` : '';
-    const head = `${qty}x ${name}${variant}`;
+    // Day-part attribution (M2 · PR 13): a "· Happy hour" suffix so the
+    // kitchen sees which promotion the line was billed at. Prep-time
+    // decisions (portion size, sides) don't change, but a challenged
+    // receipt can be reconciled straight from the KOT.
+    const dayPart = i?.day_part_label ? ` · ${i.day_part_label}` : '';
+    const head = `${qty}x ${name}${variant}${dayPart}`;
     const mods = Array.isArray(i?.modifiers) ? i.modifiers.map(modLine) : [];
     return [head, ...mods];
   });
@@ -156,6 +161,13 @@ export function renderReceipt(invoice, tenant = {}) {
       + padLeft(String(l.qty), 4)
       + padLeft(String(l.price), 8)
       + padLeft(String(l.line_total), 9);
+    // Day-part sub-line (M2 · PR 13). Zero-width numeric columns since the
+    // window's price is already reflected in `l.price`; the sub-line just
+    // annotates WHY that number is what it is, so a challenged bill can
+    // reference "Happy hour" without a receipt reprint.
+    const dayPartLine = l.day_part_label
+      ? [padRight(`  · ${l.day_part_label}`.slice(0, width), width)]
+      : [];
     const mods = Array.isArray(l.modifiers) ? l.modifiers : [];
     const modLines = mods.map(m => {
       const label = String(m?.option_label || '');
@@ -172,7 +184,7 @@ export function renderReceipt(invoice, tenant = {}) {
         + padLeft('', 8)
         + padLeft(amt, 9);
     });
-    return [head, ...modLines];
+    return [head, ...dayPartLine, ...modLines];
   });
 
   function summaryRow(label, amount) {

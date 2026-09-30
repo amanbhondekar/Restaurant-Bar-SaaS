@@ -1943,3 +1943,172 @@ test('M2: end-to-end order with valid modifier passes hub /orders round-trip', a
   assert.ok(res.status === 201 || res.status === 400,
     `expected 201 or 400 SPURIOUS_MODIFIERS, got ${res.status}`);
 });
+
+// ---------------------------------------------------------------------------
+// M2 — Day-part pricing (PR 13)
+// ---------------------------------------------------------------------------
+//
+// Time-based overrides for menu items. The resolver picks the first active
+// window (day-of-week filter + HH:MM range, overnight-wrap supported); the
+// window's price wins over the variant/base at pricing time, and modifier
+// deltas still stack on top per unit. All fixed-time tests inject a `now`
+// so the suite is deterministic regardless of when it runs.
+
+import { resolveActiveDayPart, resolveEffectivePrice } from '../lib/dayParts.js';
+
+// Minutes-of-day helper for building a Date at HH:MM on an arbitrary DOW.
+// We use 2026-06-{1..7} (Mon-Sun in 2026) so getDay() is stable across
+// environments regardless of DST.
+const dowDate = (dayOfWeek /* 0=Sun..6=Sat */, hh, mm = 0) => {
+  // 2026-06-01 was a Monday, so DOW=1 → day 1, DOW=2 → day 2, ..., DOW=0 (Sun) → day 7.
+  const day = dayOfWeek === 0 ? 7 : dayOfWeek;
+  return new Date(2026, 5, day, hh, mm, 0, 0);
+};
+
+test('M2: resolveActiveDayPart honours HH:MM range and day filter, wraps overnight', () => {
+  const windows = [
+    { id: 'lunch', label: 'Lunch', starts_at: '12:00', ends_at: '15:00', price: 100 },
+    { id: 'happy', label: 'Happy hour', starts_at: '16:00', ends_at: '18:00', days: [1,2,3,4,5], price: 80 },
+    { id: 'late',  label: 'Late night', starts_at: '22:00', ends_at: '02:00', price: 60 }
+  ];
+  // Weekday 13:00 → lunch.
+  assert.equal(resolveActiveDayPart(windows, dowDate(3 /*Wed*/, 13))?.id, 'lunch');
+  // Weekday 17:00 → happy hour (first-match iteration hit lunch already skipped).
+  assert.equal(resolveActiveDayPart(windows, dowDate(3, 17))?.id, 'happy');
+  // Sunday 17:00 → happy hour has days:[1..5] so it's skipped; falls through to null.
+  assert.equal(resolveActiveDayPart(windows, dowDate(0 /*Sun*/, 17)), null);
+  // Overnight wrap: 23:30 → late; 01:00 (next-day clock, same wrap) → late.
+  assert.equal(resolveActiveDayPart(windows, dowDate(3, 23, 30))?.id, 'late');
+  assert.equal(resolveActiveDayPart(windows, dowDate(3, 1, 0))?.id, 'late');
+  // Boundary: window is `[starts, ends)` — exactly starts is IN, exactly ends is OUT.
+  assert.equal(resolveActiveDayPart(windows, dowDate(3, 12, 0))?.id, 'lunch');
+  assert.equal(resolveActiveDayPart(windows, dowDate(3, 15, 0)), null);
+  // Dead zone (Wed 21:00): no window covers it.
+  assert.equal(resolveActiveDayPart(windows, dowDate(3, 21, 0)), null);
+  // Malformed windows are dropped without crashing.
+  assert.equal(resolveActiveDayPart([{ id: 'bad', starts_at: '25:00', ends_at: '11:00' }], dowDate(3, 10)), null);
+});
+
+test('M2: resolveEffectivePrice — flat item, variant, and variant_prices override', () => {
+  const flat = {
+    id: 'naan', price: 45,
+    day_parts: [{ id: 'bfast', label: 'Breakfast', starts_at: '07:00', ends_at: '11:00', price: 35 }]
+  };
+  // Inside window: base 45 → 35 with attribution.
+  const inside = resolveEffectivePrice(flat, null, dowDate(3, 9));
+  assert.equal(inside.price, 35);
+  assert.equal(inside.day_part_id, 'bfast');
+  assert.equal(inside.day_part_label, 'Breakfast');
+  // Outside window: 45, no attribution.
+  const outside = resolveEffectivePrice(flat, null, dowDate(3, 14));
+  assert.equal(outside.price, 45);
+  assert.equal(outside.day_part_id, null);
+
+  const withVariants = {
+    id: 'rice', price: 140,
+    variants: [
+      { id: 'v_half', price: 90 },
+      { id: 'v_full', price: 140 }
+    ],
+    day_parts: [
+      // Happy hour: flat window price wins over BOTH variants when
+      // variant_prices is absent.
+      { id: 'dp_flat', label: 'Flat window', starts_at: '16:00', ends_at: '18:00', price: 80 },
+      // Breakfast: per-variant override map.
+      { id: 'dp_bfast', label: 'Breakfast', starts_at: '07:00', ends_at: '11:00',
+        variant_prices: { v_half: 60, v_full: 100 } }
+    ]
+  };
+  // Inside 09:00 breakfast → per-variant map wins.
+  const half = resolveEffectivePrice(withVariants, withVariants.variants[0], dowDate(3, 9));
+  assert.equal(half.price, 60);
+  assert.equal(half.day_part_id, 'dp_bfast');
+  const full = resolveEffectivePrice(withVariants, withVariants.variants[1], dowDate(3, 9));
+  assert.equal(full.price, 100);
+  // Inside 17:00 flat window → flat price wins over EACH variant.
+  const halfHappy = resolveEffectivePrice(withVariants, withVariants.variants[0], dowDate(3, 17));
+  assert.equal(halfHappy.price, 80);
+  const fullHappy = resolveEffectivePrice(withVariants, withVariants.variants[1], dowDate(3, 17));
+  assert.equal(fullHappy.price, 80);
+  // Outside any window → variant price.
+  const halfOff = resolveEffectivePrice(withVariants, withVariants.variants[0], dowDate(3, 14));
+  assert.equal(halfOff.price, 90);
+});
+
+test('M2: priceOrder folds active day-part into the priced line + modifier delta', () => {
+  // We can't inject `now` through priceOrder (it consults the module-level
+  // clock via lib/dayParts.js). So this test builds a menu whose day_parts
+  // window covers "always" — starts_at 00:00, ends_at 23:59 — so it's active
+  // regardless of when the suite runs. That still exercises the full stack:
+  // resolveEffectivePrice inside priceOrder, day_part_id/label propagation
+  // onto the priced line, and modifier deltas stacking on top.
+  const originalGetMenuCache = restaurantCache.getMenuCache;
+  restaurantCache.getMenuCache = () => ({
+    uninitialized: false,
+    items: [
+      {
+        id: 'naan', name: 'Butter Naan', price: 45, available: true,
+        day_parts: [{ id: 'dp_always', label: 'Always-on window', starts_at: '00:00', ends_at: '23:59', price: 35 }]
+      },
+      {
+        id: 'coke', name: 'Coke', price: 60, available: true,
+        modifier_groups: [{ id: 'mg_size', label: 'Size', min: 1, max: 1,
+          options: [{ id: 'reg', label: 'Regular', price_delta: 0 }, { id: 'lg', label: 'Large', price_delta: 20 }] }],
+        day_parts: [{ id: 'dp_always', label: 'Combo pricing', starts_at: '00:00', ends_at: '23:59', price: 40 }]
+      }
+    ]
+  });
+
+  try {
+    // Flat item + always-on window: base 45 → 35, line total for qty 2 = 70.
+    const naan = priceOrderImpl([{ id: 'naan', qty: 2 }], RESTAURANT_ID);
+    assert.equal(naan.ok, true);
+    assert.equal(naan.items[0].price, 35);
+    assert.equal(naan.items[0].day_part_id, 'dp_always');
+    assert.equal(naan.items[0].day_part_label, 'Always-on window');
+    assert.equal(naan.total_amount, 70);
+
+    // Modifier + day-part: window base is 40, +Large is +20, so per-unit 60.
+    const coke = priceOrderImpl([{
+      id: 'coke', qty: 3,
+      modifiers: [{ group_id: 'mg_size', option_id: 'lg' }]
+    }], RESTAURANT_ID);
+    assert.equal(coke.ok, true);
+    assert.equal(coke.items[0].price, 60);
+    assert.equal(coke.items[0].day_part_label, 'Combo pricing');
+    assert.equal(coke.items[0].modifiers[0].option_label, 'Large');
+    assert.equal(coke.total_amount, 180);
+  } finally {
+    restaurantCache.getMenuCache = originalGetMenuCache;
+  }
+});
+
+test('M2: KOT + receipt annotate the active day-part on the item line', async () => {
+  const { renderKot, renderReceipt } = await import('../lib/printer.js');
+  const ticket = {
+    ticket_number: 51, table_name: 'T7', created_at: new Date().toISOString(),
+    items: [
+      { qty: 2, name: 'Butter Naan', price: 35, day_part_label: 'Breakfast' },
+      // Compose: variant + modifier + day_part all on one line, exercising
+      // the joined suffix order (variant, then day-part) on the KOT.
+      { qty: 1, name: 'Chicken Tikka Masala', variant_label: 'Full', day_part_label: 'Happy hour',
+        modifiers: [{ group_label: 'Spice level', option_label: 'Hot', price_delta: 0 }] }
+    ]
+  };
+  const kot = renderKot(ticket);
+  assert.match(kot.preview_text, /2x Butter Naan · Breakfast/);
+  assert.match(kot.preview_text, /1x Chicken Tikka Masala \(Full\) · Happy hour/);
+  // Modifier sub-line still prints under the item head as in PR 12.
+  assert.match(kot.preview_text, /· Spice level: Hot/);
+
+  const invoice = {
+    currency: '₹', table_name: 'T7', issued_at: new Date().toISOString(),
+    items: [
+      { name: 'Butter Naan', qty: 2, price: 35, line_total: 70, day_part_label: 'Breakfast', modifiers: [] }
+    ],
+    subtotal: 70, tax_rows: [], grand_total: 70
+  };
+  const receipt = renderReceipt(invoice);
+  assert.match(receipt.preview_text, /Butter Naan/);
+  assert.match(receipt.preview_text, /· Breakfast/);
+});

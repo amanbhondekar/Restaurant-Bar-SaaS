@@ -63,7 +63,19 @@ const DEFAULT_MENU_ITEMS = [
       }
     ]
   },
-  { id: 'm4', name: 'Butter Naan', price: 45, category: 'Breads & Rice', isVeg: true, available: true },
+  {
+    id: 'm4', name: 'Butter Naan', price: 45, category: 'Breads & Rice', isVeg: true, available: true,
+    // Day-part pricing (M2 · PR 13): breakfast promotion drops naan to ₹35
+    // between 07:00 and 11:00 every day. Legacy items with no `day_parts`
+    // behave exactly as before — the pricer just resolves to the base price.
+    day_parts: [
+      {
+        id: 'dp_breakfast', label: 'Breakfast',
+        starts_at: '07:00', ends_at: '11:00',
+        price: 35
+      }
+    ]
+  },
   {
     id: 'm5', name: 'Jeera Rice', category: 'Breads & Rice', isVeg: true, available: true,
     price: 140,
@@ -92,6 +104,17 @@ const DEFAULT_MENU_ITEMS = [
           { id: 'less_sweet', label: 'Less sweet', price_delta: 0 },
           { id: 'no_sugar',   label: 'No sugar',   price_delta: 0 }
         ]
+      }
+    ],
+    // Weekday happy hour 4-6 PM: ₹40 instead of ₹50. Sunday/Saturday keep
+    // full price. Modifier deltas still apply on top — the pricer resolves
+    // the effective base first, then folds modifiers.
+    day_parts: [
+      {
+        id: 'dp_happy_hour', label: 'Happy hour',
+        starts_at: '16:00', ends_at: '18:00',
+        days: [1, 2, 3, 4, 5],
+        price: 40
       }
     ]
   },
@@ -224,6 +247,41 @@ class RestaurantCache {
             return { id: String(g.id), label: String(g.label).slice(0, 40), min, max, options };
           })
           .filter(Boolean);
+        // Day-parts ship as JSONB (`day_parts: [{ id, label, starts_at,
+        // ends_at, days?, price?, variant_prices? }]`). Same defensive
+        // normalisation as modifier_groups — a window missing a valid
+        // HH:MM range is dropped so lib/dayParts.js never has to guard.
+        const HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+        const rawDayParts = Array.isArray(i.day_parts) ? i.day_parts : [];
+        const day_parts = rawDayParts
+          .map(dp => {
+            if (!dp || !dp.id || !dp.label) return null;
+            if (!HHMM.test(String(dp.starts_at)) || !HHMM.test(String(dp.ends_at))) return null;
+            const out = {
+              id: String(dp.id),
+              label: String(dp.label).slice(0, 40),
+              starts_at: String(dp.starts_at),
+              ends_at: String(dp.ends_at)
+            };
+            if (Array.isArray(dp.days) && dp.days.length > 0) {
+              out.days = dp.days.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+            }
+            if (Number.isFinite(Number(dp.price)) && Number(dp.price) >= 0) {
+              out.price = Number(dp.price);
+            }
+            if (dp.variant_prices && typeof dp.variant_prices === 'object') {
+              const vp = {};
+              for (const [k, v] of Object.entries(dp.variant_prices)) {
+                if (Number.isFinite(Number(v)) && Number(v) >= 0) vp[String(k)] = Number(v);
+              }
+              if (Object.keys(vp).length > 0) out.variant_prices = vp;
+            }
+            // A window with neither `price` nor `variant_prices` is useless
+            // — drop it rather than let the pricer silently fall back.
+            if (out.price === undefined && !out.variant_prices) return null;
+            return out;
+          })
+          .filter(Boolean);
         return {
           id: i.id,
           name: i.name,
@@ -232,7 +290,8 @@ class RestaurantCache {
           isVeg: i.is_veg !== undefined ? Boolean(i.is_veg) : Boolean(i.isVeg ?? true),
           available: i.available !== undefined ? Boolean(i.available) : true,
           ...(variants.length > 0 ? { variants } : {}),
-          ...(modifier_groups.length > 0 ? { modifier_groups } : {})
+          ...(modifier_groups.length > 0 ? { modifier_groups } : {}),
+          ...(day_parts.length > 0 ? { day_parts } : {})
         };
       }) : [];
 

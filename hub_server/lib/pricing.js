@@ -1,4 +1,5 @@
 import { restaurantCache } from './restaurantCache.js';
+import { resolveEffectivePrice } from './dayParts.js';
 
 /**
  * Server-side order pricing.
@@ -76,9 +77,18 @@ export function priceOrder(rawItems, restaurantId) {
     // legacy items that never grew variants). If the handset supplies a
     // variant_id that doesn't match one of them, reject the line — a
     // silent fallback would price the whole cart at a stale amount.
+    //
+    // Day-part pricing (M2 · PR 13) layers on top of variant / base
+    // resolution via lib/dayParts.js: when a window is currently active,
+    // its per-variant override wins over the variant's own price, its
+    // flat `price` wins over the item's base price, and both fall back
+    // to the underlying value when no window is active. Modifier deltas
+    // still stack on top at the per-unit price step below.
     let variantId = null;
     let variantLabel = null;
     let unitPrice = price;
+    let dayPartId = null;
+    let dayPartLabel = null;
     const hasVariants = Array.isArray(menuItem.variants) && menuItem.variants.length > 0;
     if (hasVariants) {
       const raw_variant_id = raw?.variant_id;
@@ -98,8 +108,17 @@ export function priceOrder(rawItems, restaurantId) {
       }
       variantId = variant.id;
       variantLabel = variant.label;
-      unitPrice = vp;
-    } else if (raw?.variant_id) {
+      const eff = resolveEffectivePrice(menuItem, variant);
+      unitPrice = eff.price;
+      dayPartId = eff.day_part_id;
+      dayPartLabel = eff.day_part_label;
+    } else {
+      const eff = resolveEffectivePrice(menuItem, null);
+      unitPrice = eff.price;
+      dayPartId = eff.day_part_id;
+      dayPartLabel = eff.day_part_label;
+    }
+    if (raw?.variant_id && !hasVariants) {
       // Item has no variants but the handset supplied one — reject rather
       // than silently ignore, so a stale menu on the phone gets caught.
       rejected.push({ id, name: menuItem.name, reason: 'UNKNOWN_VARIANT', variant_id: raw.variant_id });
@@ -198,7 +217,12 @@ export function priceOrder(rawItems, restaurantId) {
       variant_label: variantLabel,
       // Empty array (not null) so downstream renderers can always .map without
       // a nullish guard. Legacy items with no modifiers keep the array empty.
-      modifiers: resolvedModifiers
+      modifiers: resolvedModifiers,
+      // Day-part attribution (M2 · PR 13). Both null when no window was
+      // active at pricing time — the KOT/receipt/KDS then render the item
+      // unchanged, just as they did before PR 13.
+      day_part_id: dayPartId,
+      day_part_label: dayPartLabel
     });
   }
 

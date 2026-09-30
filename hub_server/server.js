@@ -15,6 +15,7 @@ import { syncQueue } from './lib/syncQueue.js';
 import { authenticateHubStaff } from './lib/supabaseClient.js';
 import { restaurantCache } from './lib/restaurantCache.js';
 import { priceOrder } from './lib/pricing.js';
+import { resolveEffectivePrice } from './lib/dayParts.js';
 import { buildInvoicePreview } from './lib/invoice.js';
 import { invoiceStore } from './lib/invoiceStore.js';
 import { renderKot, renderReceipt, sendToPrinter } from './lib/printer.js';
@@ -380,6 +381,40 @@ app.post('/orders/:id/ready', requireDevice, (req, res) => {
 app.get('/menu', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const menuData = restaurantCache.getMenuCache(pairing.restaurant_id);
+  // Day-part enrichment (M2 · PR 13). We resolve the active window on every
+  // request so the handset gets the currently-effective price without having
+  // to duplicate the day-part logic client-side, and so the cart total the
+  // waiter sees matches what the hub bills at POST /orders — modulo up to
+  // one poll interval (~5s) of drift, which the server-authoritative
+  // re-pricing at order time closes anyway.
+  if (menuData && !menuData.uninitialized && Array.isArray(menuData.items)) {
+    const now = new Date();
+    menuData.items = menuData.items.map(i => {
+      const dayParts = Array.isArray(i.day_parts) ? i.day_parts : [];
+      const baseEff = resolveEffectivePrice(i, null, now);
+      const nextVariants = Array.isArray(i.variants)
+        ? i.variants.map(v => {
+            const ve = resolveEffectivePrice(i, v, now);
+            return {
+              ...v,
+              effective_price: ve.price,
+              active_day_part: ve.day_part_id
+                ? { id: ve.day_part_id, label: ve.day_part_label }
+                : null
+            };
+          })
+        : undefined;
+      return {
+        ...i,
+        effective_price: baseEff.price,
+        active_day_part: baseEff.day_part_id
+          ? { id: baseEff.day_part_id, label: baseEff.day_part_label }
+          : null,
+        ...(nextVariants ? { variants: nextVariants } : {}),
+        ...(dayParts.length > 0 ? { day_parts: dayParts } : {})
+      };
+    });
+  }
   res.json(menuData);
 });
 
