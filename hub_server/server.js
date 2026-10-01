@@ -21,6 +21,7 @@ import { invoiceStore } from './lib/invoiceStore.js';
 import { renderKot, renderReceipt, sendToPrinter } from './lib/printer.js';
 import { groupTicketByStation } from './lib/kotRouting.js';
 import { waiterStore } from './lib/waiterStore.js';
+import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js';
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
 attachHubProcessHandlers();
@@ -178,14 +179,41 @@ syncQueue.onStatusChange((status) => {
 // HTTP REST Endpoints
 // -------------------------------------------------------------
 
+// Plan entitlements (M3 · PR 16). The menu cache reads the tenant's effective
+// features through this provider so GET /menu and the order pricer always
+// agree on what the plan lets the restaurant sell.
+restaurantCache.setFeatureProvider(() => hubConfig.getEffectivePlan().features);
+
+/** Refuse a route whose feature isn't in the tenant's effective plan. */
+function requireFeature(feature) {
+  return (req, res, next) => {
+    const eff = hubConfig.getEffectivePlan();
+    if (hasFeature(eff.plan, feature)) return next();
+    const refusal = featureRefusal(eff.plan, feature);
+    return res.status(refusal.status).json({
+      success: false, error: refusal.error, code: refusal.code,
+      feature: refusal.feature, plan: refusal.plan, upgrade_to: refusal.upgrade_to
+    });
+  };
+}
+
 // 0. POST /auth/device — exchange the KDS-displayed enrollment code for a token
 app.post('/auth/device', (req, res) => {
   const ip = req.socket.remoteAddress || 'unknown';
-  const result = deviceAuth.enroll(req.body?.enrollment_code, req.body?.device_label || 'Handset', ip);
+  const result = deviceAuth.enroll(
+    req.body?.enrollment_code,
+    req.body?.device_label || 'Handset',
+    ip,
+    // Evaluated only after the enrollment code checks out (see deviceAuth.enroll).
+    () => checkLimit(hubConfig.getEffectivePlan().plan, 'devices', deviceAuth.activeDeviceCount())
+  );
 
   if (!result.ok) {
     console.warn(`🔒 Device enrollment refused for ${ip}: ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({
+      error: result.error,
+      ...(result.code ? { code: result.code, limit_key: result.limit_key, limit: result.limit, current: result.current, plan: result.plan, upgrade_to: result.upgrade_to } : {})
+    });
   }
 
   console.log(`🔓 Device enrolled from ${ip} (${req.body?.device_label || 'Handset'})`);
@@ -642,6 +670,14 @@ app.post('/waiters/login', requireDevice, (req, res) => {
 // 7c-4. POST /waiters — Add a new waiter (reception / admin flow)
 app.post('/waiters', requireDevice, (req, res) => {
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const limit = checkLimit(hubConfig.getEffectivePlan().plan, 'waiters', waiterStore.listActive().length);
+  if (!limit.ok) {
+    return res.status(limit.status).json({
+      success: false, error: limit.error, code: limit.code,
+      limit_key: limit.limit_key, limit: limit.limit, current: limit.current,
+      plan: limit.plan, upgrade_to: limit.upgrade_to
+    });
+  }
   const result = waiterStore.addWaiter({ name: body.name, pin: body.pin });
   if (!result.ok) {
     return res.status(400).json({ success: false, error: result.error, code: result.code });
@@ -728,7 +764,7 @@ app.post('/invoices/:id/print-receipt', requireDevice, async (req, res) => {
 });
 
 // 7e-2. POST /invoices/:id/refund — Reverse a paid invoice (parent + all paid splits)
-app.post('/invoices/:id/refund', requireDevice, (req, res) => {
+app.post('/invoices/:id/refund', requireDevice, requireFeature(FEATURES.REFUNDS), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -748,7 +784,7 @@ app.post('/invoices/:id/refund', requireDevice, (req, res) => {
 });
 
 // 7f. POST /invoices/:id/split-by-seats — Divide grand_total into N equal shares
-app.post('/invoices/:id/split-by-seats', requireDevice, (req, res) => {
+app.post('/invoices/:id/split-by-seats', requireDevice, requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -768,7 +804,7 @@ app.post('/invoices/:id/split-by-seats', requireDevice, (req, res) => {
 });
 
 // 7f-3. POST /invoices/:id/split-by-items — Per-split item assignment
-app.post('/invoices/:id/split-by-items', requireDevice, (req, res) => {
+app.post('/invoices/:id/split-by-items', requireDevice, requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -788,7 +824,7 @@ app.post('/invoices/:id/split-by-items', requireDevice, (req, res) => {
 });
 
 // 7f-2. POST /invoices/:id/split-by-amounts — Reception-supplied per-split amounts
-app.post('/invoices/:id/split-by-amounts', requireDevice, (req, res) => {
+app.post('/invoices/:id/split-by-amounts', requireDevice, requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -977,6 +1013,30 @@ app.post('/orders/:id/clear', requireDevice, (req, res) => {
 });
 
 // 8. GET /sync-status — Check cloud sync queue & online status
+// GET /plan — effective entitlements and current usage (feeds the owner console).
+app.get('/plan', requireDevice, (req, res) => {
+  const eff = hubConfig.getEffectivePlan();
+  const info = hubConfig.getPairingInfo();
+  res.json({
+    success: true,
+    plan: eff.plan,
+    requested_plan: eff.requested_plan,
+    status: eff.status,
+    degraded: eff.degraded,
+    degraded_reason: eff.reason,
+    in_grace: eff.in_grace,
+    grace_ends_at: eff.grace_ends_at,
+    limits: eff.limits,
+    features: eff.features,
+    usage: {
+      devices: deviceAuth.activeDeviceCount(),
+      waiters: waiterStore.listActive().length,
+      printers: hubConfig.getPrinters().length
+    },
+    synced_at: info.plan_synced_at || null
+  });
+});
+
 app.get('/sync-status', requireDevice, (req, res) => {
   res.json({
     ...syncQueue.getStatus(),
@@ -1334,6 +1394,13 @@ server.listen(PORT, '0.0.0.0', () => {
     authenticateHubStaff(pairingInfo.restaurant_id);
     // Initialize Local Persisted Menu & Tables Disk Cache
     restaurantCache.initCache(pairingInfo.restaurant_id, broadcast);
+    // Refresh the subscription plan now and every 15 min. Fail-soft: offline
+    // keeps the last synced plan, so LAN-only service is never interrupted.
+    const syncPlan = () => hubConfig.syncPlanFromCloud().then(r => {
+      if (r.ok && r.changed) console.log(`💳 Plan updated from cloud: ${r.effective.plan} (${r.effective.status})`);
+    }).catch(() => {});
+    syncPlan();
+    setInterval(syncPlan, 15 * 60 * 1000).unref();
   }
 
   // Start background sync retry loop

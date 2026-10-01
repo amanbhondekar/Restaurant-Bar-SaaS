@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS public.restaurants (
     phone VARCHAR(20),
     currency VARCHAR(10) DEFAULT '₹',
     plan VARCHAR(20) NOT NULL DEFAULT 'starter', -- 'starter', 'pro', 'enterprise'
+    plan_status VARCHAR(20) NOT NULL DEFAULT 'active', -- 'active', 'trialing', 'past_due', 'suspended', 'cancelled' (see migrations/002)
+    trial_ends_at TIMESTAMPTZ,
+    current_period_end TIMESTAMPTZ,
     pairing_code VARCHAR(10) NOT NULL,
     settings JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW(),

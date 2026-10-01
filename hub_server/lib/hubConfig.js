@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabase, authenticateHubStaff } from './supabaseClient.js';
+import { resolveEffectivePlan, getLimits, getFeatures } from './plans.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,16 +21,28 @@ const DEMO_RESTAURANTS = [
     name: 'Hotel Mejwani',
     pairing_code: 'MJW-7492',
     slug: 'hotel-mejwani',
-    city: 'Nagpur'
+    city: 'Nagpur',
+    plan: 'pro'
   },
   {
     id: '22222222-2222-2222-2222-222222222222',
     name: 'Spice Garden Bistro',
     pairing_code: 'SPG-3108',
     slug: 'spice-garden',
-    city: 'Bengaluru'
+    city: 'Bengaluru',
+    plan: 'starter'
   }
 ];
+
+// The slice of a restaurants row that drives entitlements (see lib/plans.js).
+function planFieldsFrom(row) {
+  return {
+    plan: row?.plan,
+    plan_status: row?.plan_status || 'active',
+    trial_ends_at: row?.trial_ends_at || null,
+    current_period_end: row?.current_period_end || null
+  };
+}
 
 class HubConfig {
   constructor() {
@@ -54,6 +67,8 @@ class HubConfig {
       pairing_code: 'MJW-7492',
       slug: 'hotel-mejwani',
       city: 'Nagpur',
+      plan: 'pro',
+      plan_status: 'active',
       paired_at: new Date().toISOString()
     };
     this.saveConfig(defaultConfig);
@@ -98,8 +113,44 @@ class HubConfig {
         port: Number(p.port) || 9100,
         name: p.name ? String(p.name).slice(0, 40) : null
       }));
-    if (!role) return cleaned;
-    return cleaned.filter(p => p.role === role);
+    // Plan cap (M3 · PR 16): only the first N configured printers are used.
+    // Extra entries stay in hub_config.json untouched, so upgrading the plan
+    // brings them back without reconfiguration.
+    const cap = getLimits(this.getEffectivePlan().plan).printers;
+    const allowed = cap === null ? cleaned : cleaned.slice(0, cap);
+    if (!role) return allowed;
+    return allowed.filter(p => p.role === role);
+  }
+
+  /** Entitlements right now: plan, status, degradation, limits and features. */
+  getEffectivePlan(now = new Date()) {
+    const eff = resolveEffectivePlan(this.config, now);
+    return { ...eff, limits: getLimits(eff.plan), features: getFeatures(eff.plan) };
+  }
+
+  /**
+   * Refresh plan/status from the cloud. Fail-soft by design: offline or
+   * erroring Supabase leaves the last known plan in place, so a LAN-only
+   * restaurant keeps the entitlements it last synced.
+   */
+  async syncPlanFromCloud() {
+    const id = this.config?.restaurant_id;
+    if (!id) return { ok: false, reason: 'NOT_PAIRED' };
+    try {
+      const { data, error } = await supabase
+        .from('restaurants')
+        .select('plan, plan_status, trial_ends_at, current_period_end')
+        .eq('id', id)
+        .maybeSingle();
+      if (error || !data) return { ok: false, reason: error ? 'CLOUD_ERROR' : 'NOT_FOUND' };
+      const next = { ...this.config, ...planFieldsFrom(data), plan_synced_at: new Date().toISOString() };
+      const changed = ['plan', 'plan_status', 'trial_ends_at', 'current_period_end']
+        .some(k => (this.config?.[k] ?? null) !== (next[k] ?? null));
+      this.saveConfig(next);
+      return { ok: true, changed, effective: this.getEffectivePlan() };
+    } catch (err) {
+      return { ok: false, reason: 'OFFLINE', detail: err.message };
+    }
   }
 
   async pairWithCode(code) {
@@ -125,6 +176,8 @@ class HubConfig {
           pairing_code: data.pairing_code,
           slug: data.slug,
           city: data.city || 'Local',
+          ...planFieldsFrom(data),
+          plan_synced_at: new Date().toISOString(),
           paired_at: new Date().toISOString()
         };
         this.saveConfig(newConfig);
@@ -145,6 +198,8 @@ class HubConfig {
         pairing_code: foundDemo.pairing_code,
         slug: foundDemo.slug,
         city: foundDemo.city,
+        plan: foundDemo.plan,
+        plan_status: 'active',
         paired_at: new Date().toISOString()
       };
       this.saveConfig(newConfig);

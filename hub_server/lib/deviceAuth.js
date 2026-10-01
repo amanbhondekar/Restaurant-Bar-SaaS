@@ -79,8 +79,21 @@ class DeviceAuth {
     }
   }
 
-  /** Exchange the KDS-displayed enrollment code for a bearer token. */
-  enroll(code, deviceLabel, ip) {
+  /** Devices whose token is still valid (expired tokens don't count toward plan limits). */
+  activeDeviceCount() {
+    const now = Date.now();
+    return this.listDevices().filter(d => new Date(d.expires_at).getTime() > now).length;
+  }
+
+  /**
+   * Exchange the KDS-displayed enrollment code for a bearer token.
+   *
+   * `guard` (optional) runs only AFTER the code has been verified and returns
+   * `{ ok: true }` or a refusal `{ ok: false, status, error, ...extra }`. It is
+   * used for plan limits: checking before the code would let an unauthenticated
+   * caller probe the tenant's plan.
+   */
+  enroll(code, deviceLabel, ip, guard) {
     if (this.isRateLimited(ip)) {
       return { ok: false, status: 429, error: 'Too many failed attempts. Wait a minute and try again.' };
     }
@@ -94,6 +107,10 @@ class DeviceAuth {
     }
 
     this.failedAttempts.delete(ip);
+    if (typeof guard === 'function') {
+      const verdict = guard();
+      if (verdict && verdict.ok === false) return verdict;
+    }
     return { ok: true, ...this.issueToken(deviceLabel) };
   }
 
