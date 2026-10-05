@@ -18,7 +18,10 @@ import { priceOrder } from './lib/pricing.js';
 import { resolveEffectivePrice } from './lib/dayParts.js';
 import { buildInvoicePreview } from './lib/invoice.js';
 import { invoiceStore } from './lib/invoiceStore.js';
-import { renderKot, renderReceipt, sendToPrinter } from './lib/printer.js';
+import { reconciliationStore } from './lib/reconciliationStore.js';
+import { paymentEvents, ledgerCsv } from './lib/reconciliation.js';
+import { renderKot, renderReceipt, renderTestPage, sendToPrinter } from './lib/printer.js';
+import { listSystemPrinters } from './lib/usbPrinter.js';
 import { groupTicketByStation } from './lib/kotRouting.js';
 import { waiterStore } from './lib/waiterStore.js';
 import { addItem, updateItem, deleteItem, addCategory, renameCategory, reorderCategories, deleteCategory } from './lib/menuAdmin.js';
@@ -27,7 +30,7 @@ import { applyLayout } from './lib/tablesAdmin.js';
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
 attachHubProcessHandlers();
-import { deviceAuth, requireDevice, requireReception, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
+import { deviceAuth, requireDevice, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -351,7 +354,7 @@ async function autoPrintKot(ticket, pairing) {
     const job = renderKot(g.ticket, pairing, shouldLabel ? { station_label: g.label } : {});
     for (const p of printers) {
       if (p.station && p.station !== g.station) continue;
-      const res = await sendToPrinter(job, { host: p.host, port: p.port });
+      const res = await sendToPrinter(job, p);
       if (res.ok) {
         console.log(`🖨  KOT ${ticket.table_name || 'Table'} · #${ticket.ticket_number} [${g.station}] → ${p.id} (${res.sent_bytes ?? 0} bytes)`);
       } else {
@@ -731,6 +734,67 @@ app.get('/invoices', requireDevice, (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Payment reconciliation — reception laptop only (it is a money screen).
+// ---------------------------------------------------------------------------
+const receptionCash = requireReceptionFor('Cash and payment reconciliation');
+
+// 7c-1. GET /reconciliation/preview — the period since the last close, per payment method. Stores nothing.
+app.get('/reconciliation/preview', receptionCash, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  res.json({ success: true, ...reconciliationStore.preview(invoiceStore.listInvoices(pairing.restaurant_id), pairing.restaurant_id) });
+});
+
+// 7c-2. POST /reconciliation/close — count the drawer, compare with the system, store the record.
+app.post('/reconciliation/close', receptionCash, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = reconciliationStore.close(invoiceStore.listInvoices(pairing.restaurant_id), pairing.restaurant_id, body);
+  if (!result.ok) {
+    return res.status(result.status).json({
+      success: false, error: result.error, code: result.code,
+      ...(result.errors ? { errors: result.errors } : {}),
+      ...(result.preview ? { preview: result.preview } : {})
+    });
+  }
+  const r = result.record;
+  console.log(`🧾 ${r.number} closed · cash variance ${r.cash_variance} · ${r.status}`);
+  broadcast('RECONCILIATION_CLOSED', { number: r.number, status: r.status });
+  res.status(201).json({ success: true, record: r });
+});
+
+// 7c-3. GET /reconciliations — closed shifts, newest first.
+app.get('/reconciliations', receptionCash, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+  res.json({ success: true, records: reconciliationStore.list(pairing.restaurant_id).slice(0, limit) });
+});
+
+// 7c-4. GET /reconciliations/:id — one record (by id or REC-000001).
+app.get('/reconciliations/:id', receptionCash, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const record = reconciliationStore.get(req.params.id, pairing.restaurant_id);
+  if (!record) return res.status(404).json({ success: false, error: 'Record not found.', code: 'NOT_FOUND' });
+  res.json({ success: true, record });
+});
+
+// 7c-5. GET /reconciliation/ledger.csv — every payment and refund in a period, for the accountant.
+// `from` / `to` are ISO timestamps; the default is the period since the last close.
+app.get('/reconciliation/ledger.csv', receptionCash, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const parse = v => { const t = Date.parse(String(v)); return Number.isFinite(t) ? t : null; };
+  const fromMs = req.query.from !== undefined ? parse(req.query.from) : reconciliationStore.periodStartMs(pairing.restaurant_id);
+  const toMs = req.query.to !== undefined ? parse(req.query.to) : Date.now();
+  if ((req.query.from !== undefined && fromMs === null) || (req.query.to !== undefined && toMs === null)) {
+    return res.status(400).json({ success: false, error: 'from and to must be ISO dates, for example 2026-10-01T00:00:00Z.', code: 'INVALID_RANGE' });
+  }
+  const events = paymentEvents(invoiceStore.listInvoices(pairing.restaurant_id), pairing.restaurant_id)
+    .filter(e => (fromMs === null || e.ms >= fromMs) && (toMs === null || e.ms < toMs));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="payments-ledger.csv"');
+  res.send('﻿' + ledgerCsv(events));
+});
+
 // 7d. POST /invoices/:id/void — Reopen the underlying tickets and record why
 app.post('/invoices/:id/void', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
@@ -822,6 +886,45 @@ app.get('/printers', requireDevice, (req, res) => {
   res.json({ success: true, printers: hubConfig.getPrinters() });
 });
 
+// Printer setup — reception laptop only. A handset has no business adding printers.
+const receptionPrinters = requireReceptionFor('Printer setup');
+
+// 7d-2a. GET /printers/system — print queues the operating system knows about (USB printers appear here).
+app.get('/printers/system', receptionPrinters, async (req, res) => {
+  const result = await listSystemPrinters();
+  res.json({ success: result.ok, platform: result.platform, printers: result.printers, ...(result.error ? { error: result.error } : {}) });
+});
+
+// 7d-2b. POST /printers — add a network, USB or device printer.
+app.post('/printers', receptionPrinters, (req, res) => {
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = hubConfig.addPrinter(body);
+  if (!result.ok) {
+    return res.status(result.code === 'DUPLICATE_PRINTER' ? 409 : 400).json({ success: false, error: result.error, code: result.code });
+  }
+  console.log(`🖨  Printer added: ${result.printer.id} (${result.printer.transport}, ${result.printer.role})`);
+  res.status(201).json({ success: true, printer: result.printer });
+});
+
+// 7d-2c. DELETE /printers/:id
+app.delete('/printers/:id', receptionPrinters, (req, res) => {
+  const result = hubConfig.removePrinter(req.params.id);
+  if (!result.ok) return res.status(404).json({ success: false, error: result.error, code: result.code });
+  res.json({ success: true });
+});
+
+// 7d-2d. POST /printers/:id/test — print a test page on one configured printer.
+app.post('/printers/:id/test', receptionPrinters, async (req, res) => {
+  const printer = hubConfig.getPrinters().find(p => p.id === req.params.id);
+  if (!printer) return res.status(404).json({ success: false, error: 'Printer not found.', code: 'NOT_FOUND' });
+  const job = renderTestPage(printer, hubConfig.getPairingInfo());
+  const result = await sendToPrinter(job, printer);
+  if (!result.ok) {
+    return res.status(502).json({ success: false, error: result.error, code: result.code, preview_text: job.preview_text });
+  }
+  res.json({ success: true, printer_id: printer.id, sent_bytes: result.sent_bytes ?? 0, preview_text: job.preview_text });
+});
+
 // 7d-3. POST /orders/:id/print-kot — Explicit reprint of a ticket's KOT
 app.post('/orders/:id/print-kot', requireDevice, async (req, res) => {
   const pairing = hubConfig.getPairingInfo();
@@ -854,7 +957,7 @@ app.post('/orders/:id/print-kot', requireDevice, async (req, res) => {
       } else {
         for (const p of printers) {
           if (p.station && p.station !== g.station) continue;
-          const r = await sendToPrinter(job, { host: p.host, port: p.port });
+          const r = await sendToPrinter(job, p);
           results.push({ printer_id: p.id, station: g.station, ...r });
         }
       }
@@ -877,7 +980,7 @@ app.post('/invoices/:id/print-receipt', requireDevice, async (req, res) => {
     results.push({ printer_id: 'preview', ok: true, preview: true });
   } else {
     for (const p of printers) {
-      const r = await sendToPrinter(job, { host: p.host, port: p.port });
+      const r = await sendToPrinter(job, p);
       results.push({ printer_id: p.id, ...r });
     }
   }

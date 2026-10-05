@@ -222,6 +222,21 @@ export function isReceptionRequest(req) {
   return isLoopback(req) && addressedToThisMachine;
 }
 
+/**
+ * Same decision as requireReception, with a message that names the action. Used for money and
+ * hardware screens (cash reconciliation, printer setup), which any enrolled handset must not reach.
+ */
+export function requireReceptionFor(what) {
+  return (req, res, next) => {
+    if (isReceptionRequest(req)) return next();
+    return res.status(403).json({
+      success: false,
+      error: `${what} is only available on the reception laptop.`,
+      code: 'RECEPTION_ONLY'
+    });
+  };
+}
+
 /** Express guard for the /admin JSON API: the same decision as isReceptionRequest, answered as 403 RECEPTION_ONLY. */
 export function requireReception(req, res, next) {
   if (isReceptionRequest(req)) return next();
