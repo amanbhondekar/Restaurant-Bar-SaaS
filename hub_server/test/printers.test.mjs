@@ -233,13 +233,23 @@ const sinks = {};
 function sink(name) {
   return new Promise(resolve => {
     const chunks = [];
-    const server = net.createServer(sock => { sock.on('data', d => chunks.push(d)); });
+    const server = net.createServer(sock => { sock.on('data', d => chunks.push(d)); sock.on('error', () => {}); });
     server.listen(0, '127.0.0.1', () => {
       sinks[name] = { server, port: server.address().port, text: () => Buffer.concat(chunks).toString('latin1') };
       resolve();
     });
   });
 }
+
+// Wait for something to happen on the hub (a ticket reaching a printer) instead of sleeping a fixed time,
+// which is what made these tests flaky when the machine was busy.
+const until = async (check, ms = 8000) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise(r => setTimeout(r, 40));
+  }
+};
 
 const call = (p, { method = 'GET', body } = {}) =>
   fetch(`${BASE}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -291,7 +301,7 @@ test('hub: a mixed order splits by station — each printer receives only its ow
     body: { table_id: 1, table_name: 'T1', items: [{ id: 'h1', qty: 1 }, { id: 'b1', qty: 2 }] }
   });
   assert.equal(res.status, 201);
-  await new Promise(r => setTimeout(r, 600));
+  await until(() => /Dal Tadka/.test(sinks.hot.text()) && /Masala Chaas/.test(sinks.bar.text()));
   const hot = sinks.hot.text();
   const bar = sinks.bar.text();
   assert.match(hot, /Dal Tadka/);
@@ -328,7 +338,7 @@ test('hub: POST /printers/:id/test prints a test page to the printer, 404s on un
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.match(body.preview_text, /PRINTER TEST/);
-  await new Promise(r => setTimeout(r, 400));
+  await until(() => /PRINTER TEST/.test(sinks.bar.text().slice(before_)));
   assert.match(sinks.bar.text().slice(before_), /PRINTER TEST/);
   assert.equal((await call('/printers/nope/test', { method: 'POST' })).status, 404);
 });

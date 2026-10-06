@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode, StickyNote, Check, Loader, Zap, Receipt, X } from 'lucide-react';
+import { ChefHat, CheckCircle2, AlertCircle, Wifi, Cloud, Flame, Timer, RefreshCw, QrCode, StickyNote, Check, Loader, Zap, Receipt, X, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import QRCodeLib from 'qrcode';
 import { installCrashReporter } from './services/crashReporter';
 import './index.css';
 import { ThemeToggle } from './components/ThemeToggle';
+import { STATIONS, STATION_LABEL, visibleLines, heldGroups, stationStates, onStationBoard, stationCounts, initialStation } from './lib/ticketView';
 
 installCrashReporter({ source: 'kds' });
 
@@ -22,6 +23,24 @@ const KitchenHubApp = () => {
   const [checkedItems, setCheckedItems] = useState({});
   const [loading, setLoading] = useState(true);
   const shouldReduceMotion = useReducedMotion();
+
+  // Which station's screen this is. A bar tablet opens the page as /?station=bar and shows only drinks;
+  // the choice is remembered on the device. "all" is the reception / expo view.
+  const [stationFilter, setStationFilterState] = useState(() => {
+    let stored = null;
+    try { stored = window.localStorage.getItem('kullina_kds_station'); } catch { /* storage blocked */ }
+    return initialStation(window.location.search, stored);
+  });
+  const setStationFilter = station => {
+    setStationFilterState(station);
+    try { window.localStorage.setItem('kullina_kds_station', station); } catch { /* storage blocked */ }
+    try {
+      const url = new URL(window.location.href);
+      if (station === 'all') url.searchParams.delete('station'); else url.searchParams.set('station', station);
+      window.history.replaceState(null, '', url);
+    } catch { /* not worth failing the screen over */ }
+  };
+  const [actionError, setActionError] = useState('');
 
   // Bill preview modal state (M1 billing foundation + adjustments)
   const [billTableId, setBillTableId] = useState(null);
@@ -167,11 +186,15 @@ const KitchenHubApp = () => {
               if (readyId) {
                 setTickets(prev => prev.map(t => {
                   if (t.id === readyId || String(t.ticket_number) === String(readyId)) {
-                    return { ...t, status: 'ready' };
+                    // Take the hub's whole ticket when it sent one, so the course and station state is current.
+                    return { ...t, ...(payload.ticket || {}), status: 'ready' };
                   }
                   return t;
                 }));
               }
+            } else if (type === 'TICKET_UPDATED' && payload.ticket) {
+              // Station ready, course fired, ticket recalled: the hub sends the ticket as it now stands.
+              mergeTicket(payload.ticket);
             } else if (type === 'CLEAR_TABLE' || type === 'bill_cleared' || type === 'order_cleared') {
               fetchActiveTickets();
             } else if (type === 'SYNC_STATUS_CHANGE') {
@@ -221,6 +244,15 @@ const KitchenHubApp = () => {
     };
   }, []);
 
+  // Replace a ticket with the hub's current copy of it, matched by id.
+  const mergeTicket = (next) => {
+    if (!next) return;
+    setTickets(prev => {
+      const exists = prev.some(t => t.id === next.id);
+      return exists ? prev.map(t => (t.id === next.id ? { ...t, ...next } : t)) : prev;
+    });
+  };
+
   // Mark ticket ready
   const handleMarkReady = async (ticket) => {
     try {
@@ -229,9 +261,10 @@ const KitchenHubApp = () => {
         headers: { 'Content-Type': 'application/json' }
       });
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
         setTickets(prev => prev.map(t => {
           if (t.id === ticket.id || t.ticket_number === ticket.ticket_number) {
-            return { ...t, status: 'ready' };
+            return { ...t, ...(data.ticket || {}), status: 'ready' };
           }
           return t;
         }));
@@ -240,6 +273,33 @@ const KitchenHubApp = () => {
       console.error('Failed to mark ticket ready:', err);
     }
   };
+
+  // The three kitchen actions below all end the same way: take the hub's copy of the ticket, or, if the
+  // hub said no (someone else got there first), say why and re-read the board so the screen is true.
+  const kitchenAction = async (path, afterOk) => {
+    setActionError('');
+    try {
+      const res = await fetch(`${hubHost}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        mergeTicket(data.ticket);
+        if (afterOk) afterOk(data);
+      } else {
+        setActionError(data.error || 'The hub could not do that.');
+        fetchActiveTickets();
+      }
+    } catch (err) {
+      setActionError(`Hub unreachable: ${err.message}`);
+    }
+  };
+
+  const ticketKey = ticket => encodeURIComponent(ticket.id || ticket.ticket_number);
+  // One station reports its part done; the ticket turns ready on its own when every station has.
+  const handleStationReady = (ticket, station) => kitchenAction(`/orders/${ticketKey(ticket)}/stations/${station}/ready`);
+  // Send the next held course to the kitchen.
+  const handleFire = (ticket) => kitchenAction(`/orders/${ticketKey(ticket)}/fire`);
+  // Put a ticket that was marked ready back on the board.
+  const handleRecall = (ticket) => kitchenAction(`/orders/${ticketKey(ticket)}/recall`);
 
   // Turn the modal's adjustment form into the body the hub understands.
   // Empty inputs mean "no adjustment on this axis" rather than 0.
@@ -640,13 +700,14 @@ const KitchenHubApp = () => {
     setCheckedItems(p => ({ ...p, [key]: !p[key] }));
   };
 
-  const allChecked = (ticket) => {
-    if (!ticket.items || !ticket.items.length) return true;
-    return ticket.items.every((_, idx) => checkedItems[`${ticket.id}_${idx}`]);
-  };
+  // "Mark ready" unlocks once every line on THIS screen is ticked: a bar tablet needs only its drinks
+  // ticked, and lines held for a later course are not on the board yet.
+  const allCheckedFor = (ticket, lines) => lines.every(({ idx }) => checkedItems[`${ticket.id}_${idx}`]);
 
   const activeTickets = tickets.filter(t => t.status === 'in_progress');
   const readyTickets = tickets.filter(t => t.status === 'ready');
+  const boardTickets = activeTickets.filter(t => onStationBoard(t, stationFilter));
+  const counts = stationCounts(activeTickets);
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--color-canvas)', color: 'var(--color-ink)', fontFamily: 'var(--font-body)', padding: 'var(--spacing-lg)' }}>
@@ -753,14 +814,6 @@ const KitchenHubApp = () => {
                 Type this on a waiter handset if it cannot scan the QR code.
               </div>
             </div>
-            {/* Handsets that cannot scan the QR type this code once to enrol.
-                It is only ever served to this screen, never over the LAN. */}
-            <div style={{ marginTop: '8px', background: 'var(--color-surface-soft)', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', color: 'var(--color-body)' }}>
-              Enrollment Code: <strong style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', letterSpacing: '2px' }}>{enrollmentCode || '---'}</strong>
-              <div style={{ fontSize: '10px', color: 'var(--color-muted)', marginTop: '2px' }}>
-                Type this on a waiter handset if it cannot scan the QR code.
-              </div>
-            </div>
           </div>
 
           {/* Quick Metrics Card */}
@@ -785,19 +838,54 @@ const KitchenHubApp = () => {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-base)' }}>
             <h2 className="typography-display-sm" style={{ margin: 0, color: 'var(--color-ink)' }}>
-              Live Order Tickets ({activeTickets.length})
+              {stationFilter === 'all' ? 'Live Order Tickets' : STATION_LABEL[stationFilter]} ({boardTickets.length})
             </h2>
             <span className="typography-badge" style={{ color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
               <Zap size={12} /> Real-time KDS
             </span>
           </div>
 
+          {/* Station screens: pick which station this display is for. A ticket shows on a station's screen
+              only while that station still has something to cook on it. */}
+          <div role="tablist" aria-label="Station" style={{ display: 'flex', gap: 'var(--spacing-sm)', flexWrap: 'wrap', marginBottom: 'var(--spacing-base)' }}>
+            {['all', ...STATIONS].map(s => {
+              const selected = stationFilter === s;
+              return (
+                <button
+                  key={s}
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setStationFilter(s)}
+                  style={{
+                    background: selected ? 'var(--color-primary)' : 'var(--color-surface-soft)',
+                    color: selected ? 'var(--color-on-primary)' : 'var(--color-body)',
+                    border: `1px solid ${selected ? 'var(--color-primary)' : 'var(--color-hairline)'}`,
+                    padding: '8px 16px', borderRadius: 'var(--radius-full)', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: '8px', minHeight: '40px'
+                  }}
+                >
+                  {s === 'all' ? 'All stations' : STATION_LABEL[s]}
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', opacity: 0.85 }}>{counts[s]}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {actionError && (
+            <div role="alert" style={{ background: 'var(--status-rust-bg)', color: 'var(--status-rust-text)', border: '1px solid var(--status-rust-border)', padding: '10px 12px', borderRadius: '8px', fontSize: '13px', marginBottom: 'var(--spacing-base)', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+              <span>{actionError}</span>
+              <button onClick={() => setActionError('')} aria-label="Dismiss" style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}><X size={14} /></button>
+            </div>
+          )}
+
           {loading ? (
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-muted)' }}>Loading active KOTs...</div>
-          ) : activeTickets.length === 0 ? (
+          ) : boardTickets.length === 0 ? (
             <div className="empty-state empty-state-lg">
               <ChefHat size={40} style={{ color: 'var(--color-muted)', marginBottom: 'var(--spacing-md)' }} />
-              <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>Kitchen Rail Clear</div>
+              <div className="typography-title-md" style={{ color: 'var(--color-ink)' }}>
+                {stationFilter === 'all' ? 'Kitchen Rail Clear' : `${STATION_LABEL[stationFilter]} is clear`}
+              </div>
               <div className="typography-caption-sm" style={{ marginTop: 'var(--spacing-xs)', color: 'var(--color-muted)' }}>
                 Orders placed on waiter phones will pop up here in real time.
               </div>
@@ -805,8 +893,12 @@ const KitchenHubApp = () => {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--spacing-base)' }}>
               <AnimatePresence mode="popLayout">
-                {activeTickets.map(ticket => {
-                  const canMark = allChecked(ticket);
+                {boardTickets.map(ticket => {
+                  const lines = visibleLines(ticket, stationFilter);
+                  const canMark = allCheckedFor(ticket, lines);
+                  const states = stationStates(ticket);
+                  const held = heldGroups(ticket);
+                  const stationMode = stationFilter !== 'all';
                   return (
                     <motion.div
                       key={ticket.id || ticket.ticket_number}
@@ -848,9 +940,34 @@ const KitchenHubApp = () => {
                           </span>
                         </div>
 
+                        {/* Where each station stands, and which course this is (shown only when it helps) */}
+                        {(states.length > 1 || ticket.staged) && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: 'var(--spacing-md)' }}>
+                            {ticket.staged && (
+                              <span className="typography-badge" style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)', border: '1px solid var(--status-blue-border)', padding: '2px 8px', borderRadius: 'var(--radius-full)', fontWeight: 700 }}>
+                                Course {Math.max(...(ticket.fired_courses || [1]))}
+                              </span>
+                            )}
+                            {states.map(s => (
+                              <span
+                                key={s.station}
+                                className="typography-badge"
+                                style={{
+                                  background: s.done ? 'var(--status-green-bg)' : 'var(--status-amber-bg)',
+                                  color: s.done ? 'var(--status-green-text)' : 'var(--status-amber-text)',
+                                  border: `1px solid ${s.done ? 'var(--status-green-border)' : 'var(--status-amber-border)'}`,
+                                  padding: '2px 8px', borderRadius: 'var(--radius-full)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                }}
+                              >
+                                {s.done && <Check size={10} />}{STATION_LABEL[s.station]}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
                         {/* Items Checklist */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-md)' }}>
-                          {ticket.items && ticket.items.map((item, idx) => {
+                          {lines.map(({ item, idx }) => {
                             const isChecked = !!checkedItems[`${ticket.id}_${idx}`];
                             return (
                               <div
@@ -940,6 +1057,24 @@ const KitchenHubApp = () => {
                           })}
                         </div>
 
+                        {/* Courses held back until someone fires them (hold and fire) */}
+                        {held.length > 0 && (
+                          <div style={{ border: '1px dashed var(--color-hairline)', borderRadius: 'var(--radius-sm)', padding: '8px 10px', marginBottom: 'var(--spacing-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--color-surface-soft)' }}>
+                            <span className="typography-badge" style={{ color: 'var(--color-muted)' }}>
+                              On hold: {held.map(h => `course ${h.course} (${h.count})`).join(', ')}
+                            </span>
+                            {/* Firing is a front-of-house decision: station screens only show what is held. */}
+                            {!stationMode && (
+                              <button
+                                onClick={() => handleFire(ticket)}
+                                style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)', border: 'none', borderRadius: 'var(--radius-full)', padding: '6px 12px', fontWeight: 700, fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
+                              >
+                                <Flame size={13} /> Fire course {held[0].course}
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         {ticket.note && (
                           <div className="ticket-note" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--spacing-xs)', marginBottom: 'var(--spacing-md)' }}>
                             <StickyNote size={13} style={{ flexShrink: 0, marginTop: '1px' }} /> {ticket.note}
@@ -974,8 +1109,8 @@ const KitchenHubApp = () => {
                         </button>
                         <motion.button
                           whileTap={shouldReduceMotion || !canMark ? {} : { scale: 0.95 }}
-                          onClick={() => handleMarkReady(ticket)}
-                          disabled={!canMark}
+                          onClick={() => (stationMode ? handleStationReady(ticket, stationFilter) : handleMarkReady(ticket))}
+                          disabled={!canMark || lines.length === 0}
                           style={{
                             background: canMark ? 'var(--status-green-text)' : 'var(--color-surface-soft)',
                             color: canMark ? 'var(--color-on-primary)' : 'var(--color-muted)',
@@ -983,7 +1118,7 @@ const KitchenHubApp = () => {
                             fontWeight: 700, fontSize: '13px', cursor: canMark ? 'pointer' : 'not-allowed'
                           }}
                         >
-                          {canMark ? <><Check size={14} /> Mark Ready</> : 'Tick All'}
+                          {canMark ? <><Check size={14} /> {stationMode ? `${STATION_LABEL[stationFilter]} ready` : 'Mark Ready'}</> : 'Tick All'}
                         </motion.button>
                       </div>
                     </motion.div>
@@ -1861,6 +1996,22 @@ const KitchenHubApp = () => {
                         <strong className="typography-caption" style={{ color: 'var(--color-ink)' }}>{t.table_name || 'Table'}</strong>
                         <div className="typography-badge" style={{ color: 'var(--color-muted)' }}>Ticket #{t.ticket_number} · Ready</div>
                       </div>
+                      {/* Next course goes to the kitchen when the guests are ready; recall puts a mistaken ticket back on the board. */}
+                      {heldGroups(t).length > 0 && (
+                        <button
+                          onClick={() => handleFire(t)}
+                          style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)', border: 'none', borderRadius: 'var(--radius-full)', padding: '6px 12px', fontWeight: 700, fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
+                        >
+                          <Flame size={13} /> Fire course {heldGroups(t)[0].course}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleRecall(t)}
+                        title="Put this ticket back on the kitchen board"
+                        style={{ background: 'transparent', color: 'var(--color-body)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-full)', padding: '6px 10px', fontWeight: 600, fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <RotateCcw size={12} /> Recall
+                      </button>
                     </motion.div>
                   ))}
                 </AnimatePresence>

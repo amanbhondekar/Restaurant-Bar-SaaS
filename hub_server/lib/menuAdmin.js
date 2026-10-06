@@ -67,6 +67,11 @@ export function validateItemInput(input, { partial = false } = {}) {
     if (!STATIONS.includes(s)) errors.push({ field: 'station', message: `station must be one of ${STATIONS.join(', ')}` });
     else out.station = s;
   }
+  if (has('course')) {
+    const c = typeof input.course === 'string' ? Number(input.course) : input.course;
+    if (!Number.isInteger(c) || c < 1 || c > 9) errors.push({ field: 'course', message: 'course must be a whole number from 1 to 9' });
+    else out.course = c;
+  }
   if (has('price')) {
     const price = typeof input.price === 'string' ? Number(input.price) : input.price;
     if (!isMoney(price)) errors.push({ field: 'price', message: 'price must be a number above 0 with at most 2 decimals' });

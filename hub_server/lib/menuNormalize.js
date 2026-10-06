@@ -84,6 +84,15 @@ export function normalizeStation(raw) {
   return raw ? String(raw).toLowerCase() : undefined;
 }
 
+// Serving course (M2 leftovers): 1 starters, 2 mains, 3 desserts, up to 9. Only an explicit valid
+// number is kept; a missing course means 1 and is simply left out of the cached item. It matters only
+// when a waiter serves an order in courses (see lib/courses.js).
+export function normalizeCourseField(raw) {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 && n <= 9 ? n : undefined;
+}
+
 // Maps a Supabase `menu_items` row (or an already cache-shaped row) to the hub's
 // cache shape.
 export function normalizeCloudMenuItem(i) {
@@ -91,6 +100,7 @@ export function normalizeCloudMenuItem(i) {
   const modifier_groups = normalizeModifierGroups(i.modifier_groups);
   const day_parts = normalizeDayParts(i.day_parts);
   const station = normalizeStation(i.station);
+  const course = normalizeCourseField(i.course);
   return {
     id: i.id,
     name: i.name,
@@ -101,6 +111,7 @@ export function normalizeCloudMenuItem(i) {
     ...(variants.length > 0 ? { variants } : {}),
     ...(modifier_groups.length > 0 ? { modifier_groups } : {}),
     ...(day_parts.length > 0 ? { day_parts } : {}),
-    ...(station ? { station } : {})
+    ...(station ? { station } : {}),
+    ...(course ? { course } : {})
   };
 }

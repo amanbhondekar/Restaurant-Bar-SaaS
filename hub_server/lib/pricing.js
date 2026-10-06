@@ -1,6 +1,7 @@
 import { restaurantCache } from './restaurantCache.js';
 import { resolveEffectivePrice } from './dayParts.js';
 import { resolveStation } from './kotRouting.js';
+import { normalizeCourse } from './courses.js';
 
 /**
  * Server-side order pricing.
@@ -244,7 +245,10 @@ export function priceOrder(rawItems, restaurantId) {
       // ticket-store / KOT-splitter / KDS never re-consult the menu cache
       // and every downstream reader agrees on which line goes where.
       // Items without `station` route to the default (see kotRouting.js).
-      station: resolveStation(menuItem.station)
+      station: resolveStation(menuItem.station),
+      // Serving course (starters 1, mains 2, ...). Stamped here for the same reason as station. It only
+      // changes what happens when the waiter serves the order in courses; otherwise it is inert.
+      course: normalizeCourse(menuItem.course)
     });
   }
 

@@ -38,7 +38,7 @@ export function makeId(prefix, taken = []) {
 
 /** A new item. `isVeg` starts unanswered: like the importer, the editor makes the user say so. */
 export function blankForm(category = '') {
-  return { id: null, name: '', category, price: '', isVeg: null, available: true, station: '', variants: [], modifier_groups: [], day_parts: [] };
+  return { id: null, name: '', category, price: '', isVeg: null, available: true, station: '', course: '', variants: [], modifier_groups: [], day_parts: [] };
 }
 
 /** Hub item (as GET /menu returns it) to form fields. Extra keys such as effective_price are ignored. */
@@ -52,6 +52,8 @@ export function itemToForm(item) {
     isVeg: item.isVeg !== false,
     available: item.available !== false,
     station: STATIONS.includes(station) ? station : '',
+    // The serving course (1 starters, 2 mains, 3 desserts); blank means the default, course 1.
+    course: Number.isInteger(item.course) && item.course >= 1 && item.course <= 9 ? String(item.course) : '',
     variants: (item.variants ?? []).map(v => ({
       id: String(v.id), label: text(v.label), price: text(v.price), available: v.available !== false
     })),
@@ -84,6 +86,7 @@ export function formToPayload(form) {
   };
   if (!blank(form.price)) payload.price = num(form.price);
   if (form.station) payload.station = form.station;
+  if (form.course) payload.course = num(form.course);
 
   payload.variants = form.variants.map(v => ({ id: v.id, label: v.label.trim(), price: num(v.price), available: v.available }));
   payload.modifier_groups = form.modifier_groups.map(g => ({
@@ -150,6 +153,9 @@ export function validateForm(form, { original = null } = {}) {
   }
   if (touched('isVeg') && typeof form.isVeg !== 'boolean') errors.isVeg = 'Choose Veg or Non-veg.';
   if (touched('station') && form.station && !STATIONS.includes(form.station)) errors.station = 'Choose hot, cold or bar.';
+  if (touched('course') && form.course && !(Number.isInteger(Number(form.course)) && Number(form.course) >= 1 && Number(form.course) <= 9)) {
+    errors.course = 'Choose a course from 1 to 9.';
+  }
   if (touched('price')) {
     // An item with variants is priced by its variants; the top-level price is only a display fallback.
     if (blank(form.price) ? form.variants.length === 0 : priceBad(form.price)) errors.price = PRICE_MESSAGE;

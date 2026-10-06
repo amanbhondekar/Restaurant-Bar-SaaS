@@ -96,6 +96,13 @@ export function renderKot(ticket, tenant = {}, opts = {}) {
     ? [line(width, '-'), `Note: ${ticket.note}`]
     : [];
 
+  // Course service: a banner naming the course being fired, and a one-line reminder of what is still
+  // on hold so the kitchen knows more is coming. Both are absent on a normal ticket.
+  const courseBanner = opts && opts.course_label ? String(opts.course_label).toUpperCase() : '';
+  const heldNote = opts && opts.held_summary ? String(opts.held_summary) : '';
+  const courseLines = courseBanner ? [center(`*** ${courseBanner} ***`, width)] : [];
+  const heldLines = heldNote ? [line(width, '-'), heldNote] : [];
+
   const preview_lines = [
     line(width, '='),
     header,
@@ -103,8 +110,10 @@ export function renderKot(ticket, tenant = {}, opts = {}) {
     table,
     when,
     by,
+    ...courseLines,
     line(width, '-'),
     ...itemLines,
+    ...heldLines,
     ...noteLines,
     ''
   ];
@@ -123,11 +132,13 @@ export function renderKot(ticket, tenant = {}, opts = {}) {
     escpos.size(1, 1), escpos.bold(false),
     escpos.line(formatDate(ticket.created_at || Date.now())),
     escpos.line(`By: ${ticket.created_by_waiter || 'Waiter'}`),
+    ...(courseBanner ? [escpos.bold(true), escpos.size(2, 1), escpos.line(`*** ${courseBanner} ***`), escpos.size(1, 1), escpos.bold(false)] : []),
     escpos.alignLeft(),
     escpos.rule(width, '-'),
     escpos.bold(true),
     ...itemLines.map(l => escpos.line(l)),
     escpos.bold(false),
+    ...(heldNote ? [escpos.rule(width, '-'), escpos.line(heldNote)] : []),
     ...(ticket.note ? [escpos.rule(width, '-'), escpos.line(`Note: ${ticket.note}`)] : []),
     escpos.feed(3),
     escpos.cut()

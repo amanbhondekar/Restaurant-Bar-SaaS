@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { initCourseState, markAllReady, markStationReady, fireCourse, recallTicket, withCourseState } from './courses.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -132,6 +133,10 @@ class TicketStore {
     const totalAmount = priced.total_amount;
 
     const ticketId = 't_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const nowIso = new Date().toISOString();
+    // Course state (see lib/courses.js). `course_service: true` from the waiter holds later courses
+    // until they are fired; anything else is a normal ticket, exactly as before.
+    const courseState = initCourseState(items, { staged: orderData.course_service === true }, nowIso);
 
     const newTicket = {
       id: ticketId,
@@ -146,8 +151,9 @@ class TicketStore {
       created_by_waiter: orderData.created_by_waiter || orderData.createdByWaiter || 'Waiter Handset',
       order_request_id: orderData.order_request_id || null,
       synced_to_cloud: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      ...courseState,
+      created_at: nowIso,
+      updated_at: nowIso
     };
 
     const updatedList = [newTicket, ...this.tickets];
@@ -155,20 +161,53 @@ class TicketStore {
     return newTicket;
   }
 
-  markTicketReady(ticketId, restaurantId) {
-    let updatedTicket = null;
-    const updatedList = this.tickets.map(t => {
-      if (t.id === ticketId || String(t.ticket_number) === String(ticketId)) {
-        updatedTicket = { ...t, status: 'ready', updated_at: new Date().toISOString() };
-        return updatedTicket;
-      }
-      return t;
-    });
+  /** Find a ticket by id or ticket number, scoped to the tenant when one is given. */
+  findTicket(ticketId, restaurantId) {
+    return this.tickets.find(t =>
+      (t.id === ticketId || String(t.ticket_number) === String(ticketId)) &&
+      (!restaurantId || t.restaurant_id === restaurantId)
+    ) || null;
+  }
 
-    if (updatedTicket) {
-      this.saveTickets(updatedList);
-    }
-    return updatedTicket;
+  /** Replace one ticket and persist. */
+  replaceTicket(updated) {
+    this.saveTickets(this.tickets.map(t => (t.id === updated.id ? updated : t)));
+    return updated;
+  }
+
+  /**
+   * Apply a pure transition from lib/courses.js to a ticket. `fn(ticket, nowIso)` returns
+   * `{ ok, ticket, ...extra }` or a refusal `{ ok: false, code, error }`. The store only persists
+   * on success. Returns `{ ok: false, code: 'NOT_FOUND' }` for an unknown ticket.
+   */
+  transition(ticketId, restaurantId, fn) {
+    const current = this.findTicket(ticketId, restaurantId);
+    if (!current) return { ok: false, code: 'NOT_FOUND', error: 'Ticket not found.' };
+    const result = fn(current, new Date().toISOString());
+    if (!result.ok) return result;
+    this.replaceTicket(result.ticket);
+    return result;
+  }
+
+  /** The whole-ticket "Ready" button. Returns the ticket, or null if it does not exist or is closed. */
+  markTicketReady(ticketId, restaurantId) {
+    const r = this.transition(ticketId, restaurantId, (t, now) => markAllReady(t, now));
+    return r.ok ? r.ticket : null;
+  }
+
+  /** One station reports its part of the ticket ready. */
+  markStationReady(ticketId, restaurantId, station) {
+    return this.transition(ticketId, restaurantId, (t, now) => markStationReady(t, station, now));
+  }
+
+  /** Send the next held course (or a given one) to the kitchen. */
+  fireCourse(ticketId, restaurantId, course) {
+    return this.transition(ticketId, restaurantId, (t, now) => fireCourse(t, course, now));
+  }
+
+  /** Put a ticket marked ready back on the board. */
+  recall(ticketId, restaurantId) {
+    return this.transition(ticketId, restaurantId, (t, now) => recallTicket(t, now));
   }
 
   markTicketSynced(ticketId) {
@@ -237,10 +276,14 @@ class TicketStore {
   }
 
   getActiveTickets(restaurantId) {
-    return this.tickets.filter(t =>
-      (!restaurantId || t.restaurant_id === restaurantId) &&
-      (t.status === 'in_progress' || t.status === 'ready')
-    );
+    // Tickets saved before course state existed are filled in on the way out (not persisted), so the
+    // kitchen screen can treat every ticket the same way.
+    return this.tickets
+      .filter(t =>
+        (!restaurantId || t.restaurant_id === restaurantId) &&
+        (t.status === 'in_progress' || t.status === 'ready')
+      )
+      .map(withCourseState);
   }
 
   getActiveTicketsForTable(tableId, restaurantId) {

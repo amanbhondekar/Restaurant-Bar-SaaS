@@ -11,6 +11,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { authFetch, authWsUrl, captureTokenFromUrl, consumePendingEnrollmentCode, enrollWithCode, hasToken } from '../services/hubAuth';
+import { heldGroups } from '../lib/ticketView';
 import { QrScannerModal } from './QrScannerModal';
 import { WaiterLogin } from './WaiterLogin';
 
@@ -282,6 +283,37 @@ export const WaiterApp = () => {
     connectWs();
     return () => { isSubscribed = false; if (ws) ws.close(); };
   }, [hubUrl, fetchLiveState, handleHubWsEvent]);
+
+  // Courses held for the selected table (served in courses): which tickets, and what is still on hold.
+  const [firingId, setFiringId] = useState(null);
+  const [fireError, setFireError] = useState('');
+  const heldForTable = selectedTableId
+    ? activeOrders
+        .filter(t => String(t.table_id) === String(selectedTableId))
+        .map(t => ({ ticket: t, held: heldGroups(t) }))
+        .filter(x => x.held.length > 0)
+    : [];
+
+  const fireNextCourse = async (ticket) => {
+    if (!hubUrl) return;
+    const cleanUrl = hubUrl.replace(/\/+$/, '');
+    setFireError('');
+    setFiringId(ticket.id);
+    try {
+      const res = await authFetch(`${cleanUrl}/orders/${encodeURIComponent(ticket.id)}/fire`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFireError(data.error || 'Could not fire the next course.');
+      }
+      fetchLiveState(cleanUrl);
+    } catch {
+      setFireError(`Hub unreachable at ${cleanUrl}. Check WiFi network.`);
+    } finally {
+      setFiringId(null);
+    }
+  };
 
   const handleClearTableBill = async (tableId) => {
     // 1. Clear draft for table
@@ -738,6 +770,23 @@ export const WaiterApp = () => {
                 connStatus={connStatus}
                 isEnrolled={isEnrolled}
               />
+              {/* Courses held for the selected table: the waiter sends the next one when the guests are ready. */}
+              {heldForTable.length > 0 && (
+                <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] border px-3 py-2.5" style={{ borderColor: 'var(--status-blue-border)', background: 'var(--status-blue-bg)' }}>
+                  {heldForTable.map(({ ticket, held }) => (
+                    <div key={ticket.id} className="flex items-center justify-between gap-2">
+                      <span className="text-xs" style={{ color: 'var(--status-blue-text)' }}>
+                        <strong>{ticket.table_name || 'Table'} · #{ticket.ticket_number}</strong>
+                        {' '}on hold: {held.map(h => `course ${h.course} (${h.count})`).join(', ')}
+                      </span>
+                      <Button size="sm" className="h-9 shrink-0" disabled={firingId === ticket.id} onClick={() => fireNextCourse(ticket)}>
+                        Fire course {held[0].course}
+                      </Button>
+                    </div>
+                  ))}
+                  {fireError && <span className="text-xs" style={{ color: 'var(--color-error-text)' }}>{fireError}</span>}
+                </div>
+              )}
               <OrderDraftDrawer
                 selectedTableId={selectedTableId} draftItems={currentDraftItems}
                 onRemoveItem={removeItem} onClearDraft={clearDraft}

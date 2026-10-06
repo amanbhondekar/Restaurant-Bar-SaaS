@@ -11,6 +11,7 @@ import { MenuTab } from './MenuTab';
 import { TablesTab } from './TablesTab';
 import { CashTab } from './CashTab';
 import { PrintersTab } from './PrintersTab';
+import { KitchenTab } from './KitchenTab';
 
 // The reception laptop's Menu & Tables page. It reads the menu, the table layout and the live table
 // states from the hub, hands them to the two tabs, and shows one "Saved on hub" indicator. Every
@@ -217,6 +218,7 @@ export const AdminApp = () => {
             <TabsTrigger value="menu" className="px-5">Menu</TabsTrigger>
             <TabsTrigger value="tables" className="px-5">Tables</TabsTrigger>
             <TabsTrigger value="cash" className="px-5">Cash &amp; payments</TabsTrigger>
+            <TabsTrigger value="kitchen" className="px-5">Kitchen</TabsTrigger>
             <TabsTrigger value="printers" className="px-5">Printers</TabsTrigger>
           </TabsList>
           <TabsContent value="menu" keepMounted className="pt-2">
@@ -246,6 +248,9 @@ export const AdminApp = () => {
           {/* These two load on demand (default unmounted), so opening the page stays as light as before. */}
           <TabsContent value="cash" className="pt-2">
             <CashTab notify={notify} />
+          </TabsContent>
+          <TabsContent value="kitchen" className="pt-2">
+            <KitchenTab />
           </TabsContent>
           <TabsContent value="printers" className="pt-2">
             <PrintersTab notify={notify} />

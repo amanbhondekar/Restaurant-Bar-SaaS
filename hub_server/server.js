@@ -22,7 +22,9 @@ import { reconciliationStore } from './lib/reconciliationStore.js';
 import { paymentEvents, ledgerCsv } from './lib/reconciliation.js';
 import { renderKot, renderReceipt, renderTestPage, sendToPrinter } from './lib/printer.js';
 import { listSystemPrinters } from './lib/usbPrinter.js';
-import { groupTicketByStation } from './lib/kotRouting.js';
+import { groupTicketByStation, STATION_LABELS } from './lib/kotRouting.js';
+import { withCourseState, firedItems, heldCourses } from './lib/courses.js';
+import { prepReport } from './lib/prepTelemetry.js';
 import { waiterStore } from './lib/waiterStore.js';
 import { addItem, updateItem, deleteItem, addCategory, renameCategory, reorderCategories, deleteCategory } from './lib/menuAdmin.js';
 import { previewImport, applyImport } from './lib/menuImport.js';
@@ -334,9 +336,25 @@ app.post('/orders', requireDevice, (req, res) => {
   });
 });
 
-async function autoPrintKot(ticket, pairing) {
+/** "On hold: course 2 (3 items), course 3 (1 item)" for a staged ticket, '' otherwise. */
+function heldSummary(ticket) {
+  const held = heldCourses(ticket);
+  if (!ticket.staged || held.length === 0) return '';
+  return 'On hold: ' + held.map(h => `course ${h.course} (${h.items.length} item${h.items.length === 1 ? '' : 's'})`).join(', ');
+}
+
+/**
+ * Print the kitchen ticket(s) for a ticket. Only lines that have been fired are printed: all of them
+ * for a normal ticket, the first course for one served in courses, and just the newly fired course
+ * when `opts.items` / `opts.course` say so.
+ */
+async function autoPrintKot(ticketIn, pairing, opts = {}) {
   const printers = hubConfig.getPrinters('kot');
   if (printers.length === 0) return; // No KOT printer configured — silent no-op.
+  const ticket = { ...withCourseState(ticketIn) };
+  ticket.items = opts.items || firedItems(ticket);
+  const courseLabel = ticket.staged && opts.course ? `Course ${opts.course} - fire now` : (ticket.staged ? 'Course 1' : '');
+  const held = heldSummary(withCourseState(ticketIn));
   // Split by station (M2 · PR 15). A ticket with items across hot / cold /
   // bar produces multiple KOTs, one per station, each carrying only its
   // own items. A printer with a `station` field prints only jobs for that
@@ -351,7 +369,11 @@ async function autoPrintKot(ticket, pairing) {
   const groups = groupTicketByStation(ticket);
   const shouldLabel = groups.length > 1;
   for (const g of groups) {
-    const job = renderKot(g.ticket, pairing, shouldLabel ? { station_label: g.label } : {});
+    const job = renderKot(g.ticket, pairing, {
+      ...(shouldLabel ? { station_label: g.label } : {}),
+      ...(courseLabel ? { course_label: courseLabel } : {}),
+      ...(held ? { held_summary: held } : {})
+    });
     for (const p of printers) {
       if (p.station && p.station !== g.station) continue;
       const res = await sendToPrinter(job, p);
@@ -405,6 +427,96 @@ app.post('/orders/:id/ready', requireDevice, (req, res) => {
     success: true,
     ticket: updatedTicket
   });
+});
+
+// Kitchen-board events: a ticket changed in a way that is not "ready". Every screen merges the
+// ticket by id; the waiter app refetches live state on any event.
+function broadcastTicketChange(type, ticket, extra = {}) {
+  const payload = {
+    ticket_id: ticket.id,
+    ticket_number: ticket.ticket_number,
+    table_id: ticket.table_id,
+    table_name: ticket.table_name,
+    status: ticket.status,
+    ticket,
+    ...extra
+  };
+  broadcast(type, payload);
+  broadcast('TICKET_UPDATED', payload);
+}
+
+const ticketRefusalStatus = code => (code === 'NOT_FOUND' ? 404 : 409);
+
+// 5a. POST /orders/:id/stations/:station/ready — one station (hot / cold / bar) reports its part done.
+// The ticket becomes ready, and the waiter is told, only when every station that has lines on it has.
+app.post('/orders/:id/stations/:station/ready', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const station = String(req.params.station).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(STATION_LABELS, station)) {
+    return res.status(400).json({ success: false, error: `Station must be one of ${Object.keys(STATION_LABELS).join(', ')}.`, code: 'INVALID_STATION' });
+  }
+  const result = ticketStore.markStationReady(req.params.id, pairing.restaurant_id, station);
+  if (!result.ok) {
+    return res.status(ticketRefusalStatus(result.code)).json({ success: false, error: result.error, code: result.code });
+  }
+  const ticket = result.ticket;
+  if (result.ticket_ready) {
+    const readyPayload = {
+      order_id: ticket.id, ticket_id: ticket.id, ticket_number: ticket.ticket_number,
+      table_id: ticket.table_id, table_name: ticket.table_name, status: 'ready', ticket
+    };
+    broadcast('TICKET_READY', readyPayload);
+    broadcast('order_ready', readyPayload);
+    syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'ready', pairing.restaurant_id);
+  } else {
+    broadcastTicketChange('STATION_READY', ticket, { station });
+  }
+  res.json({ success: true, ticket, ticket_ready: Boolean(result.ticket_ready), station });
+});
+
+// 5c. POST /orders/:id/fire — send the next held course (or body.course) to the kitchen.
+app.post('/orders/:id/fire', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = ticketStore.fireCourse(req.params.id, pairing.restaurant_id, body.course);
+  if (!result.ok) {
+    return res.status(ticketRefusalStatus(result.code)).json({ success: false, error: result.error, code: result.code });
+  }
+  const ticket = result.ticket;
+  console.log(`🔥 Fired course ${result.fired_course} on #${ticket.ticket_number} (${result.fired_items.length} item(s))`);
+  broadcastTicketChange('COURSE_FIRED', ticket, { course: result.fired_course });
+  // A ticket that had been marked ready is cooking again.
+  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id);
+  autoPrintKot(ticket, pairing, { items: result.fired_items, course: result.fired_course }).catch(() => {});
+  res.json({ success: true, ticket, fired_course: result.fired_course, fired_items: result.fired_items.length });
+});
+
+// 5d. POST /orders/:id/recall — a ticket marked ready goes back on the board (marked by mistake, or remake).
+app.post('/orders/:id/recall', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = ticketStore.recall(req.params.id, pairing.restaurant_id);
+  if (!result.ok) {
+    return res.status(ticketRefusalStatus(result.code)).json({ success: false, error: result.error, code: result.code });
+  }
+  const ticket = result.ticket;
+  console.log(`↩︎ Recalled #${ticket.ticket_number} (course ${result.recalled_course})`);
+  broadcastTicketChange('TICKET_RECALLED', ticket, { course: result.recalled_course });
+  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id);
+  res.json({ success: true, ticket, recalled_course: result.recalled_course });
+});
+
+// 5e. GET /telemetry/prep — how long the kitchen takes, per item and per station. Reception laptop only.
+// `from` / `to` are ISO timestamps; the default is the last 24 hours.
+app.get('/telemetry/prep', requireReceptionFor('Kitchen performance'), (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const parse = v => { const t = Date.parse(String(v)); return Number.isFinite(t) ? t : null; };
+  const toMs = req.query.to !== undefined ? parse(req.query.to) : Date.now();
+  const fromMs = req.query.from !== undefined ? parse(req.query.from) : Date.now() - 24 * 60 * 60 * 1000;
+  if (fromMs === null || toMs === null) {
+    return res.status(400).json({ success: false, error: 'from and to must be ISO dates, for example 2026-10-01T00:00:00Z.', code: 'INVALID_RANGE' });
+  }
+  const report = prepReport(ticketStore.getAllTickets(pairing.restaurant_id), pairing.restaurant_id, { fromMs, toMs });
+  res.json({ success: true, from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), ...report });
 });
 
 // 5b. GET /menu — Returns cached menu from local file disk cache
