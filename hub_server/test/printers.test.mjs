@@ -1,11 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { RESTAURANT_ID, startHub } from './helpers/spawnHub.mjs';
 
 import {
   usbDeps, sendToUsbPrinter, sendToDevice, listSystemPrinters, isValidSystemPrinterName, isValidDevicePath,
@@ -211,11 +210,6 @@ test('config: parsePrinter validates each transport and keeps the station', () =
 // Live hub: printer setup routes and per-station routing end to end.
 // ---------------------------------------------------------------------------
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.join(__dirname, '..', 'server.js');
-const PORT = 4591;
-const BASE = `http://127.0.0.1:${PORT}`;
-const RESTAURANT_ID = '11111111-1111-1111-1111-111111111111';
 
 const MENU = {
   restaurant_id: RESTAURANT_ID,
@@ -226,8 +220,7 @@ const MENU = {
   ]
 };
 
-let child;
-let dataDir;
+let hub;
 const sinks = {};
 
 function sink(name) {
@@ -252,42 +245,31 @@ const until = async (check, ms = 8000) => {
 };
 
 const call = (p, { method = 'GET', body } = {}) =>
-  fetch(`${BASE}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  fetch(`${hub.base}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 
 before(async () => {
   await sink('hot');
   await sink('bar');
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-printers-'));
-  fs.writeFileSync(path.join(dataDir, 'menu_cache.json'), JSON.stringify(MENU));
-  fs.writeFileSync(path.join(dataDir, 'tables_cache.json'), JSON.stringify({ restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }] }));
-  fs.writeFileSync(path.join(dataDir, 'tickets.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'sync_queue.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
-    paired: true, restaurant_id: RESTAURANT_ID, name: 'Printer Test Kitchen', pairing_code: 'PRT-0001', city: 'Nagpur',
-    enrollment_code: 'PRTCODE', devices: [],
-    printers: [
-      { id: 'hot-line', role: 'kot', host: '127.0.0.1', port: sinks.hot.port, station: 'hot' },
-      { id: 'bar-line', role: 'kot', host: '127.0.0.1', port: sinks.bar.port, station: 'bar' },
-      { id: 'broken', role: 'kot', host: '', port: 1 }
-    ]
-  }));
-  child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, PORT: String(PORT), HUB_DATA_DIR: dataDir, HUB_TRUST_LOOPBACK: 'true', SUPABASE_URL: 'https://example.supabase.co' },
-    stdio: 'ignore'
-  });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { await fetch(`${BASE}/pairing-info`); break; } catch {
-      if (Date.now() > deadline) throw new Error('printer-test hub did not start');
-      await new Promise(r => setTimeout(r, 200));
+  // The sinks are already listening, so their ports can go straight into the hub's config.
+  hub = await startHub({
+    trustLoopback: true,
+    menu: MENU,
+    tables: { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }] },
+    enrollmentCode: 'PRTCODE',
+    config: {
+      pairing_code: 'PRT-0001',
+      printers: [
+        { id: 'hot-line', role: 'kot', host: '127.0.0.1', port: sinks.hot.port, station: 'hot' },
+        { id: 'bar-line', role: 'kot', host: '127.0.0.1', port: sinks.bar.port, station: 'bar' },
+        { id: 'broken', role: 'kot', host: '', port: 1 }
+      ]
     }
-  }
+  });
 });
 
 after(() => {
-  if (child) child.kill();
+  hub?.stop();
   for (const s of Object.values(sinks)) s.server.close();
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 test('hub: GET /printers keeps each printer\'s station and drops invalid entries', async () => {
@@ -328,7 +310,7 @@ test('hub: printer setup — add network and USB printers, reject bad input, ref
   assert.equal((await call('/printers/front', { method: 'DELETE' })).status, 200);
   assert.equal((await call('/printers/front', { method: 'DELETE' })).status, 404);
   // Persisted, not just in memory.
-  const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'hub_config.json'), 'utf-8'));
+  const onDisk = JSON.parse(fs.readFileSync(path.join(hub.dataDir, 'hub_config.json'), 'utf-8'));
   assert.equal(onDisk.printers.some(p => p.id === 'front'), false);
 });
 
@@ -350,7 +332,7 @@ test('hub: a failing USB printer reports 502 with a reason instead of crashing t
   const body = await res.json();
   assert.equal(body.success, false);
   assert.ok(body.code && body.error);
-  assert.equal((await fetch(`${BASE}/pairing-info`)).status, 200, 'hub is still serving');
+  assert.equal((await fetch(`${hub.base}/pairing-info`)).status, 200, 'hub is still serving');
 });
 
 test('hub: GET /printers/system answers with the OS printers (or a clear reason)', async () => {

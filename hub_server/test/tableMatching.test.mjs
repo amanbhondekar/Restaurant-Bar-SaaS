@@ -18,7 +18,6 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ticket-match-'));
 process.env.HUB_DATA_DIR = scratch;
 const { ticketMatchesTable } = await import('../lib/ticketStore.js');
 
-const PORT = 4595;
 const T1 = '2f6b0c3e-8a41-4d57-9d3e-1c5a7e0b9a11';
 const T2 = '9b7d2e44-5c1f-4a8b-8e6a-3f0d1b2c4d55';
 
@@ -45,7 +44,7 @@ let t1Ticket;
 let patioTicket;
 
 before(async () => {
-  hub = await startHub({ port: PORT, trustLoopback: true, menu: MENU, tables: TABLES });
+  hub = await startHub({ trustLoopback: true, menu: MENU, tables: TABLES });
 });
 
 after(() => {

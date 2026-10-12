@@ -24,8 +24,8 @@ let handset;  // remote handset: loopback is NOT trusted, needs a token
 let token;
 
 before(async () => {
-  rec = await startHub({ port: 4598, trustLoopback: true, menu: MENU, tables: TABLES });
-  handset = await startHub({ port: 4597, trustLoopback: false, menu: MENU, tables: TABLES });
+  rec = await startHub({ trustLoopback: true, menu: MENU, tables: TABLES });
+  handset = await startHub({ trustLoopback: false, menu: MENU, tables: TABLES });
   const enrol = await call(handset, '/auth/device', { method: 'POST', body: { enrollment_code: 'TESTCODE', device_label: 'test' } });
   token = (await enrol.json()).device_token;
 });

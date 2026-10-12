@@ -1,11 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { startHub } from './helpers/spawnHub.mjs';
 import {
   METHODS, paymentEvents, summarize, invoiceSideNotes, validateCloseInput, buildRecord, ledgerCsv, csvCell, round2
 } from '../lib/reconciliation.js';
@@ -163,18 +162,12 @@ test('csv: formulas in references are neutralised, quotes and commas are escaped
 // Store + routes on a live hub (reception laptop = loopback, trusted).
 // ---------------------------------------------------------------------------
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.join(__dirname, '..', 'server.js');
-const PORT = 4592;
-const BASE = `http://127.0.0.1:${PORT}`;
-let child;
-let dataDir;
+let hub;
 
 const call = (p, { method = 'GET', body } = {}) =>
-  fetch(`${BASE}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  fetch(`${hub.base}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 
 before(async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-recon-'));
   const nowIso = new Date().toISOString();
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const live = [
@@ -182,31 +175,18 @@ before(async () => {
     inv({ invoice_number: 'INV-000002', grand_total: 300, payment_status: 'paid', payment_method: 'upi', payment_ref: 'UPIX', paid_at: fiveMinAgo }),
     inv({ invoice_number: 'INV-000003', grand_total: 120, payment_status: 'pending', issued_at: nowIso })
   ];
-  fs.writeFileSync(path.join(dataDir, 'invoices.json'), JSON.stringify(live));
-  fs.writeFileSync(path.join(dataDir, 'menu_cache.json'), JSON.stringify({ restaurant_id: RID, categories: ['A'], items: [{ id: 'm1', name: 'X', price: 10, category: 'A', isVeg: true, available: true }] }));
-  fs.writeFileSync(path.join(dataDir, 'tables_cache.json'), JSON.stringify({ restaurant_id: RID, tables: [{ id: 1, name: 'T1', section: 'M', capacity: 2 }] }));
-  fs.writeFileSync(path.join(dataDir, 'tickets.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'sync_queue.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
-    paired: true, restaurant_id: RID, name: 'Recon Kitchen', pairing_code: 'REC-0001', city: 'Nagpur', enrollment_code: 'RECCODE', devices: []
-  }));
-  child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, PORT: String(PORT), HUB_DATA_DIR: dataDir, HUB_TRUST_LOOPBACK: 'true', SUPABASE_URL: 'https://example.supabase.co' },
-    stdio: 'ignore'
+  hub = await startHub({
+    trustLoopback: true,
+    menu: { restaurant_id: RID, categories: ['A'], items: [{ id: 'm1', name: 'X', price: 10, category: 'A', isVeg: true, available: true }] },
+    tables: { restaurant_id: RID, tables: [{ id: 1, name: 'T1', section: 'M', capacity: 2 }] },
+    enrollmentCode: 'RECCODE',
+    config: { restaurant_id: RID, pairing_code: 'REC-0001' },
+    // The ledger these tests reconcile has to be on disk before the hub reads it.
+    files: { 'invoices.json': live }
   });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { await fetch(`${BASE}/pairing-info`); break; } catch {
-      if (Date.now() > deadline) throw new Error('reconciliation-test hub did not start');
-      await new Promise(r => setTimeout(r, 200));
-    }
-  }
 });
 
-after(() => {
-  if (child) child.kill();
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
-});
+after(() => hub?.stop());
 
 test('hub: preview shows the period before the first close and stores nothing', async () => {
   const p = await (await call('/reconciliation/preview')).json();
@@ -254,7 +234,7 @@ test('hub: a balanced close stores an immutable numbered record and starts the n
   assert.equal(firstRecord.unpaid_at_close.count, 1);
 
   // Persisted to disk.
-  const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'reconciliations.json'), 'utf-8'));
+  const onDisk = JSON.parse(fs.readFileSync(path.join(hub.dataDir, 'reconciliations.json'), 'utf-8'));
   assert.equal(onDisk.length, 1);
 
   // The next period is empty: the same payments cannot be counted twice. The float carries over.

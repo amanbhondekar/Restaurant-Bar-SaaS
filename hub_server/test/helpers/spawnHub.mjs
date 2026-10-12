@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,11 +12,61 @@ export const RESTAURANT_ID = '11111111-1111-1111-1111-111111111111';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /**
+ * A free port, picked by the operating system.
+ *
+ * Fixtures used to hardcode one each, which collided two ways: two test files sharing a number
+ * (the runner runs files in parallel), and a number still held in TIME_WAIT by the previous run.
+ * Asking for port 0 fixes both -- the OS does not hand out a port that is in TIME_WAIT.
+ *
+ * Reserved on 0.0.0.0 because that is what the hub binds: a port free only on 127.0.0.1 could
+ * still be taken on another interface. The listener is closed before the hub starts, so there is
+ * a small window where something else could take it; `startHub` retries on a fresh port for that.
+ */
+export function reservePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '0.0.0.0', () => {
+      const { port } = probe.address();
+      probe.close(err => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
+/** A hub that never came up because something else holds the port -- worth another try. */
+const looksLikeATakenPort = err => /already in use|exited during startup/i.test(err?.message || '');
+
+/**
  * Boots a real hub against a throwaway data directory. `trustLoopback: true`
  * makes requests from 127.0.0.1 act as the reception laptop; `false` makes them
  * act as a remote handset that must present a token.
+ *
+ * Omit `port` and one is reserved per attempt, retrying if the port is taken in the gap between
+ * reserving it and the hub binding it. Pass `port` to pin it, and the failure is reported as-is:
+ * a caller naming a port is testing that port.
+ *
+ * `config` adds or overrides fields in hub_config.json; `files` writes extra files into the data
+ * directory (`{ 'invoices.json': [...] }`), both for fixtures that need more than the defaults.
  */
-export async function startHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TESTCODE' }) {
+export async function startHub(options = {}) {
+  if (options.port) return bootHub({ ...options, port: options.port });
+
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await bootHub({ ...options, port: await reservePort() });
+    } catch (err) {
+      if (!looksLikeATakenPort(err)) throw err;
+      lastError = err;
+      // A whole suite starts its hubs at once, so a lost race usually means several are racing.
+      // Backing off spreads the retries out instead of replaying the same pile-up.
+      await sleep(100 * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
+async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TESTCODE', config, files }) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-catalog-'));
   // Unique per start and served by /pairing-info. The readiness check below only accepts an
   // answer carrying it, so a stale hub already holding the port can never pass for this one.
@@ -27,12 +78,18 @@ export async function startHub({ port, trustLoopback, menu, tables, enrollmentCo
   fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
     paired: true,
     restaurant_id: RESTAURANT_ID,
-    name: hubName,
     pairing_code: 'TST-0001',
     city: 'Nagpur',
     enrollment_code: enrollmentCode,
-    devices: []
+    devices: [],
+    ...config,
+    // Last, so a fixture's `config` cannot clobber it: the readiness probe below matches on this
+    // name, and that is the only thing stopping another hub on the same port passing for this one.
+    name: hubName
   }));
+  for (const [name, contents] of Object.entries(files || {})) {
+    fs.writeFileSync(path.join(dataDir, name), typeof contents === 'string' ? contents : JSON.stringify(contents));
+  }
 
   const child = spawn(process.execPath, [SERVER], {
     env: {
@@ -85,6 +142,8 @@ export async function startHub({ port, trustLoopback, menu, tables, enrollmentCo
     base,
     port,
     dataDir,
+    // The per-start name in hub_config.json, for tests that assert on what /pairing-info serves.
+    name: hubName,
     stop() {
       child.kill();
       fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

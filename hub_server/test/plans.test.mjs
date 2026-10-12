@@ -1,11 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
+import { RESTAURANT_ID, startHub } from './helpers/spawnHub.mjs';
 import {
   PLANS, FEATURES, PAST_DUE_GRACE_DAYS, normalizePlanId, resolveEffectivePlan,
   checkLimit, featureRefusal, hasFeature, minimumPlanFor, applyPlanToMenuItems
@@ -159,14 +155,7 @@ test('plans: applyPlanToMenuItems strips gated fields, keeps variants and 86\'d 
 // Live hub: subscribed to PRO but status 'cancelled' → effective plan STARTER.
 // ---------------------------------------------------------------------------
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.join(__dirname, '..', 'server.js');
-// Each hub fixture needs its own port: the runner executes test files in
-// parallel, and catalogRoutes.test.mjs already holds 4598.
-const PORT = 4594;
-const BASE = `http://127.0.0.1:${PORT}`;
 const CODE = 'PLANCODE';
-const RESTAURANT_ID = '11111111-1111-1111-1111-111111111111';
 
 const MENU = {
   restaurant_id: RESTAURANT_ID,
@@ -184,14 +173,13 @@ const MENU = {
   ]
 };
 
-let child;
-let dataDir;
+let hub;
 const tokens = [];
 
 function api(pathname, { token, ...opts } = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
-  return fetch(`${BASE}${pathname}`, { ...opts, headers });
+  return fetch(`${hub.base}${pathname}`, { ...opts, headers });
 }
 
 async function enroll(label, code = CODE) {
@@ -199,42 +187,18 @@ async function enroll(label, code = CODE) {
   return { res, body: await res.json() };
 }
 
+// Subscribed to Pro but cancelled, so every test below runs against a degraded tenant.
 before(async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-plan-test-'));
-  fs.writeFileSync(path.join(dataDir, 'menu_cache.json'), JSON.stringify(MENU));
-  fs.writeFileSync(path.join(dataDir, 'tables_cache.json'), JSON.stringify({
-    restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }]
-  }));
-  fs.writeFileSync(path.join(dataDir, 'tickets.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'sync_queue.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
-    paired: true, restaurant_id: RESTAURANT_ID, name: 'Plan Test Kitchen', pairing_code: 'PLN-0001',
-    city: 'Nagpur', enrollment_code: CODE, devices: [],
-    plan: 'pro', plan_status: 'cancelled'
-  }));
-
-  child = spawn(process.execPath, [SERVER], {
-    env: {
-      ...process.env, PORT: String(PORT), HUB_DATA_DIR: dataDir,
-      HUB_TRUST_LOOPBACK: 'false', SUPABASE_URL: 'https://example.supabase.co'
-    },
-    stdio: 'ignore'
+  hub = await startHub({
+    trustLoopback: false,
+    menu: MENU,
+    tables: { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }] },
+    enrollmentCode: CODE,
+    config: { pairing_code: 'PLN-0001', plan: 'pro', plan_status: 'cancelled' }
   });
-
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { await fetch(`${BASE}/pairing-info`); break; }
-    catch {
-      if (Date.now() > deadline) throw new Error('plan-test hub did not start');
-      await new Promise(r => setTimeout(r, 200));
-    }
-  }
 });
 
-after(() => {
-  if (child) child.kill();
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
-});
+after(() => hub?.stop());
 
 test('hub: a wrong enrollment code is refused with 401 and never leaks plan details', async () => {
   const { res, body } = await enroll('Probe', 'WRONGCODE');

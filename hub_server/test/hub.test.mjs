@@ -14,22 +14,14 @@
 
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.join(__dirname, '..', 'server.js');
+import { RESTAURANT_ID, startHub } from './helpers/spawnHub.mjs';
 
-const PORT = 4599;
-const BASE = `http://127.0.0.1:${PORT}`;
 const ENROLLMENT_CODE = 'TESTCODE';
-const RESTAURANT_ID = '11111111-1111-1111-1111-111111111111';
 
-let child;
-let dataDir;
+let hub;
 let token;
 
 const MENU = {
@@ -56,54 +48,20 @@ const TABLES = {
 function api(pathname, { auth = false, ...opts } = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (auth) headers.Authorization = `Bearer ${token}`;
-  return fetch(`${BASE}${pathname}`, { ...opts, headers });
+  return fetch(`${hub.base}${pathname}`, { ...opts, headers });
 }
 
 before(async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-test-'));
-  fs.writeFileSync(path.join(dataDir, 'menu_cache.json'), JSON.stringify(MENU));
-  fs.writeFileSync(path.join(dataDir, 'tables_cache.json'), JSON.stringify(TABLES));
-  fs.writeFileSync(path.join(dataDir, 'tickets.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'sync_queue.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
-    paired: true,
-    restaurant_id: RESTAURANT_ID,
-    name: 'Test Kitchen',
-    pairing_code: 'TST-0001',
-    city: 'Nagpur',
-    enrollment_code: ENROLLMENT_CODE,
-    devices: []
-  }));
-
-  child = spawn(process.execPath, [SERVER], {
-    env: {
-      ...process.env,
-      PORT: String(PORT),
-      HUB_DATA_DIR: dataDir,
-      // Act as a remote handset rather than the trusted local KDS.
-      HUB_TRUST_LOOPBACK: 'false',
-      SUPABASE_URL: 'https://example.supabase.co'
-    },
-    stdio: 'ignore'
+  hub = await startHub({
+    // Act as a remote handset rather than the trusted local KDS.
+    trustLoopback: false,
+    menu: MENU,
+    tables: TABLES,
+    enrollmentCode: ENROLLMENT_CODE
   });
-
-  // Wait for the port to accept connections.
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try {
-      await fetch(`${BASE}/pairing-info`);
-      break;
-    } catch {
-      if (Date.now() > deadline) throw new Error('hub server did not start');
-      await new Promise(r => setTimeout(r, 200));
-    }
-  }
 });
 
-after(() => {
-  if (child) child.kill();
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
-});
+after(() => hub?.stop());
 
 // ---------------------------------------------------------------------------
 // C2 — device authentication
@@ -131,7 +89,7 @@ test('C2: /pairing-info stays public but leaks no credentials', async () => {
   const res = await api('/pairing-info');
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.name, 'Test Kitchen');
+  assert.equal(body.name, hub.name);
   assert.equal(body.enrollment_code, undefined, 'enrollment code must not be served over the LAN');
   assert.equal(body.pairing_code, undefined, 'pairing code must not be served over the LAN');
   assert.equal(body.devices, undefined, 'device tokens must not be served over the LAN');
@@ -173,7 +131,7 @@ test('C2: CORS does not allow arbitrary web origins', async () => {
 test('C2: repeated /qr polling does not mint device tokens', async () => {
   // The KDS re-fetches /qr on a timer. An earlier version issued a fresh 30-day
   // token per request, which grew hub_config.json to 1100+ live grants.
-  const cfgPath = path.join(dataDir, 'hub_config.json');
+  const cfgPath = path.join(hub.dataDir, 'hub_config.json');
   const before = JSON.parse(fs.readFileSync(cfgPath, 'utf8')).devices.length;
 
   for (let i = 0; i < 5; i++) {
@@ -188,7 +146,7 @@ test('C2: repeated /qr polling does not mint device tokens', async () => {
 });
 
 test('C2: the device roster stays bounded and drops expired grants', async () => {
-  const cfgPath = path.join(dataDir, 'hub_config.json');
+  const cfgPath = path.join(hub.dataDir, 'hub_config.json');
   const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
 
   assert.ok(cfg.devices.length <= 50, `roster should stay bounded, saw ${cfg.devices.length}`);
@@ -1556,7 +1514,6 @@ test('M1: POST /orders without waiter_id still works (backwards-compat)', async 
 import { crashReporter } from '../lib/crashReporter.js';
 
 test('M1: crashReporter caps entries, trims oversized fields, coerces unknown sources to hub', () => {
-  const before = crashReporter.list().length;
   const entry = crashReporter.report({
     source: 'martian',
     message: 'x'.repeat(5000),
@@ -1569,8 +1526,13 @@ test('M1: crashReporter caps entries, trims oversized fields, coerces unknown so
   assert.equal(entry.stack.length, 6000, 'stack trimmed to MAX_STACK_LEN');
   assert.equal(entry.url.length, 500);
   assert.deepEqual(entry.extra, { info: 'ok' });
-  const after = crashReporter.list().length;
-  assert.equal(after, before + 1);
+  // Counting the log proves nothing here: this module is imported in-process, so it writes to
+  // hub_server/data/crash_log.json, which every run on this machine shares and adds to. list()
+  // also returns only its most recent page (50 by default) out of a 200-entry store, so once the
+  // file passed 50 entries the old `after === before + 1` could never hold again.
+  const page = crashReporter.list();
+  assert.equal(page[0].id, entry.id, 'the new entry is the newest in the log');
+  assert.ok(page.length <= 50, 'list() stays within its default page');
 });
 
 test('M1: POST /crash-report accepts unauthenticated calls (fail-open) and returns 202', async () => {

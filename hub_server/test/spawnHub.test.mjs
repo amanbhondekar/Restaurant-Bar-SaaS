@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { startHub, RESTAURANT_ID } from './helpers/spawnHub.mjs';
+import { reservePort, startHub, RESTAURANT_ID } from './helpers/spawnHub.mjs';
 
 const MENU = { restaurant_id: RESTAURANT_ID, categories: ['Starters'], items: [] };
 const TABLES = { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main Hall', capacity: 4 }] };
@@ -10,7 +10,7 @@ const TABLES = { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', sec
 // If the helper took that answer as "ready", a whole suite would silently run against the wrong
 // hub (and the freshly spawned one would be dying of EADDRINUSE in the background).
 test('startHub refuses to run against a stale listener already holding its port, and fails fast', async () => {
-  const port = 4596;
+  const port = await reservePort();
   const stale = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ paired: true, name: 'Stale Hub' }));

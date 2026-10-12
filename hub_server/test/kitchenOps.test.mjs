@@ -1,11 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { startHub } from './helpers/spawnHub.mjs';
 
 import {
   normalizeCourse, groupOf, withCourseState, initCourseState, stationsFor, allGroups, firedItems, heldItems, heldCourses,
@@ -279,10 +276,7 @@ test('telemetry: report sorts items slowest first, aggregates stations, and coun
 // Live hub: staged order, per-station ready, fire, recall, telemetry, printing.
 // ---------------------------------------------------------------------------
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.join(__dirname, '..', 'server.js');
-const PORT = 4593;
-const BASE = `http://127.0.0.1:${PORT}`;
+
 
 const MENU = {
   restaurant_id: RID,
@@ -294,8 +288,7 @@ const MENU = {
   ]
 };
 
-let child;
-let dataDir;
+let hub;
 const sinks = {};
 const sink = name => new Promise(resolve => {
   const chunks = [];
@@ -319,41 +312,32 @@ const until = async (check, ms = 8000) => {
   }
 };
 const call = (p, { method = 'GET', body } = {}) =>
-  fetch(`${BASE}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  fetch(`${hub.base}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 const json = async res => res.json();
 
 before(async () => {
   await sink('hot');
   await sink('bar');
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-kitchen-'));
-  fs.writeFileSync(path.join(dataDir, 'menu_cache.json'), JSON.stringify(MENU));
-  fs.writeFileSync(path.join(dataDir, 'tables_cache.json'), JSON.stringify({ restaurant_id: RID, tables: [{ id: 1, name: 'T1', section: 'M', capacity: 4 }, { id: 2, name: 'T2', section: 'M', capacity: 4 }] }));
-  fs.writeFileSync(path.join(dataDir, 'tickets.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'sync_queue.json'), '[]');
-  fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
-    paired: true, restaurant_id: RID, name: 'Kitchen Ops Test', pairing_code: 'KIT-0001', city: 'Nagpur', enrollment_code: 'KITCODE', devices: [],
-    printers: [
-      { id: 'hot-line', role: 'kot', host: '127.0.0.1', port: sinks.hot.port, station: 'hot' },
-      { id: 'bar-line', role: 'kot', host: '127.0.0.1', port: sinks.bar.port, station: 'bar' }
-    ]
-  }));
-  child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, PORT: String(PORT), HUB_DATA_DIR: dataDir, HUB_TRUST_LOOPBACK: 'true', SUPABASE_URL: 'https://example.supabase.co' },
-    stdio: 'ignore'
-  });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { await fetch(`${BASE}/pairing-info`); break; } catch {
-      if (Date.now() > deadline) throw new Error('kitchen-ops hub did not start');
-      await wait(200);
+  // The sinks are already listening, so their ports can go straight into the hub's config.
+  hub = await startHub({
+    trustLoopback: true,
+    menu: MENU,
+    tables: { restaurant_id: RID, tables: [{ id: 1, name: 'T1', section: 'M', capacity: 4 }, { id: 2, name: 'T2', section: 'M', capacity: 4 }] },
+    enrollmentCode: 'KITCODE',
+    config: {
+      restaurant_id: RID,
+      pairing_code: 'KIT-0001',
+      printers: [
+        { id: 'hot-line', role: 'kot', host: '127.0.0.1', port: sinks.hot.port, station: 'hot' },
+        { id: 'bar-line', role: 'kot', host: '127.0.0.1', port: sinks.bar.port, station: 'bar' }
+      ]
     }
-  }
+  });
 });
 
 after(() => {
-  if (child) child.kill();
+  hub?.stop();
   for (const s of Object.values(sinks)) s.server.close();
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 let staged;
