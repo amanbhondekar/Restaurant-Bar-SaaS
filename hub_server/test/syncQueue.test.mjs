@@ -40,7 +40,10 @@ test('SyncQueue: head-of-line blocking resolved with quarantine', async () => {
     return true; // Success for good item
   };
 
-  // Mock connection as online
+  // Mock connection as online. processQueue() overwrites isOnline from
+  // checkConnection(), so the probe itself has to be stubbed, not just the flag.
+  const originalCheckConnection = syncQueue.checkConnection;
+  syncQueue.checkConnection = async () => ({ online: true });
   syncQueue.isOnline = true;
 
   // Process queue
@@ -58,8 +61,9 @@ test('SyncQueue: head-of-line blocking resolved with quarantine', async () => {
   assert.equal(quarantined[0].queue_id, 'q_bad_123');
   assert.equal(quarantined[0].quarantine_reason, 'Max retry attempts exceeded during cloud sync');
 
-  // Restore original method and clean up
+  // Restore original methods and clean up
   syncQueue.syncOrderToSupabase = originalSyncOrder;
+  syncQueue.checkConnection = originalCheckConnection;
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
