@@ -1,11 +1,16 @@
 # Product Roadmap — Restaurant POS & KDS SaaS
 
-Living document. Reflects the state of `main` as of the latest commit and the
-work planned beyond it. This is a **multi-tenant SaaS product** — pilot
-restaurants are validation partners, not the product itself. Nothing in this
-roadmap is scoped to any single tenant.
+Living document. Reflects the state of the working line as of the latest
+commit and the work planned beyond it. This is a **multi-tenant SaaS product** —
+pilot restaurants are validation partners, not the product itself. Nothing in
+this roadmap is scoped to any single tenant.
 
 Legend: ✅ shipped · 🟡 partial · ⬜ not started
+
+**Last reconciled against the code:** 2026-10-13 (M1 and M2 complete, M3 in
+progress). Between 2026-09-19 and this revision the file lived on an unmerged
+`docs/roadmap` branch, so §6's maintenance rule could not be followed and the
+document fell a full two milestones behind. It is now on the working line.
 
 ---
 
@@ -16,19 +21,25 @@ Display System with a cloud-synced multi-tenant backend. Each tenant runs a
 local hub (a reception laptop on the restaurant's Wi-Fi) that owns the live
 operational state and asynchronously reconciles to Supabase.
 
-Three surfaces are functional end-to-end and have been field-validated with
+Four surfaces are functional end-to-end and have been field-validated with
 early pilots:
 
 - **Kitchen Hub Display** — live KOT ticket rail with pairing QR, connection
-  telemetry, and sync status.
+  telemetry, sync status, per-station filtering and billing actions.
 - **Waiter Handset PWA** — installable, LAN-paired, floor grid + menu +
-  cart, works while WAN is down.
-- **Reception / server-laptop admin** — self-serve menu, table layout, sales
-  analytics, waitlist.
+  cart, PIN sign-in, works while WAN is down.
+- **Reception admin console** (`/admin`) — menu, table layout, cash and
+  payments, kitchen performance, printers, subscription plan.
+- **Reception / server-laptop app** — sales analytics, waitlist.
 
-The current release focus has been reliability and security hardening
-(offline queue, idempotency, RLS isolation, hub device auth, server-side
-pricing). Formal automated coverage is limited to the hub gateway.
+M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
+M3 — self-serve tenant — of which plan enforcement and the owner console's
+plan view have shipped.
+
+Automated coverage is **455 tests across 22 files, hub-side only**: pure
+rules plus live hub fixtures that boot a real server against a throwaway
+data directory. There is still no frontend test runner, so no surface above
+is covered by automated tests.
 
 ---
 
@@ -36,45 +47,106 @@ pricing). Formal automated coverage is limited to the hub gateway.
 
 ### Architecture & platform
 - ✅ LAN-first hub gateway (`hub_server/`) on Node/Express + `ws`, bound to
-  `0.0.0.0:4000`, serves the built KDS and waiter PWA statically.
+  `0.0.0.0:4000`, serves the built KDS, admin console and waiter PWA
+  statically.
 - ✅ Async cloud sync worker with disk-persisted queue
   (`hub_server/data/tickets.json`), idempotent by `order_request_id`,
-  perpetual-retry loop with terminal-state logging.
+  perpetual-retry loop with terminal-state logging and quarantine for
+  items that exhaust their retry budget.
 - ✅ Boot-time cloud reconciliation and disk-persisted menu / table cache
   so the hub survives cold starts without WAN.
+- ✅ Hub-authoritative catalog: revision-guarded local writes that cloud
+  pulls cannot overwrite, rolling backups, atomic temp-file-then-rename.
 - ✅ Non-blocking I/O across the hub, live `/dashboard-data` and
   `/dashboard` operational view.
 
 ### Data & multi-tenancy (Supabase)
 - ✅ Schema: `restaurants`, `staff_users`, `tables`, `menu_categories`,
   `menu_items`, `orders`, `order_items`, `waitlist_entries`,
-  `device_pairings`.
+  `device_pairings`. **Invoices and reconciliation records are not among
+  them** — see §3.
 - ✅ Row Level Security on every tenant-scoped table; `current_restaurant_id()`
   resolved from `auth.uid()` via `staff_users`.
 - ✅ `provision_kitchen_staff` `SECURITY DEFINER` RPC, `pin_hash` via
   `pgcrypto`, per-tenant bcrypt provisioning secret.
-- ✅ `plan` column on `restaurants` (`starter` / `pro` / `enterprise`) —
-  wired at the data layer, not yet enforced in product.
+- ✅ Migrations `001`–`004`: secure hub provisioning, online RLS and order
+  items, hub-authoritative menu and tables, subscription plan status.
+- ✅ `plan` on `restaurants` (`starter` / `pro` / `enterprise`) **enforced in
+  product**, not just modelled — see §2 Tenant lifecycle.
 
 ### Security
 - ✅ Cross-tenant takeover closed (RPC no longer accepts arbitrary
   `p_user_id`, EXECUTE revoked from `anon`).
 - ✅ Bearer device-token auth on every mutating hub route; tokens hashed at
   rest, rate-limited enrollment, constant-time compare.
+- ✅ Reception-only guard on catalog writes and admin routes; enrolled
+  handsets get 403 `RECEPTION_ONLY`.
 - ✅ CORS locked to LAN / loopback; `/qr` and `/toggle-outage` restricted
   to the reception laptop.
 - ✅ WebSocket `/live` authorised (token in query string).
 - ✅ Server-side pricing — waiter clients no longer submit totals.
 
+### Billing & payments (M1)
+- ✅ Invoice generator with itemised tax breakdown, persistent ledger with
+  sequential numbers, on-close issue.
+- ✅ Bill-level flat and percent discounts, percent service charge.
+- ✅ Invoice lifecycle: void with ticket reopen, mark-paid with method
+  capture, state-transition validation.
+- ✅ Split-bill by seats, by amounts and by items, with rupee-fair
+  largest-remainder rounding and per-share settlement rolling up to the
+  parent.
+- ✅ Full refund on paid invoices, optional payment reference on every
+  settlement.
+- ✅ ESC/POS thermal printing for KOT and receipt over network TCP, USB
+  (OS print queue) and device path, with preview mode so it works without
+  hardware.
+- ✅ Payment reconciliation: period close, immutable numbered records, CSV
+  ledger export.
+
+### Menu depth (M2)
+- ✅ First-class item variants (half / full, bone-in) with distinct
+  server-side refusal codes.
+- ✅ Modifier groups (spice, extras, prep instructions) with min/max
+  validation and price deltas.
+- ✅ Day-part pricing (breakfast, happy hour, late night).
+- ✅ Per-variant and per-option availability (86'd).
+- ✅ Hub write layer for menu and tables: validated, revision-guarded,
+  reception-only, with CSV row import.
+- ✅ Admin console tabs for menu, tables and import.
+
+### Kitchen operations (M2)
+- ✅ Multi-station routing (hot / cold / bar) with per-station KDS filtering
+  and station-scoped KOTs.
+- ✅ Course firing and hold-and-fire.
+- ✅ Prep-time telemetry per item and per station, surfaced in the admin
+  console's Kitchen tab.
+- ✅ Ticket recall.
+
+### Tenant lifecycle (M3, in progress)
+- ✅ Plan entitlements as one authoritative answer to "what may this tenant
+  do right now?" (`hub_server/lib/plans.js`): limits on devices, waiters,
+  tables and printers; feature flags for split-bill, refunds, modifiers,
+  day-part pricing and multi-station KOT.
+- ✅ Enforcement at the hub, **degrading rather than blocking**: trialing,
+  past-due (7-day grace), suspended and cancelled tenants fall back to
+  Starter. Orders, billing and the kitchen display are never switched off.
+- ✅ `GET /plan` exposing effective plan, limits, features and usage; cloud
+  plan sync at boot and every 15 minutes, fail-soft when offline.
+- ✅ Owner console Plan tab: degradation banner naming the reason, limits
+  vs live usage, per-feature entitlements, cloud-staleness line.
+
 ### Frontend surfaces
 - ✅ Kitchen KDS (`src/server_laptop/KitchenKdsView.jsx`): live ticket rail,
   pairing QR + enrollment code, connection badge grace states, Framer
-  Motion ticket-printer moment, kitchen summary counters.
-- ✅ Reception admin: `SelfServeAdminView` (menu / pricing / table layout),
-  `SalesAnalyticsView`, `WaitlistView`, `ServerLaptopApp` shell.
+  Motion ticket-printer moment, kitchen summary counters, station chips,
+  bill preview and settlement.
+- ✅ Admin console (`src/admin/`): menu, tables, cash & payments, kitchen
+  performance, printers, plan.
+- ✅ Reception: `SalesAnalyticsView`, `WaitlistView`, `ServerLaptopApp` shell.
 - ✅ Waiter PWA (`src/waiter_mobile/`): floor grid with live table state,
   category-filtered menu grid, order draft drawer, rapid order builder,
-  LAN dispatcher, connection badge, service worker + manifest.
+  LAN dispatcher, in-app camera QR scanner, PIN sign-in, connection badge,
+  service worker + manifest.
 
 ### Design system
 - ✅ Centralised token architecture (`design-system/css/tokens.css`,
@@ -86,27 +158,47 @@ pricing). Formal automated coverage is limited to the hub gateway.
 
 ### Documentation & process
 - ✅ `docs/ARCHITECTURE.md`, `docs/API_SPECIFICATION.md`,
-  `docs/DEPLOYMENT_GUIDE.md`.
+  `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ First regression suite: `hub_server/test/hub.test.mjs` (security
-  fixes covered).
+- ✅ Hub regression suite: 455 tests across 22 files, fixtures on
+  OS-allocated ports with a stale-hub guard.
+- ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
+  every push and PR.
+- ✅ Crash reporting from the hub and both PWAs into a rolling log.
 
 ---
 
 ## 3. In-flight / partial
 
+- 🟡 **Owner console**: plan and usage have shipped; staff invites, role
+  management, PIN rotation and hub device revocation have not. The console
+  is reception-only — there is no remote owner view.
+- 🟡 **Inventory**: the M2 leftover. There are no `inventory_items` or
+  `recipes` tables, so 86'd is set by hand in the editor rather than driven
+  by stock-out.
+- 🟡 **Kitchen operations tail**: recall does not reprint a ticket; course
+  state is not replicated to Supabase (only ticket status is); firing is
+  not plan-gated; CSV import/export carries no course column.
+- 🟡 **Billing lives only on the hub**: invoices and reconciliation records
+  are written to `hub_server/data/` and have no Supabase tables, so a
+  tenant's revenue history exists on one laptop and is lost with it. The
+  sync queue replicates orders, not bills. This is the largest gap behind
+  M1 being called complete, and it blocks any cloud-side reporting.
 - 🟡 **Waitlist**: `waitlist_entries` table + `WaitlistView` exist; no
   guest notification (SMS / WhatsApp), no configurable time-slot
   reservations.
-- 🟡 **Analytics**: real-time revenue + orders panel is live; no period
-  comparison, cohorting, exports, or scheduled reports.
-- 🟡 **Auth surface**: hub device tokens + kitchen-staff RPC are in place;
-  no owner / manager login UI, no waiter PIN login integrated into the
-  PWA (a standalone `misc/demos/pin-login-flow-tester.html` prototype
-  exists but is not wired into the app).
-- 🟡 **Operational dashboard** (`/dashboard`): serves the built React app;
-  hydration was flaky in the last spot check — needs a follow-up pass.
+- 🟡 **Analytics**: real-time revenue + orders panel is live and cash
+  reconciliation exports a CSV ledger; no period comparison, cohorting or
+  scheduled reports.
+- ✅ **Operational dashboard** (`/dashboard`): the 2026-09-19 revision of
+  this file flagged flaky hydration. Re-checked on 2026-10-13 against a
+  running hub — sales, floor grid, active KOTs and billed orders all render
+  with no console errors. Moved out of this section.
+- 🟡 **Test coverage**: the hub is well covered; no frontend test runner
+  exists, so the KDS, admin console and waiter PWA are verified by hand.
+  The suite also still writes to the repository's own `hub_server/data/`
+  from modules imported in-process.
 
 ---
 
@@ -115,35 +207,36 @@ pricing). Formal automated coverage is limited to the hub gateway.
 Ordered within each theme by rough priority. No dates; dates go on
 milestones (§5) when a theme is pulled into a release.
 
-### 4.1 Billing & payments  ⬜
-- Invoice generation with itemised tax / GST breakdown, discounts,
-  service charge, and rounding rules.
-- Split-bill (by seat, by items, by amount).
-- Payment method capture — UPI, cash, card — with reconciliation records.
-- Void / refund flow with audit trail.
-- ESC/POS thermal-printer driver for KOT and customer bill (network + USB).
+### 4.1 Billing & payments  🟡
+- ✅ Invoice + tax breakdown, discounts and service charge, lifecycle,
+  split-bill, refunds, thermal printing, reconciliation — all shipped in M1.
+- ⬜ Cloud replication of invoices and reconciliation records. They are
+  hub-local today, so bills do not survive the loss of a reception laptop
+  and cannot be reported on centrally.
 
-### 4.2 Inventory & menu depth  ⬜
-- `inventory_items`, `recipes`, `modifiers`, `menu_item_variants` tables.
-- 86'd-item propagation from stock-out to waiter menu grid.
-- Menu scheduling (time-of-day availability, day-part pricing).
-- Modifier groups (spice level, size, add-ons) surfaced in the order
-  draft drawer.
+### 4.2 Inventory & menu depth  🟡
+- ✅ `menu_item_variants`, modifiers and day-part scheduling, surfaced in
+  the order draft drawer.
+- ⬜ `inventory_items` and `recipes` tables.
+- ⬜ 86'd-item propagation from stock-out to the waiter menu grid
+  (per-variant 86'd exists, but it is set by hand).
 
-### 4.3 Kitchen operations  ⬜
-- Multi-station routing (hot kitchen / bar / cold / dessert) with
-  per-station KDS instances.
-- Course firing / hold-and-fire.
-- Prep-time telemetry per item and per station.
-- Ticket recall + reprint.
+### 4.3 Kitchen operations  🟡
+- ✅ Multi-station routing, course firing / hold-and-fire, prep-time
+  telemetry, ticket recall.
+- ⬜ Reprint on recall.
+- ⬜ Per-station KDS *instances* (today a station screen is a filter on the
+  one display, reached as `/?station=bar`).
+- ⬜ Course state replicated to the cloud.
 
-### 4.4 Tenant lifecycle  ⬜
-- Self-serve tenant signup + restaurant creation flow.
-- Plan selection and enforcement against `restaurants.plan`
-  (`starter` / `pro` / `enterprise`).
-- Owner / manager console (staff invites, role management, PIN rotation,
-  hub device revocation).
-- Billing integration (Razorpay / Stripe) for subscription.
+### 4.4 Tenant lifecycle  🟡
+- ✅ Plan model and enforcement against `restaurants.plan`.
+- ✅ Owner console: plan, limits, usage, entitlements.
+- ⬜ Self-serve tenant signup + restaurant creation flow (M3 · PR 17).
+- ⬜ Owner console: staff invites, role management, PIN rotation, hub device
+  revocation (M3 · PR 18 follow-up).
+- ⬜ Billing integration (Razorpay / Stripe) for subscription (M3 · PR 19) —
+  **blocked on a payment-provider decision**.
 
 ### 4.5 Customer-facing surfaces  ⬜
 - Diner QR menu (view-only, then order-and-pay).
@@ -155,20 +248,21 @@ milestones (§5) when a theme is pulled into a release.
 - SMS / WhatsApp notifications ("your table is ready").
 - Public reservation page per tenant.
 
-### 4.7 Auth & access control  ⬜
-- Waiter PIN login wired into the PWA; session bound to a device token.
-- Role UIs for owner / manager / waiter / kitchen.
-- Password reset + optional SSO for owner accounts.
+### 4.7 Auth & access control  🟡
+- ✅ Waiter PIN login wired into the PWA, session bound to a device token.
+- ⬜ Role UIs for owner / manager / waiter / kitchen.
+- ⬜ Password reset + optional SSO for owner accounts.
 
-### 4.8 Reliability & observability  ⬜
-- Frontend test suite (Vitest + Playwright smoke on KDS and PWA).
-- CI pipeline (GitHub Actions): lint + unit + hub tests + build.
-- Structured logging + optional OpenTelemetry export from the hub.
-- Crash / error reporting from the hub and both PWAs.
+### 4.8 Reliability & observability  🟡
+- ✅ CI pipeline (GitHub Actions): hub tests + build on Node 20/22.
+- ✅ Crash / error reporting from the hub and both PWAs.
+- ⬜ Frontend test suite (Vitest + Playwright smoke on KDS and PWA).
+- ⬜ Structured logging + optional OpenTelemetry export from the hub.
+- ⬜ Hermetic test runs (the suite still writes to the repo's data dir).
 
 ### 4.9 Deployment & fleet  ⬜
 - One-click hub installer for Windows (auto-start service, firewall rule,
-  update channel).
+  update channel) — M3 · PR 20.
 - Signed auto-updates for the hub binary.
 - Remote fleet view: which tenants' hubs are online / behind on sync.
 
@@ -176,8 +270,8 @@ milestones (§5) when a theme is pulled into a release.
 - `CHANGELOG.md` following Keep a Changelog.
 - `LICENSE` file (README references licensing but no file is present).
 - `CONTRIBUTING.md` capturing the `Darshil_docs` audit-report SOP.
-- Restore or rewrite the referenced `docs/mejwani-pos-progress-report.md`
-  as a generic `docs/pilot-report-template.md`.
+- A generic `docs/pilot-report-template.md` in place of the referenced
+  `docs/mejwani-pos-progress-report.md`, which is not in the tree.
 
 ---
 
@@ -186,27 +280,32 @@ milestones (§5) when a theme is pulled into a release.
 Milestones are named, unversioned buckets. Each pulls in a slice of §4.
 Dates land on a milestone when it's actively being planned.
 
-### M1 — Payments-ready
+### M1 — Payments-ready  ✅
 Enough billing + printing to run a paid pilot end-to-end without a
-parallel manual bill book.
-- 4.1 invoice + tax breakdown, split-bill, cash/UPI capture, thermal
-  printer.
-- 4.7 waiter PIN login on the PWA.
-- 4.8 CI pipeline + hub error reporting.
+parallel manual bill book. **Complete 2026-10-05.**
+- ✅ 4.1 invoice + tax breakdown, split-bill, cash/UPI capture, thermal
+  printer, reconciliation.
+- ✅ 4.7 waiter PIN login on the PWA.
+- ✅ 4.8 CI pipeline + hub error reporting.
+- 🟡 Carried to 4.1: bills are hub-local and never reach the cloud.
 
-### M2 — Menu depth
+### M2 — Menu depth  ✅
 Enough menu modelling to onboard restaurants beyond a flat item list.
-- 4.2 modifiers, variants, 86'd-item propagation, day-part pricing.
-- 4.3 multi-station KDS routing and course firing.
+**Complete 2026-10-07**, less the inventory tail.
+- ✅ 4.2 modifiers, variants, per-variant 86'd, day-part pricing.
+- ✅ 4.3 multi-station KDS routing and course firing.
+- 🟡 Carried to 4.2: stock-driven 86'd and inventory tables.
 
-### M3 — Self-serve tenant
+### M3 — Self-serve tenant  🟡
 The product can onboard a new restaurant without engineering.
-- 4.4 tenant signup, owner console, plan enforcement, subscription
-  billing.
-- 4.9 Windows installer + fleet view.
-- 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
+- ✅ PR 16 — plan model + enforcement in the hub.
+- ✅ PR 18 — owner console plan view.
+- ⬜ PR 17 — tenant signup + provisioning.
+- ⬜ PR 19 — subscription billing (blocked on a payment-provider decision).
+- ⬜ PR 20 — Windows installer + fleet view.
+- ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
 
-### M4 — Customer surfaces
+### M4 — Customer surfaces  ⬜
 - 4.5 diner QR menu → order-and-pay → loyalty.
 - 4.6 reservations + WhatsApp notifications.
 
@@ -218,3 +317,7 @@ Every change that closes or reshapes a bullet lands with a report in
 [Darshil_docs/reports/](../Darshil_docs/reports/) and a diff to this file
 in the same commit. Priorities and milestone contents change; the shape
 of §2 (shipped) only grows.
+
+This rule only works while the file is on the branch the work lands on.
+It sat on an unmerged `docs/roadmap` branch from 2026-09-19 to 2026-10-13
+and went two milestones stale, which is the failure mode to watch for.
