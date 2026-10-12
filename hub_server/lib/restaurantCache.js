@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { supabase, checkSupabaseConnection } from './supabaseClient.js';
 import { normalizeCloudMenuItem } from './menuNormalize.js';
 import { tablesFromCloud } from './catalogSync.js';
+import { applyPlanToMenuItems } from './plans.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -168,6 +169,14 @@ class RestaurantCache {
     this.realtimeChannel = null;
     this._writeChain = Promise.resolve();
     this._backupSeq = 0;
+    // Returns the effective plan's feature flags (see lib/plans.js). Wired by
+    // server.js; the default grants everything so unit tests and tools that
+    // use the cache standalone see the full menu.
+    this.featureProvider = () => null;
+  }
+
+  setFeatureProvider(fn) {
+    this.featureProvider = typeof fn === 'function' ? fn : () => null;
   }
 
   loadFromDisk() {
@@ -552,9 +561,17 @@ class RestaurantCache {
         items: []
       };
     }
+    // Plan gating (M3 · PR 16): fields the tenant's plan doesn't include are
+    // stripped here, at the single read point shared by GET /menu and the
+    // order pricer, so handsets and billing always agree on what's sellable.
+    const features = this.featureProvider();
+    const items = features
+      ? applyPlanToMenuItems(this.menuCache.items, features)
+      : this.menuCache.items;
     return {
       ...this.menuCache,
       revision: this.menuCache.revision || 0,
+      ...(items !== this.menuCache.items ? { items } : {}),
       uninitialized: false
     };
   }
