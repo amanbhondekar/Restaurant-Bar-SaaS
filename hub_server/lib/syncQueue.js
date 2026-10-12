@@ -5,6 +5,8 @@ import { supabase, checkSupabaseConnection, authenticateHubStaff } from './supab
 import { ticketStore } from './ticketStore.js';
 import { hubConfig } from './hubConfig.js';
 import { pushMenu, pushTables, isUuid } from './catalogSync.js';
+import { pushInvoice } from './invoiceSync.js';
+import { invoiceStore } from './invoiceStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +18,9 @@ const QUARANTINE_FILE = path.join(DATA_DIR, 'quarantine_sync_queue.json');
 const CATALOG_STATE_FILE = path.join(DATA_DIR, 'catalog_sync.json');
 const CATALOG_OPS = { menu: 'SYNC_MENU', tables: 'SYNC_TABLES' };
 const isCatalogOp = item => item?.type === CATALOG_OPS.menu || item?.type === CATALOG_OPS.tables;
+
+const INVOICE_OP = 'SYNC_INVOICE';
+const isInvoiceOp = item => item?.type === INVOICE_OP;
 export const MAX_SYNC_ATTEMPTS = 5;
 
 /**
@@ -272,6 +277,62 @@ class SyncQueue {
     return [...kept, newest];
   }
 
+  /**
+   * Queues one bill for the cloud. Each push is a full snapshot upserted on the hub's invoice id,
+   * so a bill that is issued, paid and then refunded while the hub is offline leaves one queued
+   * push carrying its final state rather than three carrying a history the cloud never needed.
+   */
+  enqueueInvoice(invoice) {
+    const pairing = hubConfig.getPairingInfo();
+    const restaurantId = invoice?.restaurant_id || pairing.restaurant_id || null;
+    if (!invoice?.id) return;
+
+    const op = {
+      queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      type: INVOICE_OP,
+      payload: {
+        // The restaurant the bill was raised for. A hub re-paired before the push must not
+        // write it to the new one.
+        restaurant_id: restaurantId,
+        invoice
+      },
+      queued_at: new Date().toISOString(),
+      attempts: 0
+    };
+    // The cloud's copy is stale from the moment the bill changes, not from when the push fails.
+    invoiceStore.markPending(invoice.id, restaurantId);
+    this.saveQueue(this.mergeInvoiceOp(this.queue, op));
+    this.processQueue();
+  }
+
+  /** Collapses queued pushes for the same bill, keeping the newest snapshot. */
+  mergeInvoiceOp(queue, op) {
+    const id = op.payload.invoice.id;
+    return [...queue.filter(q => !(isInvoiceOp(q) && q.payload?.invoice?.id === id)), op];
+  }
+
+  async syncInvoiceToSupabase(item) {
+    const { restaurant_id, invoice } = item.payload;
+    const pairing = hubConfig.getPairingInfo();
+
+    if (!pairing.paired || !isUuid(restaurant_id) || String(restaurant_id) !== String(pairing.restaurant_id)) {
+      // Nothing can make this bill correct later, so drop it rather than retry or write it to
+      // the wrong tenant's revenue.
+      console.warn(`[sync] ⚠️ Dropping ${INVOICE_OP} (${invoice?.invoice_number}): it was raised for a different restaurant than this hub is paired with.`);
+      return true;
+    }
+
+    try {
+      const pushed = await pushInvoice(this.cloud, restaurant_id, invoice);
+      console.log(`[sync] ✅ Invoice ${pushed.invoice_number} (${pushed.payment_status}) pushed to Supabase`);
+      return true;
+    } catch (err) {
+      this.lastFailureSystemic = isSystemicFailure(err);
+      console.error(`[sync] ❌ ${INVOICE_OP} failed:`, { message: err.message, code: err.code || 'unknown', details: err.details || err.hint || null });
+      return false;
+    }
+  }
+
   /** Queues the whole catalog for the cloud. `data` is the committed cache, revision included. */
   enqueueCatalog(kind, data) {
     const pairing = hubConfig.getPairingInfo();
@@ -404,6 +465,12 @@ class SyncQueue {
             console.error('[sync] ❌ Sync catalog exception:', { message: err.message, code: err.code || 'unknown' });
             return false;
           });
+        } else if (isInvoiceOp(item)) {
+          success = await this.syncInvoiceToSupabase(item).catch((err) => {
+            console.error('[sync] ❌ Sync invoice exception:', { message: err.message, code: err.code || 'unknown' });
+            return false;
+          });
+          if (success) invoiceStore.markSynced(item.payload?.invoice?.id, item.payload?.restaurant_id);
         } else if (item.type === 'UPDATE_STATUS') {
           success = await this.syncStatusToSupabase(item.payload).catch((err) => {
             console.error('[sync] ❌ Sync status exception:', {

@@ -63,14 +63,15 @@ is covered by automated tests.
 ### Data & multi-tenancy (Supabase)
 - ✅ Schema: `restaurants`, `staff_users`, `tables`, `menu_categories`,
   `menu_items`, `orders`, `order_items`, `waitlist_entries`,
-  `device_pairings`. **Invoices and reconciliation records are not among
-  them** — see §3.
+  `device_pairings`, `invoices` (migration 005). Reconciliation records are
+  still hub-local — see §3.
 - ✅ Row Level Security on every tenant-scoped table; `current_restaurant_id()`
   resolved from `auth.uid()` via `staff_users`.
 - ✅ `provision_kitchen_staff` `SECURITY DEFINER` RPC, `pin_hash` via
   `pgcrypto`, per-tenant bcrypt provisioning secret.
-- ✅ Migrations `001`–`004`: secure hub provisioning, online RLS and order
-  items, hub-authoritative menu and tables, subscription plan status.
+- ✅ Migrations `001`–`005`: secure hub provisioning, online RLS and order
+  items, hub-authoritative menu and tables, subscription plan status, invoice
+  cloud replication.
 - ✅ `plan` on `restaurants` (`starter` / `pro` / `enterprise`) **enforced in
   product**, not just modelled — see §2 Tenant lifecycle.
 
@@ -180,11 +181,10 @@ is covered by automated tests.
 - 🟡 **Kitchen operations tail**: recall does not reprint a ticket; course
   state is not replicated to Supabase (only ticket status is); firing is
   not plan-gated; CSV import/export carries no course column.
-- 🟡 **Billing lives only on the hub**: invoices and reconciliation records
-  are written to `hub_server/data/` and have no Supabase tables, so a
-  tenant's revenue history exists on one laptop and is lost with it. The
-  sync queue replicates orders, not bills. This is the largest gap behind
-  M1 being called complete, and it blocks any cloud-side reporting.
+- 🟡 **Billing replication is one-way and unproven**: invoices now push to
+  the cloud (migration 005), but nothing has run against a real Supabase
+  project, the hub never reads bills back, and reconciliation records are
+  still hub-local. Bills issued before 005 are not backfilled.
 - 🟡 **Waitlist**: `waitlist_entries` table + `WaitlistView` exist; no
   guest notification (SMS / WhatsApp), no configurable time-slot
   reservations.
@@ -210,9 +210,15 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.1 Billing & payments  🟡
 - ✅ Invoice + tax breakdown, discounts and service charge, lifecycle,
   split-bill, refunds, thermal printing, reconciliation — all shipped in M1.
-- ⬜ Cloud replication of invoices and reconciliation records. They are
-  hub-local today, so bills do not survive the loss of a reception laptop
-  and cannot be reported on centrally.
+- ✅ Cloud replication of invoices (migration 005): every issue, settlement,
+  void, refund and split is pushed as a full snapshot, upserted on the hub's
+  own invoice id. **Not yet run against a real Supabase project.**
+- ⬜ Restore: replication is one-way, so a reinstalled hub starts with an
+  empty ledger even though the cloud holds its history.
+- ⬜ Cloud replication of reconciliation records (cash-up history is still
+  laptop-bound).
+- ⬜ Backfill for bills issued before migration 005; they have no state
+  change coming, so nothing ever queues them.
 
 ### 4.2 Inventory & menu depth  🟡
 - ✅ `menu_item_variants`, modifiers and day-part scheduling, surfaced in
@@ -287,7 +293,8 @@ parallel manual bill book. **Complete 2026-10-05.**
   printer, reconciliation.
 - ✅ 4.7 waiter PIN login on the PWA.
 - ✅ 4.8 CI pipeline + hub error reporting.
-- 🟡 Carried to 4.1: bills are hub-local and never reach the cloud.
+- 🟡 Carried to 4.1: replication is one-way and unproven against a real
+  Supabase project; reconciliation records are still hub-local.
 
 ### M2 — Menu depth  ✅
 Enough menu modelling to onboard restaurants beyond a flat item list.

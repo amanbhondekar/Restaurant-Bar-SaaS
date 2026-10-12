@@ -127,6 +127,10 @@ server.on('upgrade', (request, socket, head) => {
   });
 });
 
+// Every change to a bill goes to the cloud as a full snapshot (migration 005). Before this the
+// sync queue replicated orders but never bills, so revenue history lived only on this laptop.
+const replicateInvoice = invoice => { if (invoice) syncQueue.enqueueInvoice(invoice); };
+
 function broadcast(type, payload) {
   const pairing = hubConfig.getPairingInfo();
   const message = JSON.stringify({
@@ -954,6 +958,7 @@ app.post('/invoices/:id/void', requireDevice, (req, res) => {
   const reopened = ticketStore.reopenTickets(invoice.ticket_ids || [], pairing.restaurant_id);
 
   broadcast('INVOICE_VOIDED', { invoice, reopened_ticket_ids: reopened });
+  replicateInvoice(invoice);
   console.log(`↩︎  Voided ${invoice.invoice_number} · ${invoice.currency || '₹'}${invoice.grand_total} · reason: ${invoice.voided_reason} · reopened ${reopened.length} ticket(s)`);
 
   res.json({
@@ -981,6 +986,7 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
   }
 
   broadcast('INVOICE_PAID', { invoice: result.invoice });
+  replicateInvoice(result.invoice);
   console.log(`💰 Marked ${result.invoice.invoice_number} paid · ${result.invoice.payment_method} · ${result.invoice.currency || '₹'}${result.invoice.grand_total}`);
 
   res.json({ success: true, invoice: result.invoice });
@@ -1152,6 +1158,7 @@ app.post('/invoices/:id/refund', requireDevice, requireFeature(FEATURES.REFUNDS)
   }
 
   broadcast('INVOICE_REFUNDED', { invoice: result.invoice });
+  replicateInvoice(result.invoice);
   console.log(`↩︎ Refunded ${result.invoice.invoice_number} · ${result.invoice.currency || '₹'}${result.invoice.grand_total} · reason: ${result.invoice.refund_reason}`);
   res.json({ success: true, invoice: result.invoice });
 });
@@ -1172,6 +1179,7 @@ app.post('/invoices/:id/split-by-seats', requireDevice, requireFeature(FEATURES.
   }
 
   broadcast('INVOICE_SPLIT', { invoice: result.invoice });
+  replicateInvoice(result.invoice);
   console.log(`🪓 Split ${result.invoice.invoice_number} into ${result.invoice.splits.length} seat share(s)`);
   res.json({ success: true, invoice: result.invoice });
 });
@@ -1192,6 +1200,7 @@ app.post('/invoices/:id/split-by-items', requireDevice, requireFeature(FEATURES.
   }
 
   broadcast('INVOICE_SPLIT', { invoice: result.invoice });
+  replicateInvoice(result.invoice);
   console.log(`🪓 Split ${result.invoice.invoice_number} by item into ${result.invoice.splits.length} share(s)`);
   res.json({ success: true, invoice: result.invoice });
 });
@@ -1212,6 +1221,7 @@ app.post('/invoices/:id/split-by-amounts', requireDevice, requireFeature(FEATURE
   }
 
   broadcast('INVOICE_SPLIT', { invoice: result.invoice });
+  replicateInvoice(result.invoice);
   console.log(`🪓 Split ${result.invoice.invoice_number} by amount into ${result.invoice.splits.length} share(s)`);
   res.json({ success: true, invoice: result.invoice });
 });
@@ -1227,6 +1237,7 @@ app.delete('/invoices/:id/splits', requireDevice, (req, res) => {
   }
 
   broadcast('INVOICE_UNSPLIT', { invoice: result.invoice });
+  replicateInvoice(result.invoice);
   console.log(`↩︎ Unsplit ${result.invoice.invoice_number}`);
   res.json({ success: true, invoice: result.invoice });
 });
@@ -1256,6 +1267,7 @@ app.post('/invoices/:id/splits/:index/mark-paid', requireDevice, (req, res) => {
   if (result.parent_settled) {
     broadcast('INVOICE_PAID', { invoice: result.invoice });
   }
+  replicateInvoice(result.invoice);
   console.log(`💰 Split ${Number(req.params.index) + 1}/${result.invoice.splits.length} of ${result.invoice.invoice_number} paid · ${body.payment_method}${result.parent_settled ? ' · parent settled' : ''}`);
 
   res.json({ success: true, invoice: result.invoice, parent_settled: result.parent_settled });
@@ -1316,6 +1328,7 @@ app.post('/tables/:id/clear', requireDevice, (req, res) => {
   broadcast('bill_cleared', clearPayload);
   broadcast('order_cleared', clearPayload);
   if (invoice) broadcast('INVOICE_ISSUED', { invoice });
+  replicateInvoice(invoice);
 
   const updatedTables = getLiveTables(pairing.restaurant_id);
   if (invoice) {
@@ -1368,6 +1381,7 @@ app.post('/orders/:id/clear', requireDevice, (req, res) => {
   broadcast('bill_cleared', orderClearPayload);
   broadcast('order_cleared', orderClearPayload);
   if (invoice) broadcast('INVOICE_ISSUED', { invoice });
+  replicateInvoice(invoice);
 
   const updatedTables = getLiveTables(pairing.restaurant_id);
   if (invoice) {

@@ -112,6 +112,34 @@ class InvoiceStore {
     return { ok: true, invoice, duplicate: false };
   }
 
+  /**
+   * Records that this bill has changed since the cloud last saw it. Paying, voiding, refunding
+   * or splitting a bill makes the cloud's copy stale until the next push lands.
+   */
+  markPending(invoiceId, restaurantId) {
+    if (!invoiceId) return false;
+    const invoice = this.invoices.find(inv =>
+      inv.id === invoiceId && (!restaurantId || inv.restaurant_id === restaurantId));
+    if (!invoice || invoice.synced_to_cloud === false) return false;
+    invoice.synced_to_cloud = false;
+    this.save();
+    return true;
+  }
+
+  /**
+   * Records that the cloud now holds this bill. Until migration 005 nothing ever called this,
+   * so `synced_to_cloud` was stamped false at issue and stayed false for the life of the bill.
+   */
+  markSynced(invoiceId, restaurantId) {
+    if (!invoiceId) return false;
+    const invoice = this.invoices.find(inv =>
+      inv.id === invoiceId && (!restaurantId || inv.restaurant_id === restaurantId));
+    if (!invoice || invoice.synced_to_cloud === true) return false;
+    invoice.synced_to_cloud = true;
+    this.save();
+    return true;
+  }
+
   getInvoice(invoiceId, restaurantId) {
     return this.invoices.find(inv =>
       (inv.id === invoiceId || inv.invoice_number === invoiceId) &&
