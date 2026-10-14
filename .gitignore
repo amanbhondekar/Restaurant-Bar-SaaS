@@ -42,3 +42,10 @@ hub_server/data/backups/
 hub_server/data/*.tmp
 # Newest menu/table revision the cloud is known to hold
 hub_server/data/catalog_sync.json
+
+# A queue file that would not parse, kept aside by loadQueue so the unsent orders and bills
+# in it can be recovered by hand instead of being overwritten.
+hub_server/data/sync_queue.corrupt-*.json
+
+# Waiter records: names plus scrypt PIN hashes, seeded on first boot. Local to each hub.
+hub_server/data/waiters.json

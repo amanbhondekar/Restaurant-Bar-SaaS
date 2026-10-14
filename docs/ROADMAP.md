@@ -219,9 +219,12 @@ milestones (§5) when a theme is pulled into a release.
   than upserted: a closed shift is immutable.
 - ✅ Backfill at boot for bills and cash-ups the cloud has not confirmed,
   so an existing ledger replicates rather than only new takings.
-- ⬜ The sync queue's own disk write is not atomic: a crash inside it leaves
-  a truncated file that loadQueue answers with an empty queue, discarding
-  everything unsent. Needs a durability design of its own.
+- ✅ A sync queue file that will not parse is salvaged, preserved for
+  recovery by hand and reported loudly, instead of being answered with an
+  empty queue and overwritten.
+- ⬜ The queue's disk write is still not atomic, so the entry being written
+  when a hub crashes is still lost. Making it atomic was tried and reverted
+  on measurement; it needs a transactional design, not a swapped call.
 
 ### 4.2 Inventory & menu depth  🟡
 - ✅ `menu_item_variants`, modifiers and day-part scheduling, surfaced in

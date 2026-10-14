@@ -37,6 +37,31 @@ export const MAX_SYNC_ATTEMPTS = 5;
  * quarantine the whole day's takings for what is really a config error.
  * Systemic failures pause the drain instead, and retry forever.
  */
+/**
+ * The complete leading entries of a truncated queue file, or null if none survive.
+ *
+ * The file is written with JSON.stringify(queue, null, 2), so every top-level entry ends on a
+ * line that is exactly two spaces and a brace. Walking those boundaries from the end and closing
+ * the array at the last one that parses recovers everything except the partial tail -- which is
+ * the shape a crash mid-write leaves behind.
+ */
+export function salvageQueue(raw) {
+  if (typeof raw !== 'string') return null;
+  const MARKER = '\n  }';
+  for (let end = raw.lastIndexOf(MARKER); end !== -1; end = raw.lastIndexOf(MARKER, end - 1)) {
+    try {
+      const candidate = JSON.parse(`${raw.slice(0, end + MARKER.length)}\n]`);
+      // An entry that was itself cut short parses as something other than a list of objects.
+      if (Array.isArray(candidate) && candidate.every(item => item && typeof item === 'object')) {
+        return candidate;
+      }
+    } catch {
+      // Truncated inside this entry; try the boundary before it.
+    }
+  }
+  return null;
+}
+
 export function isSystemicFailure(err) {
   if (!err) return false;
   const code = String(err.code || '');
@@ -99,15 +124,44 @@ class SyncQueue {
   }
 
   loadQueue() {
+    let raw = null;
     try {
-      if (fs.existsSync(QUEUE_FILE)) {
-        const raw = fs.readFileSync(QUEUE_FILE, 'utf-8');
-        return JSON.parse(raw);
-      }
+      if (!fs.existsSync(QUEUE_FILE)) return [];
+      raw = fs.readFileSync(QUEUE_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error('sync_queue.json does not hold a list');
+      return parsed;
     } catch (err) {
-      console.warn('⚠️ Could not load sync_queue.json:', err.message);
+      return this.recoverQueue(raw, err);
     }
-    return [];
+  }
+
+  /**
+   * What to do with a queue file that will not parse.
+   *
+   * This used to warn and return an empty queue, which is the worst available answer: the file
+   * holds orders and bills that never reached the cloud, and the next save overwrites it, so a
+   * single torn write silently destroyed a restaurant's unsent takings. Instead: keep a copy of
+   * exactly what was on disk, salvage whatever complete entries survive, and say so loudly.
+   */
+  recoverQueue(raw, err) {
+    const salvaged = salvageQueue(raw);
+    let kept = null;
+    if (raw !== null) {
+      try {
+        kept = path.join(DATA_DIR, `sync_queue.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+        fs.writeFileSync(kept, raw, 'utf-8');
+      } catch (copyErr) {
+        kept = null;
+        console.error('❌ Could not preserve the unreadable queue file:', copyErr.message);
+      }
+    }
+    console.error(
+      `🚨 sync_queue.json could not be read (${err.message}). ` +
+      `${salvaged ? `Recovered ${salvaged.length} complete item(s); anything after them is lost.` : 'Nothing could be recovered.'}` +
+      `${kept ? ` The file as found is kept at ${path.basename(kept)}.` : ''}`
+    );
+    return salvaged || [];
   }
 
   saveQueue(queueList) {
