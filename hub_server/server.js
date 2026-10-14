@@ -904,6 +904,7 @@ app.post('/reconciliation/close', receptionCash, (req, res) => {
   const r = result.record;
   console.log(`🧾 ${r.number} closed · cash variance ${r.cash_variance} · ${r.status}`);
   broadcast('RECONCILIATION_CLOSED', { number: r.number, status: r.status });
+  syncQueue.enqueueReconciliation(r);
   res.status(201).json({ success: true, record: r });
 });
 
@@ -1818,6 +1819,12 @@ server.listen(PORT, '0.0.0.0', () => {
     }).catch(() => {});
     syncPlan();
     setInterval(syncPlan, 15 * 60 * 1000).unref();
+
+    // Carry up any bill the cloud has not confirmed. Pushes are triggered by a bill changing,
+    // so anything issued before migration 005 has nothing coming for it; this is what gets an
+    // existing ledger replicated rather than only new takings.
+    syncQueue.enqueueUnsyncedInvoices(pairingInfo.restaurant_id);
+    syncQueue.enqueueUnsyncedReconciliations(pairingInfo.restaurant_id);
   }
 
   // Start background sync retry loop

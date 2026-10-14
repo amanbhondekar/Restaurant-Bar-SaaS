@@ -36,6 +36,19 @@ after(() => {
 });
 
 const json = async res => res.json();
+
+/** Waits for the hub's queue file to hold what the test expects, rather than assuming it does. */
+async function queueUntil(hub, predicate, ms = 5000) {
+  const file = path.join(hub.dataDir, 'sync_queue.json');
+  const deadline = Date.now() + ms;
+  let last = [];
+  for (;;) {
+    try { last = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { last = []; }
+    if (predicate(last)) return last;
+    if (Date.now() > deadline) return last;
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
 const menuRev = async () => (await json(await call(rec, '/menu'))).revision;
 const tablesRev = async () => (await json(await call(rec, '/tables/layout'))).revision;
 const waitFor = async (pred, ms = 3000) => {
@@ -665,7 +678,10 @@ test('GET /admin/sync-status is reception-only and shows an offline edit waiting
     method: 'POST',
     body: { base_revision: rev + 1, item: { name: 'Sync Probe 2', category: 'Starters', price: 10, isVeg: true } }
   });
-  const queue = JSON.parse(fs.readFileSync(path.join(rec.dataDir, 'sync_queue.json'), 'utf-8'));
+  // The hub writes its queue asynchronously (to a temp file, then renames), so reading it once
+  // right after the request can still see the previous contents. Wait for the push to land.
+  const queue = await queueUntil(rec, q =>
+    q.some(x => x.type === 'SYNC_MENU' && x.payload?.revision === rev + 2));
   assert.equal(queue.filter(q => q.type === 'SYNC_MENU').length, 1);
   assert.equal(queue.find(q => q.type === 'SYNC_MENU').payload.revision, rev + 2);
 });

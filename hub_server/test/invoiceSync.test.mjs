@@ -77,6 +77,24 @@ function reset(cloud) {
 }
 
 // enqueueInvoice starts a drain on its own; tests need it to stay put until they say so.
+
+/**
+ * The hub writes its queue asynchronously, so reading the file once can be too early. Waits for
+ * the queue to hold what the test expects rather than assuming it already does.
+ */
+async function queueUntil(hub, predicate, ms = 15000) {
+  const file = path.join(hub.dataDir, 'sync_queue.json');
+  const deadline = Date.now() + ms;
+  let last = [];
+  for (;;) {
+    try { last = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { last = []; }
+    if (predicate(last)) return last;
+    if (Date.now() > deadline) return last;
+    // 150ms, not tighter: the hub writes this file, and ten test processes share the CPU.
+    await new Promise(r => setTimeout(r, 150));
+  }
+}
+
 const hold = () => { syncQueue.isSyncing = true; };
 const release = () => { syncQueue.isSyncing = false; };
 
@@ -309,8 +327,8 @@ test('hub: closing and then paying a bill leaves exactly one queued push, carryi
     const invoice = (await cleared.json()).invoice;
     assert.ok(invoice?.id, 'closing the table issued a bill');
 
-    const queuePath = path.join(hub.dataDir, 'sync_queue.json');
-    const afterIssue = JSON.parse(fs.readFileSync(queuePath, 'utf-8')).filter(q => q.type === 'SYNC_INVOICE');
+    const afterIssue = (await queueUntil(hub, q => q.some(x => x.type === 'SYNC_INVOICE')))
+      .filter(q => q.type === 'SYNC_INVOICE');
     assert.equal(afterIssue.length, 1, 'closing the bill queued it for the cloud');
     assert.equal(afterIssue[0].payload.invoice.id, invoice.id);
     assert.equal(afterIssue[0].payload.invoice.payment_status, 'pending');
@@ -321,7 +339,9 @@ test('hub: closing and then paying a bill leaves exactly one queued push, carryi
     });
     assert.equal(paid.status, 200);
 
-    const afterPay = JSON.parse(fs.readFileSync(queuePath, 'utf-8')).filter(q => q.type === 'SYNC_INVOICE');
+    const afterPay = (await queueUntil(hub, q =>
+      q.some(x => x.type === 'SYNC_INVOICE' && x.payload?.invoice?.payment_status === 'paid')))
+      .filter(q => q.type === 'SYNC_INVOICE');
     assert.equal(afterPay.length, 1, 'paying it did not add a second push for the same bill');
     assert.equal(afterPay[0].payload.invoice.payment_status, 'paid', 'the queued push carries the settled state');
   } finally {

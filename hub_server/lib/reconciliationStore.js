@@ -50,6 +50,24 @@ export class ReconciliationStore {
     return this.forTenant(restaurantId).find(r => r.id === id || r.number === id) || null;
   }
 
+  /** Cash-ups the cloud has not confirmed, oldest first so a shift history replicates in order. */
+  listUnsynced(restaurantId) {
+    return this.forTenant(restaurantId)
+      .filter(r => r.synced_to_cloud !== true)
+      .sort((a, b) => a.seq - b.seq);
+  }
+
+  /** Records that the cloud now holds this cash-up. A closed shift never goes back to pending. */
+  markSynced(recordId, restaurantId) {
+    if (!recordId) return false;
+    const record = this.records.find(r =>
+      r.id === recordId && (!restaurantId || r.restaurant_id === restaurantId));
+    if (!record || record.synced_to_cloud === true) return false;
+    record.synced_to_cloud = true;
+    this.persist();
+    return true;
+  }
+
   last(restaurantId) {
     return this.list(restaurantId)[0] || null;
   }
@@ -125,6 +143,7 @@ export class ReconciliationStore {
       seq,
       number: `REC-${String(seq).padStart(6, '0')}`,
       restaurant_id: restaurantId,
+      synced_to_cloud: false,
       ...record
     };
     this.records = [...this.records, stored];

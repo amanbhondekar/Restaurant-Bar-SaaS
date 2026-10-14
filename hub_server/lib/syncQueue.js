@@ -7,6 +7,8 @@ import { hubConfig } from './hubConfig.js';
 import { pushMenu, pushTables, isUuid } from './catalogSync.js';
 import { pushInvoice } from './invoiceSync.js';
 import { invoiceStore } from './invoiceStore.js';
+import { pushReconciliation } from './reconciliationSync.js';
+import { reconciliationStore } from './reconciliationStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +23,9 @@ const isCatalogOp = item => item?.type === CATALOG_OPS.menu || item?.type === CA
 
 const INVOICE_OP = 'SYNC_INVOICE';
 const isInvoiceOp = item => item?.type === INVOICE_OP;
+
+const RECONCILIATION_OP = 'SYNC_RECONCILIATION';
+const isReconciliationOp = item => item?.type === RECONCILIATION_OP;
 export const MAX_SYNC_ATTEMPTS = 5;
 
 /**
@@ -67,6 +72,9 @@ class SyncQueue {
     this.checkConnection = checkSupabaseConnection;
     this.cloud = supabase;
     this.catalogState = this.loadCatalogState();
+    // Queue writes are serialised through this, the same way restaurantCache serialises catalog
+    // writes. See saveQueue.
+    this._writeChain = Promise.resolve();
   }
 
   loadCatalogState() {
@@ -105,8 +113,20 @@ class SyncQueue {
   saveQueue(queueList) {
     this.queue = queueList;
     this.notifyStatusChange();
-    // Non-blocking async write to disk
-    fs.promises.writeFile(QUEUE_FILE, JSON.stringify(queueList, null, 2), 'utf-8')
+    // Non-blocking, but serialised. Clearing a table saves the queue several times in quick
+    // succession (the ticket updates, then the bill), and unchained writes finish in whatever
+    // order the OS returns them -- so the file could end up holding an older snapshot than
+    // memory and silently lose the newest ops if the hub then stopped. Chaining keeps the last
+    // call the last write. The JSON is captured now, not inside the chain, so each link writes
+    // the queue as it was when that save was asked for.
+    //
+    // NOTE: still not atomic. A crash inside the write leaves a truncated file, and loadQueue
+    // answers a parse failure with an empty queue, discarding everything unsent. Writing to a
+    // temp file and renaming was tried and reverted: on Windows the rename contends with
+    // readers, and this is a far hotter path than a catalog write. That needs its own slice.
+    const snapshot = JSON.stringify(queueList, null, 2);
+    this._writeChain = this._writeChain
+      .then(() => fs.promises.writeFile(QUEUE_FILE, snapshot, 'utf-8'))
       .catch(err => console.error('❌ Async save queue error:', err));
     return true;
   }
@@ -287,7 +307,14 @@ class SyncQueue {
     const restaurantId = invoice?.restaurant_id || pairing.restaurant_id || null;
     if (!invoice?.id) return;
 
-    const op = {
+    // The cloud's copy is stale from the moment the bill changes, not from when the push fails.
+    invoiceStore.markPending(invoice.id, restaurantId);
+    this.saveQueue(this.mergeInvoiceOp(this.queue, this.invoiceOp(invoice, restaurantId)));
+    this.processQueue();
+  }
+
+  invoiceOp(invoice, restaurantId) {
+    return {
       queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       type: INVOICE_OP,
       payload: {
@@ -299,16 +326,83 @@ class SyncQueue {
       queued_at: new Date().toISOString(),
       attempts: 0
     };
-    // The cloud's copy is stale from the moment the bill changes, not from when the push fails.
-    invoiceStore.markPending(invoice.id, restaurantId);
-    this.saveQueue(this.mergeInvoiceOp(this.queue, op));
+  }
+
+  /**
+   * Queues every bill the cloud has not confirmed, in one pass.
+   *
+   * Replication is driven by state changes, so a bill issued before migration 005 -- or while
+   * the cloud was rejecting pushes -- has nothing coming to carry it up and would stay on this
+   * laptop forever. Runs at boot; a no-op once the ledger is fully replicated.
+   */
+  enqueueUnsyncedInvoices(restaurantId) {
+    const pending = invoiceStore.listUnsynced(restaurantId);
+    if (!pending.length) return { queued: 0 };
+
+    let queue = this.queue;
+    for (const invoice of pending) {
+      queue = this.mergeInvoiceOp(queue, this.invoiceOp(invoice, restaurantId));
+    }
+    // One save and one drain for the whole ledger rather than per bill.
+    this.saveQueue(queue);
+    console.log(`[sync] 📒 Queued ${pending.length} unreplicated bill(s) for the cloud.`);
     this.processQueue();
+    return { queued: pending.length };
   }
 
   /** Collapses queued pushes for the same bill, keeping the newest snapshot. */
   mergeInvoiceOp(queue, op) {
     const id = op.payload.invoice.id;
     return [...queue.filter(q => !(isInvoiceOp(q) && q.payload?.invoice?.id === id)), op];
+  }
+
+  /**
+   * Queues one closed shift. Cash-ups are immutable, so there is nothing to collapse: a record
+   * already queued is simply left alone rather than replaced with an identical copy.
+   */
+  enqueueReconciliation(record) {
+    const pairing = hubConfig.getPairingInfo();
+    const restaurantId = record?.restaurant_id || pairing.restaurant_id || null;
+    if (!record?.id) return;
+    if (this.queue.some(q => isReconciliationOp(q) && q.payload?.record?.id === record.id)) return;
+
+    this.saveQueue([...this.queue, {
+      queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      type: RECONCILIATION_OP,
+      payload: { restaurant_id: restaurantId, record },
+      queued_at: new Date().toISOString(),
+      attempts: 0
+    }]);
+    this.processQueue();
+  }
+
+  /** Queues every cash-up the cloud has not confirmed. Runs at boot, alongside the bills. */
+  enqueueUnsyncedReconciliations(restaurantId) {
+    const pending = reconciliationStore.listUnsynced(restaurantId);
+    if (!pending.length) return { queued: 0 };
+    for (const record of pending) this.enqueueReconciliation(record);
+    console.log(`[sync] 🧾 Queued ${pending.length} unreplicated cash-up(s) for the cloud.`);
+    return { queued: pending.length };
+  }
+
+  async syncReconciliationToSupabase(item) {
+    const { restaurant_id, record } = item.payload;
+    const pairing = hubConfig.getPairingInfo();
+
+    if (!pairing.paired || !isUuid(restaurant_id) || String(restaurant_id) !== String(pairing.restaurant_id)) {
+      console.warn(`[sync] ⚠️ Dropping ${RECONCILIATION_OP} (${record?.number}): it was closed for a different restaurant than this hub is paired with.`);
+      return true;
+    }
+
+    try {
+      const pushed = await pushReconciliation(this.cloud, restaurant_id, record);
+      console.log(`[sync] ✅ Cash-up ${pushed.number} (${pushed.status}) pushed to Supabase`);
+      return true;
+    } catch (err) {
+      this.lastFailureSystemic = isSystemicFailure(err);
+      console.error(`[sync] ❌ ${RECONCILIATION_OP} failed:`, { message: err.message, code: err.code || 'unknown', details: err.details || err.hint || null });
+      return false;
+    }
   }
 
   async syncInvoiceToSupabase(item) {
@@ -471,6 +565,12 @@ class SyncQueue {
             return false;
           });
           if (success) invoiceStore.markSynced(item.payload?.invoice?.id, item.payload?.restaurant_id);
+        } else if (isReconciliationOp(item)) {
+          success = await this.syncReconciliationToSupabase(item).catch((err) => {
+            console.error('[sync] ❌ Sync cash-up exception:', { message: err.message, code: err.code || 'unknown' });
+            return false;
+          });
+          if (success) reconciliationStore.markSynced(item.payload?.record?.id, item.payload?.restaurant_id);
         } else if (item.type === 'UPDATE_STATUS') {
           success = await this.syncStatusToSupabase(item.payload).catch((err) => {
             console.error('[sync] ❌ Sync status exception:', {

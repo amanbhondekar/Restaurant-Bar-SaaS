@@ -52,7 +52,9 @@ export async function startHub(options = {}) {
   if (options.port) return bootHub({ ...options, port: options.port });
 
   let lastError;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  // Eight rather than five: the suite now starts ten hubs at once, and a lost race is cheap to
+  // retry but expensive to debug as a one-in-fifteen red build.
+  for (let attempt = 0; attempt < 8; attempt++) {
     try {
       return await bootHub({ ...options, port: await reservePort() });
     } catch (err) {

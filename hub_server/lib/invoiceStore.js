@@ -113,6 +113,17 @@ class InvoiceStore {
   }
 
   /**
+   * Bills the cloud has not confirmed, oldest first so a ledger replicates in the order it was
+   * written. `invoices` is stored newest-first, hence the reverse.
+   */
+  listUnsynced(restaurantId) {
+    return this.invoices
+      .filter(inv => inv.synced_to_cloud !== true && (!restaurantId || inv.restaurant_id === restaurantId))
+      .slice()
+      .reverse();
+  }
+
+  /**
    * Records that this bill has changed since the cloud last saw it. Paying, voiding, refunding
    * or splitting a bill makes the cloud's copy stale until the next push lands.
    */
