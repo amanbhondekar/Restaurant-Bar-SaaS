@@ -5,9 +5,9 @@ import { supabase, checkSupabaseConnection, authenticateHubStaff } from './supab
 import { ticketStore } from './ticketStore.js';
 import { hubConfig } from './hubConfig.js';
 import { pushMenu, pushTables, isUuid } from './catalogSync.js';
-import { pushInvoice } from './invoiceSync.js';
+import { pushInvoice, pullInvoices } from './invoiceSync.js';
 import { invoiceStore } from './invoiceStore.js';
-import { pushReconciliation } from './reconciliationSync.js';
+import { pushReconciliation, pullReconciliations } from './reconciliationSync.js';
 import { reconciliationStore } from './reconciliationStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -428,6 +428,61 @@ class SyncQueue {
       attempts: 0
     }]);
     this.processQueue();
+  }
+
+  /**
+   * Fills an empty ledger from the cloud. For a reinstalled or replaced reception laptop: the
+   * hub pushes bills and cash-ups but has never read them back, so a fresh hub started with no
+   * financial history at all and -- worse -- reissued INV-000001, which migration 005's unique
+   * index rejects, leaving those bills unable to sync for as long as the hub ran.
+   *
+   * Deliberately only ever fills, never merges. A hub that already holds bills is the authority
+   * on them; pulling the cloud's copy over the top could resurrect a locally voided bill or
+   * overwrite a settlement that has not been pushed yet. If either store has anything, that
+   * store is left alone.
+   */
+  async restoreLedgerFromCloud(restaurantId) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { restored: false, reason: 'NOT_PAIRED' };
+    }
+    const wantInvoices = invoiceStore.listInvoices(restaurantId).length === 0;
+    const wantCashups = reconciliationStore.list(restaurantId).length === 0;
+    if (!wantInvoices && !wantCashups) return { restored: false, reason: 'LEDGER_PRESENT' };
+
+    const { online } = await this.checkConnection();
+    if (!online) return { restored: false, reason: 'OFFLINE' };
+
+    let invoices = 0;
+    let cashups = 0;
+    try {
+      if (wantInvoices) {
+        const rows = await pullInvoices(this.cloud, restaurantId);
+        if (rows.length) {
+          invoiceStore.invoices = rows;
+          invoiceStore.save();
+          invoices = rows.length;
+        }
+      }
+      if (wantCashups) {
+        const rows = await pullReconciliations(this.cloud, restaurantId);
+        if (rows.length) {
+          reconciliationStore.records = rows;
+          reconciliationStore.persist();
+          cashups = rows.length;
+        }
+      }
+    } catch (err) {
+      // Fail soft, exactly like the plan sync: an empty ledger is bad, but refusing to boot
+      // because the cloud is unreachable would be worse. The next boot tries again.
+      console.warn(`⚠️ Could not restore the ledger from the cloud: ${err.message}`);
+      return { restored: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+
+    if (invoices || cashups) {
+      console.log(`📥 Restored ${invoices} bill(s) and ${cashups} cash-up(s) from the cloud.`);
+    }
+    return { restored: Boolean(invoices || cashups), invoices, cashups };
   }
 
   /** Queues every cash-up the cloud has not confirmed. Runs at boot, alongside the bills. */

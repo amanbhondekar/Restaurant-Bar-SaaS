@@ -1811,6 +1811,10 @@ server.listen(PORT, '0.0.0.0', () => {
     // Refresh cache and subscribe to Realtime whenever connection is restored
     syncQueue.onReconnected(() => {
       restaurantCache.handleReconnection(pairingInfo.restaurant_id, broadcast);
+      // A hub reinstalled while the internet was down would otherwise sit on an empty ledger
+      // until someone restarted it. Cheap to repeat: it short-circuits once the ledger is there.
+      syncQueue.restoreLedgerFromCloud(pairingInfo.restaurant_id)
+        .catch(err => console.warn('⚠️ Ledger restore on reconnect failed:', err.message));
     });
     // Refresh the subscription plan now and every 15 min. Fail-soft: offline
     // keeps the last synced plan, so LAN-only service is never interrupted.
@@ -1820,11 +1824,18 @@ server.listen(PORT, '0.0.0.0', () => {
     syncPlan();
     setInterval(syncPlan, 15 * 60 * 1000).unref();
 
-    // Carry up any bill the cloud has not confirmed. Pushes are triggered by a bill changing,
-    // so anything issued before migration 005 has nothing coming for it; this is what gets an
-    // existing ledger replicated rather than only new takings.
-    syncQueue.enqueueUnsyncedInvoices(pairingInfo.restaurant_id);
-    syncQueue.enqueueUnsyncedReconciliations(pairingInfo.restaurant_id);
+    // Restore first, then backfill. A hub with an empty ledger (a reinstalled or replaced
+    // reception laptop) pulls its financial history back from the cloud; everything restored
+    // arrives already marked as replicated, so the backfill that follows correctly finds
+    // nothing to push. Reversing the order would queue the whole restored ledger straight back.
+    syncQueue.restoreLedgerFromCloud(pairingInfo.restaurant_id)
+      .catch(err => console.warn('⚠️ Ledger restore failed:', err.message))
+      .finally(() => {
+        // Carry up anything the cloud has not confirmed. Pushes are triggered by a record
+        // changing, so anything settled before migrations 005/006 has nothing coming for it.
+        syncQueue.enqueueUnsyncedInvoices(pairingInfo.restaurant_id);
+        syncQueue.enqueueUnsyncedReconciliations(pairingInfo.restaurant_id);
+      });
   }
 
   // Start background sync retry loop

@@ -53,6 +53,53 @@ export function reconciliationRow(restaurantId, record) {
   };
 }
 
+/** One cloud row as the hub's on-disk cash-up. The inverse of reconciliationRow. */
+export function reconciliationFromCloud(row) {
+  return {
+    id: String(row.hub_ref || row.id),
+    seq: Number(row.seq) || 0,
+    number: row.number,
+    restaurant_id: row.restaurant_id,
+    synced_to_cloud: true,
+
+    period_start: row.period_start ?? null,
+    period_end: row.period_end,
+
+    opening_float: Number(row.opening_float) || 0,
+    counted_cash: Number(row.counted_cash) || 0,
+    cash_removed: Number(row.cash_removed) || 0,
+    closing_float: Number(row.closing_float) || 0,
+    expected_cash: Number(row.expected_cash) || 0,
+    cash_variance: Number(row.cash_variance) || 0,
+
+    status: row.status === 'variance' ? 'variance' : 'balanced',
+    has_variance: Boolean(row.has_variance),
+
+    methods: row.methods || {},
+    totals: row.totals || {},
+    voided: row.voided || { count: 0, total: 0 },
+    unpaid_at_close: row.unpaid_at_close || { count: 0, total: 0 },
+
+    notes: row.notes ?? null,
+    closed_by: row.closed_by ?? null
+  };
+}
+
+/** Every cash-up the cloud holds for this tenant, oldest first so `seq` reads in order. */
+export async function pullReconciliations(client, restaurantId) {
+  const { data, error } = await client
+    .from('reconciliations')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .order('seq', { ascending: true });
+  if (error) {
+    const err = new Error(error.message || 'Supabase refused to read cash-ups');
+    err.code = error.code;
+    throw err;
+  }
+  return (data || []).map(reconciliationFromCloud);
+}
+
 function check(result) {
   if (result?.error) {
     const err = new Error(result.error.message || 'Supabase rejected the cash-up push');

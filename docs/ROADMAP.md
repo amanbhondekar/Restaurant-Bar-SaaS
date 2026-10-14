@@ -213,8 +213,11 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Cloud replication of invoices (migration 005): every issue, settlement,
   void, refund and split is pushed as a full snapshot, upserted on the hub's
   own invoice id. **Not yet run against a real Supabase project.**
-- ⬜ Restore: replication is one-way, so a reinstalled hub starts with an
-  empty ledger even though the cloud holds its history.
+- ✅ Restore: a hub with an empty ledger pulls its bills and cash-ups back
+  from the cloud at boot and on reconnect. Only ever fills, never merges —
+  a hub that holds bills is the authority on them.
+- ⬜ Repairing a *partial* ledger (some bills present, others missing) is
+  not attempted; that needs a per-bill merge rule.
 - ✅ Cloud replication of cash-up records (migration 006), inserted rather
   than upserted: a closed shift is immutable.
 - ✅ Backfill at boot for bills and cash-ups the cloud has not confirmed,

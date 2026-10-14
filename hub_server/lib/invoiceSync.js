@@ -70,6 +70,68 @@ export function invoiceRow(restaurantId, invoice) {
   };
 }
 
+/**
+ * One cloud row as the hub's on-disk invoice.
+ *
+ * The inverse of invoiceRow: hub_ref carries the hub's own id, so a restored bill keeps the
+ * identity its tickets and splits referred to. `synced_to_cloud` is true by construction -- it
+ * came from the cloud, so the cloud has it.
+ */
+export function invoiceFromCloud(row) {
+  return {
+    id: String(row.hub_ref || row.id),
+    restaurant_id: row.restaurant_id,
+    invoice_number: row.invoice_number,
+
+    table_id: row.table_id ?? null,
+    table_name: row.table_name ?? null,
+    currency: row.currency || '₹',
+
+    subtotal: Number(row.subtotal) || 0,
+    discount_total: Number(row.discount_total) || 0,
+    subtotal_after_discount: Number(row.subtotal_after_discount) || 0,
+    service_charge_percent: Number(row.service_charge_percent) || 0,
+    service_charge_amount: Number(row.service_charge_amount) || 0,
+    taxable_base: Number(row.taxable_base) || 0,
+    tax_total: Number(row.tax_total) || 0,
+    grand_total: Number(row.grand_total) || 0,
+
+    payment_status: row.payment_status || 'pending',
+    ...(row.payment_method ? { payment_method: row.payment_method } : {}),
+    ...(row.payment_ref ? { payment_ref: row.payment_ref } : {}),
+    ...(row.paid_at ? { paid_at: row.paid_at } : {}),
+    ...(row.voided_at ? { voided_at: row.voided_at } : {}),
+    ...(row.void_reason ? { void_reason: row.void_reason } : {}),
+    ...(row.refunded_at ? { refunded_at: row.refunded_at } : {}),
+    ...(row.refund_reason ? { refund_reason: row.refund_reason } : {}),
+
+    tickets: row.tickets || [],
+    ticket_ids: row.ticket_ids || [],
+    items: row.items || [],
+    tax_rows: row.tax_rows || [],
+    discount_rows: row.discount_rows || [],
+    ...(row.splits ? { splits: row.splits } : {}),
+
+    issued_at: row.issued_at,
+    synced_to_cloud: true
+  };
+}
+
+/** Every bill the cloud holds for this tenant, newest first -- the order the hub stores them in. */
+export async function pullInvoices(client, restaurantId) {
+  const { data, error } = await client
+    .from('invoices')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .order('issued_at', { ascending: false });
+  if (error) {
+    const err = new Error(error.message || 'Supabase refused to read invoices');
+    err.code = error.code;
+    throw err;
+  }
+  return (data || []).map(invoiceFromCloud);
+}
+
 function check(result) {
   if (result?.error) {
     const err = new Error(result.error.message || 'Supabase rejected the invoice push');

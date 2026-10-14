@@ -47,10 +47,22 @@ class InvoiceStore {
       .catch(err => console.error('❌ Async save invoices error:', err));
   }
 
+  /**
+   * One past the highest number this tenant has used -- not the count of bills.
+   *
+   * The two agree while the ledger is whole and nothing is ever removed, but they diverge the
+   * moment it is not: a hub restored from the cloud with one bill missing would count N-1 and
+   * reissue a number the cloud already holds. Migration 005 puts a unique index on
+   * (restaurant_id, invoice_number), so that bill would be rejected on every retry and could
+   * never sync. Deriving from the maximum keeps numbering monotonic through any gap.
+   */
   nextInvoiceNumber(restaurantId) {
-    const tenantInvoices = this.invoices.filter(i => i.restaurant_id === restaurantId);
-    const nextSeq = tenantInvoices.length + 1;
-    return `INV-${String(nextSeq).padStart(6, '0')}`;
+    const highest = this.invoices.reduce((max, inv) => {
+      if (inv.restaurant_id !== restaurantId) return max;
+      const seq = Number(String(inv.invoice_number || '').replace(/^INV-/, ''));
+      return Number.isFinite(seq) && seq > max ? seq : max;
+    }, 0);
+    return `INV-${String(highest + 1).padStart(6, '0')}`;
   }
 
   /**
