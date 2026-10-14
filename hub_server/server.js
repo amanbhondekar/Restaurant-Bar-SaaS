@@ -38,7 +38,11 @@ import { deviceAuth, requireDevice, requireReception, requireReceptionFor, isRec
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = process.env.PORT || 4000;
+// PORT=0 asks the operating system for a free port. The hub then only knows which one it got
+// once it is listening, so this and SERVER_URL are resolved in the listen callback below rather
+// than being fixed here. Everything that reads them does so while serving a request or after
+// start-up, so both are always resolved by the time they are used.
+let PORT = Number(process.env.PORT ?? 4000);
 const app = express();
 const server = http.createServer(app);
 
@@ -94,7 +98,7 @@ function getLanIp() {
 }
 
 const LAN_IP = getLanIp();
-const SERVER_URL = `http://${LAN_IP}:${PORT}`;
+let SERVER_URL = `http://${LAN_IP}:${PORT}`;
 
 // The KDS is often opened as http://<LAN-IP>:4000 on the reception laptop itself.
 // Those requests are not loopback but do come from this same machine.
@@ -1781,6 +1785,12 @@ app.get('/', async (req, res) => {
 // Start Server & Background Sync Engine
 // -------------------------------------------------------------
 server.listen(PORT, '0.0.0.0', () => {
+  // With PORT=0 the OS chose; adopt what it actually gave us before anything reports a URL.
+  PORT = server.address().port;
+  SERVER_URL = `http://${LAN_IP}:${PORT}`;
+  // Machine-readable and first, for whatever supervises this process -- the test fixture today,
+  // a Windows service wrapper later. The decorated banner below is for a human.
+  console.log(`HUB_LISTENING_PORT=${PORT}`);
   console.log(`
 ==================================================================
 🚀 RESTAURANT LOCAL HUB SERVER STARTED

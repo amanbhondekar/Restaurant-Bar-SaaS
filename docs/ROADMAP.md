@@ -161,8 +161,8 @@ is covered by automated tests.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite: 455 tests across 22 files, fixtures on
-  OS-allocated ports with a stale-hub guard.
+- ✅ Hub regression suite: 527 tests, fixtures on hub-chosen ports with a
+  stale-hub guard, 10 consecutive clean runs.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
   every push and PR.
 - ✅ Crash reporting from the hub and both PWAs into a rolling log.
@@ -275,6 +275,9 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Crash / error reporting from the hub and both PWAs.
 - ⬜ Frontend test suite (Vitest + Playwright smoke on KDS and PWA).
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
+- ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
+  there is no window between choosing a port and holding it. Runner
+  concurrency capped so the suite stops oversubscribing the machine.
 - ⬜ Hermetic test runs (the suite still writes to the repo's data dir).
 
 ### 4.9 Deployment & fleet  ⬜

@@ -49,23 +49,10 @@ const looksLikeATakenPort = err => /already in use|exited during startup/i.test(
  * directory (`{ 'invoices.json': [...] }`), both for fixtures that need more than the defaults.
  */
 export async function startHub(options = {}) {
-  if (options.port) return bootHub({ ...options, port: options.port });
-
-  let lastError;
-  // Eight rather than five: the suite now starts ten hubs at once, and a lost race is cheap to
-  // retry but expensive to debug as a one-in-fifteen red build.
-  for (let attempt = 0; attempt < 8; attempt++) {
-    try {
-      return await bootHub({ ...options, port: await reservePort() });
-    } catch (err) {
-      if (!looksLikeATakenPort(err)) throw err;
-      lastError = err;
-      // A whole suite starts its hubs at once, so a lost race usually means several are racing.
-      // Backing off spreads the retries out instead of replaying the same pile-up.
-      await sleep(100 * (attempt + 1));
-    }
-  }
-  throw lastError;
+  // Omitting `port` hands the choice to the hub itself, which binds :0 and reports what the OS
+  // gave it. There is no window between picking a port and holding it, so there is nothing to
+  // race and nothing to retry -- which is what reserving a port here could never quite achieve.
+  return bootHub({ ...options, port: options.port ?? 0 });
 }
 
 async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TESTCODE', config, files }) {
@@ -101,11 +88,23 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
       HUB_TRUST_LOOPBACK: trustLoopback ? 'true' : 'false',
       SUPABASE_URL: 'https://example.supabase.co'
     },
-    // stdout is ignored; the last 2 KB of stderr is kept so a hub that dies at startup can say why.
-    stdio: ['ignore', 'ignore', 'pipe']
+    // stdout carries the port the hub bound; the last 2 KB of stderr is kept so a hub that
+    // dies at startup can say why.
+    stdio: ['ignore', 'pipe', 'pipe']
   });
   let stderrTail = '';
   child.stderr.on('data', chunk => { stderrTail = (stderrTail + chunk).slice(-2000); });
+
+  // The hub prints this once, before its banner. With PORT=0 it is the only way to learn the
+  // port; with a fixed port it simply confirms it.
+  let boundPort = port || null;
+  let stdoutHead = '';
+  child.stdout.on('data', chunk => {
+    if (boundPort) return;
+    stdoutHead = (stdoutHead + chunk).slice(0, 4000);
+    const found = stdoutHead.match(/HUB_LISTENING_PORT=(\d+)/);
+    if (found) boundPort = Number(found[1]);
+  });
   let closed = false;
   child.once('close', () => { closed = true; });
   let spawnError = null;
@@ -116,10 +115,9 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
     if (hasExited()) for (let i = 0; i < 10 && !closed; i++) await sleep(50); // let stderr drain
     child.kill();
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    throw new Error(`hub server on port ${port} ${reason}${stderrTail.trim() ? `\n--- hub stderr ---\n${stderrTail.trim()}` : ''}`);
+    throw new Error(`hub server on port ${boundPort ?? '(never reported one)'} ${reason}${stderrTail.trim() ? `\n--- hub stderr ---\n${stderrTail.trim()}` : ''}`);
   };
 
-  const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 20000;
   for (;;) {
     if (spawnError) await fail(`could not be started: ${spawnError.message}`);
@@ -129,9 +127,10 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
       await fail(`exited during startup (exit code ${child.exitCode ?? child.signalCode}). Is the port already in use?`);
     }
     try {
+      if (!boundPort) throw new Error('not listening yet');
       // The timeout covers the body too, so a listener that accepts the connection but never
       // answers cannot hang this loop past its own deadline.
-      const info = await (await fetch(`${base}/pairing-info`, { signal: AbortSignal.timeout(1000) })).json();
+      const info = await (await fetch(`http://127.0.0.1:${boundPort}/pairing-info`, { signal: AbortSignal.timeout(1000) })).json();
       if (info?.name === hubName) break;
     } catch {
       // Nothing is listening yet, what answers is not a hub, or it did not answer within a second.
@@ -141,8 +140,8 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
   }
 
   return {
-    base,
-    port,
+    base: `http://127.0.0.1:${boundPort}`,
+    port: boundPort,
     dataDir,
     // The per-start name in hub_config.json, for tests that assert on what /pairing-info serves.
     name: hubName,
