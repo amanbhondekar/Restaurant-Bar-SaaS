@@ -100,6 +100,18 @@ function planFieldsFrom(row) {
 class HubConfig {
   constructor() {
     this.config = this.loadConfig();
+    // Seam for tests, the same one syncQueue exposes: the cloud client.
+    this.cloud = supabase;
+  }
+
+  /**
+   * Whether this hub has a cloud to ask at all. supabaseClient falls back to a placeholder
+   * project when nothing is configured, and "the cloud does not know this code" means something
+   * very different from "there is no cloud" -- see pairWithCode.
+   */
+  cloudConfigured() {
+    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+    return Boolean(url) && !url.includes('example.supabase.co');
   }
 
   loadConfig() {
@@ -182,7 +194,7 @@ class HubConfig {
     const id = this.config?.restaurant_id;
     if (!id) return { ok: false, reason: 'NOT_PAIRED' };
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.cloud
         .from('restaurants')
         .select('plan, plan_status, trial_ends_at, current_period_end')
         .eq('id', id)
@@ -228,14 +240,19 @@ class HubConfig {
     }
 
     const cleanCode = code.trim().toUpperCase();
+    // A cloud that answered is the authority on which codes exist. Only a hub with no cloud
+    // configured at all may fall back to the built-in demo tenants -- see below.
+    let cloudAnswered = false;
 
     // 1. Try querying Supabase restaurants table first
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.cloud
         .from('restaurants')
         .select('*')
         .ilike('pairing_code', cleanCode)
         .maybeSingle();
+
+      cloudAnswered = !error;
 
       if (!error && data) {
         const newConfig = {
@@ -251,13 +268,37 @@ class HubConfig {
         };
         this.saveConfig(newConfig);
         authenticateHubStaff(newConfig.restaurant_id);
-        return { success: true, restaurant: newConfig };
+        const eff = this.getEffectivePlan();
+        return {
+          success: true,
+          restaurant: newConfig,
+          // What the reception laptop should be told: a tenant provisioned on a trial is normal,
+          // but the operator needs to know it is one and when it runs out.
+          plan: { plan: eff.plan, status: eff.status, trial_ends_at: newConfig.trial_ends_at || null }
+        };
       }
     } catch (err) {
-      console.warn('ℹ️ Supabase lookup failed during pairing, falling back to local database:', err.message);
+      console.warn('ℹ️ Supabase lookup failed during pairing:', err.message);
+      cloudAnswered = false;
     }
 
-    // 2. Fallback check against local demo restaurants list
+    // 2. The built-in demo tenants, for a hub with no cloud configured.
+    //
+    // This used to run whenever the cloud lookup produced nothing, which is wrong for a
+    // self-serve product in two ways: a real restaurant pairing while its internet was down
+    // could be bound to a demo tenant instead of its own, and a cloud that positively answered
+    // "no such code" was overruled by a hardcoded list. A configured cloud is now the authority
+    // on which codes exist.
+    if (this.cloudConfigured() || cloudAnswered) {
+      return {
+        success: false,
+        error: cloudAnswered
+          ? `No restaurant found matching pairing code '${cleanCode}'`
+          : 'Could not reach the cloud to check that pairing code. Connect this laptop to the internet and try again.',
+        code: cloudAnswered ? 'UNKNOWN_PAIRING_CODE' : 'CLOUD_UNREACHABLE'
+      };
+    }
+
     const foundDemo = DEMO_RESTAURANTS.find(r => r.pairing_code.toUpperCase() === cleanCode);
     if (foundDemo) {
       const newConfig = {
@@ -276,7 +317,11 @@ class HubConfig {
       return { success: true, restaurant: newConfig };
     }
 
-    return { success: false, error: `No restaurant found matching pairing code '${cleanCode}'` };
+    return {
+      success: false,
+      error: `No restaurant found matching pairing code '${cleanCode}'`,
+      code: 'UNKNOWN_PAIRING_CODE'
+    };
   }
 }
 

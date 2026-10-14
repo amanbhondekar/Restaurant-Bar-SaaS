@@ -68,9 +68,9 @@ is covered by automated tests.
   resolved from `auth.uid()` via `staff_users`.
 - ✅ `provision_kitchen_staff` `SECURITY DEFINER` RPC, `pin_hash` via
   `pgcrypto`, per-tenant bcrypt provisioning secret.
-- ✅ Migrations `001`–`006`: secure hub provisioning, online RLS and order
+- ✅ Migrations `001`–`007`: secure hub provisioning, online RLS and order
   items, hub-authoritative menu and tables, subscription plan status, invoice and
-  cash-up cloud replication.
+  cash-up cloud replication, tenant provisioning.
 - ✅ `plan` on `restaurants` (`starter` / `pro` / `enterprise`) **enforced in
   product**, not just modelled — see §2 Tenant lifecycle.
 
@@ -247,7 +247,9 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.4 Tenant lifecycle  🟡
 - ✅ Plan model and enforcement against `restaurants.plan`.
 - ✅ Owner console: plan, limits, usage, entitlements.
-- ⬜ Self-serve tenant signup + restaurant creation flow (M3 · PR 17).
+- 🟡 Tenant provisioning: `provision_restaurant()` (migration 007) creates a
+  complete trialing tenant in one call, replacing four manual SQL steps.
+  There is still no signup surface in front of it (M3 · PR 17).
 - ⬜ Owner console: staff invites, role management, PIN rotation, hub device
   revocation (M3 · PR 18 follow-up).
 - ⬜ Billing integration (Razorpay / Stripe) for subscription (M3 · PR 19) —
@@ -316,7 +318,7 @@ Enough menu modelling to onboard restaurants beyond a flat item list.
 The product can onboard a new restaurant without engineering.
 - ✅ PR 16 — plan model + enforcement in the hub.
 - ✅ PR 18 — owner console plan view.
-- ⬜ PR 17 — tenant signup + provisioning.
+- 🟡 PR 17 — provisioning done (007); the signup surface is not.
 - ⬜ PR 19 — subscription billing (blocked on a payment-provider decision).
 - ⬜ PR 20 — Windows installer + fleet view.
 - ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
