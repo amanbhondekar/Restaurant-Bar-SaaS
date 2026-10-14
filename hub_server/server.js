@@ -389,7 +389,12 @@ async function autoPrintKot(ticketIn, pairing, opts = {}) {
   if (printers.length === 0) return; // No KOT printer configured — silent no-op.
   const ticket = { ...withCourseState(ticketIn) };
   ticket.items = opts.items || firedItems(ticket);
-  const courseLabel = ticket.staged && opts.course ? `Course ${opts.course} - fire now` : (ticket.staged ? 'Course 1' : '');
+  // A reprint has to be unmistakable. An identical second KOT landing on the pass is how a
+  // course gets cooked twice, so a recall says so on the banner instead of looking like a
+  // fresh order.
+  const courseLabel = opts.reprint
+    ? `Recall - course ${opts.course || 1} - reprint`
+    : ticket.staged && opts.course ? `Course ${opts.course} - fire now` : (ticket.staged ? 'Course 1' : '');
   const held = heldSummary(withCourseState(ticketIn));
   // Split by station (M2 · PR 15). A ticket with items across hot / cold /
   // bar produces multiple KOTs, one per station, each carrying only its
@@ -511,7 +516,10 @@ app.post('/orders/:id/stations/:station/ready', requireDevice, (req, res) => {
 });
 
 // 5c. POST /orders/:id/fire — send the next held course (or body.course) to the kitchen.
-app.post('/orders/:id/fire', requireDevice, (req, res) => {
+// Course firing is M2 menu-depth, gated like the rest of it. Recall is deliberately NOT gated:
+// it undoes a mistake on a ticket that is already on the pass, and refusing that would leave a
+// kitchen stuck mid-service -- which is the one thing plan enforcement must never do.
+app.post('/orders/:id/fire', requireDevice, requireFeature(FEATURES.COURSE_FIRING), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
   const result = ticketStore.fireCourse(req.params.id, pairing.restaurant_id, body.course);
@@ -538,6 +546,13 @@ app.post('/orders/:id/recall', requireDevice, (req, res) => {
   console.log(`↩︎ Recalled #${ticket.ticket_number} (course ${result.recalled_course})`);
   broadcastTicketChange('TICKET_RECALLED', ticket, { course: result.recalled_course });
   syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id);
+  // The paper KOT for this course was spiked when the course was marked ready, so without this
+  // the kitchen is asked to cook again from memory. Fire already reprints; recall now matches it.
+  autoPrintKot(ticket, pairing, {
+    items: result.recalled_items,
+    course: result.recalled_course,
+    reprint: true
+  }).catch(() => {});
   res.json({ success: true, ticket, recalled_course: result.recalled_course });
 });
 

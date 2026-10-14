@@ -510,3 +510,49 @@ test('catalog: the editor form round-trips the course and leaves it out when bla
   const v = validateForm({ ...blankForm('A'), name: 'X', isVeg: true, price: '10', course: '12' });
   assert.ok(JSON.stringify(v).includes('Choose a course from 1 to 9'));
 });
+
+// --- recall reprints the KOT (M2 leftover) -----------------------------------------------------
+
+test('recall: the recalled course comes back with its lines, so the caller can reprint them', () => {
+  const t = stagedTicket(MIXED);
+  let s = markAllReady(t, T(8)).ticket;
+  s = fireCourse(s, undefined, T(15)).ticket;
+  s = markStationReady(s, 'hot', T(22)).ticket;
+
+  const r = recallTicket(s, T(23));
+  assert.equal(r.recalled_course, 2);
+  assert.ok(Array.isArray(r.recalled_items) && r.recalled_items.length > 0);
+  assert.ok(r.recalled_items.every(l => (l.course ?? 1) === 2), 'only the recalled course comes back');
+  // Same derivation fireCourse uses, so a reprint carries exactly what was fired.
+  assert.deepEqual(
+    r.recalled_items.map(l => l.name).sort(),
+    fireCourse(markAllReady(stagedTicket(MIXED), T(8)).ticket, undefined, T(15)).fired_items.map(l => l.name).sort()
+  );
+});
+
+test('hub: recalling a ready course reprints its KOT, marked so the kitchen cannot mistake it', async () => {
+  const res = await call('/orders', {
+    method: 'POST',
+    body: { table_id: 2, table_name: 'T2', items: [{ id: 's1', qty: 1 }] }
+  });
+  assert.equal(res.status, 201);
+  const ticket = (await json(res)).ticket;
+  await until(() => sinks.hot.text().includes('Veg Crispy'));
+
+  assert.equal((await call(`/orders/${ticket.id}/ready`, { method: 'POST' })).status, 200);
+  const recalled = await call(`/orders/${ticket.id}/recall`, { method: 'POST' });
+  assert.equal(recalled.status, 200);
+
+  // The paper KOT was spiked when the course was marked ready; without a reprint the kitchen
+  // is asked to cook from memory. Waiting on the banner itself rather than on the byte count:
+  // the sink is a stream, so a length taken mid-ticket is not a ticket boundary.
+  await until(() => /RECALL/i.test(sinks.hot.text()));
+  const printed = sinks.hot.text();
+  // An identical second KOT on the pass is how a course gets cooked twice.
+  assert.match(printed, /RECALL/i, 'the reprint says it is a recall');
+  assert.match(printed, /REPRINT/i);
+  // The sinks accumulate across this whole file, so look only at the ticket that carries the
+  // banner: the recalled lines have to be on that one, not merely somewhere in the stream.
+  const recallTicketText = printed.slice(printed.search(/RECALL/i));
+  assert.match(recallTicketText, /Veg Crispy/, 'the recalled lines are on the reprinted ticket');
+});

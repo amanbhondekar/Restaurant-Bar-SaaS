@@ -113,35 +113,35 @@ test('csvToRows reads a CSV file the way the importer expects it', () => {
 // ---------------------------------------------------------------- menuToCsv
 
 test('MENU_COLUMNS is the importer\'s column order', () => {
-  assert.deepEqual(MENU_COLUMNS, ['id', 'name', 'category', 'price', 'veg', 'available', 'station', 'variants']);
+  assert.deepEqual(MENU_COLUMNS, ['id', 'name', 'category', 'price', 'veg', 'available', 'station', 'course', 'variants']);
 });
 
 test('menuToCsv writes a BOM, a header and one CRLF-terminated row per item', () => {
   const csv = menuToCsv({ categories: ['Main'], items: [{ id: 'm1', name: 'Dal Tadka', category: 'Main', price: 190, isVeg: true, available: true }] });
-  assert.equal(csv, '\uFEFFid,name,category,price,veg,available,station,variants\r\nm1,Dal Tadka,Main,190,yes,yes,,\r\n');
+  assert.equal(csv, '\uFEFFid,name,category,price,veg,available,station,course,variants\r\nm1,Dal Tadka,Main,190,yes,yes,,,\r\n');
 });
 
 test('menuToCsv of an empty menu is the header alone', () => {
-  assert.equal(menuToCsv({ categories: [], items: [] }), '\uFEFFid,name,category,price,veg,available,station,variants\r\n');
-  assert.equal(menuToCsv(undefined), '\uFEFFid,name,category,price,veg,available,station,variants\r\n');
+  assert.equal(menuToCsv({ categories: [], items: [] }), '\uFEFFid,name,category,price,veg,available,station,course,variants\r\n');
+  assert.equal(menuToCsv(undefined), '\uFEFFid,name,category,price,veg,available,station,course,variants\r\n');
 });
 
 test('menuToCsv: veg and available as yes/no, station only when it is a known one, variants as Label:price|Label:price', () => {
   const csv = menuToCsv({
     categories: ['A'],
     items: [
-      { id: 'a', name: 'Veg on', category: 'A', price: 10, isVeg: true, available: true, station: 'bar' },
-      { id: 'b', name: 'Non-veg off', category: 'A', price: 20.5, isVeg: false, available: false, station: 'grill' },
+      { id: 'a', name: 'Veg on', category: 'A', price: 10, isVeg: true, available: true, station: 'bar', course: 2 },
+      { id: 'b', name: 'Non-veg off', category: 'A', price: 20.5, isVeg: false, available: false, station: 'grill', course: 99 },
       { id: 'c', name: 'Half and full', category: 'A', price: 280, isVeg: true, available: true,
         variants: [{ id: 'h', label: 'Half', price: 180 }, { id: 'f', label: 'Full', price: 280, available: false }] },
       { id: 'd', name: 'No price yet', category: 'A', price: 0, isVeg: true }
     ]
   });
   assert.deepEqual(parseCsv(csv).slice(1), [
-    ['a', 'Veg on', 'A', '10', 'yes', 'yes', 'bar', ''],
-    ['b', 'Non-veg off', 'A', '20.5', 'no', 'no', '', ''],
-    ['c', 'Half and full', 'A', '280', 'yes', 'yes', '', 'Half:180|Full:280'],
-    ['d', 'No price yet', 'A', '', 'yes', 'yes', '', '']
+    ['a', 'Veg on', 'A', '10', 'yes', 'yes', 'bar', '2', ''],
+    ['b', 'Non-veg off', 'A', '20.5', 'no', 'no', '', '', ''],
+    ['c', 'Half and full', 'A', '280', 'yes', 'yes', '', '', 'Half:180|Full:280'],
+    ['d', 'No price yet', 'A', '', 'yes', 'yes', '', '', '']
   ]);
 });
 

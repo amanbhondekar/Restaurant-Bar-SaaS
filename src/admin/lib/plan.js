@@ -8,7 +8,8 @@ export const FEATURE_LABEL = {
   refunds: 'Refunds',
   modifiers: 'Dish options (spice, extras)',
   day_part_pricing: 'Day-part pricing',
-  multi_station_kot: 'Multi-station kitchen tickets'
+  multi_station_kot: 'Multi-station kitchen tickets',
+  course_firing: 'Serve in courses (hold and fire)'
 };
 
 export const LIMIT_LABEL = { devices: 'Waiter handsets', waiters: 'Waiters', tables: 'Tables', printers: 'Printers' };

@@ -177,9 +177,10 @@ is covered by automated tests.
 - 🟡 **Inventory**: the M2 leftover. There are no `inventory_items` or
   `recipes` tables, so 86'd is set by hand in the editor rather than driven
   by stock-out.
-- 🟡 **Kitchen operations tail**: recall does not reprint a ticket; course
-  state is not replicated to Supabase (only ticket status is); firing is
-  not plan-gated; CSV import/export carries no course column.
+- 🟡 **Kitchen operations tail**: course state is still not replicated to
+  Supabase (only ticket status is), and station screens are a filter on one
+  display rather than per-station KDS instances. Recall now reprints, firing
+  is plan-gated, and the CSV carries course.
 - 🟡 **Billing replication is one-way and unproven**: bills and cash-ups now
   push to the cloud (005, 006) and a boot backfill carries up anything the
   cloud has not confirmed, but nothing has run against a real Supabase
@@ -239,7 +240,7 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.3 Kitchen operations  🟡
 - ✅ Multi-station routing, course firing / hold-and-fire, prep-time
   telemetry, ticket recall.
-- ⬜ Reprint on recall.
+- ✅ Reprint on recall, banner-marked so a reprint cannot be mistaken for a new order.
 - ⬜ Per-station KDS *instances* (today a station screen is a filter on the
   one display, reached as `/?station=bar`).
 - ⬜ Course state replicated to the cloud.

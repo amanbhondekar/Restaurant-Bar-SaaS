@@ -4,7 +4,7 @@
 // so the export doubles as the template and as a backup.
 
 /** The columns the hub's importer understands, in the order the export writes them. */
-export const MENU_COLUMNS = ['id', 'name', 'category', 'price', 'veg', 'available', 'station', 'variants'];
+export const MENU_COLUMNS = ['id', 'name', 'category', 'price', 'veg', 'available', 'station', 'course', 'variants'];
 
 // Mirrors STATIONS in hub_server/lib/menuAdmin.js (the importer refuses anything else).
 const STATIONS = ['hot', 'cold', 'bar'];
@@ -132,6 +132,9 @@ export function menuToCsv(menu) {
       item.isVeg === false ? 'no' : 'yes',
       item.available === false ? 'no' : 'yes',
       STATIONS.includes(station) ? station : '',
+      // Blank means the default (course 1), matching what the editor shows and what a blank
+      // cell means to the importer: leave it alone.
+      Number.isInteger(item.course) && item.course >= 1 && item.course <= 9 ? String(item.course) : '',
       variants
     ].map(csvField).join(','));
   }

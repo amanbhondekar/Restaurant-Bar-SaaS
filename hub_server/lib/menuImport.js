@@ -34,6 +34,9 @@ const VIEW = {
   isVeg: i => i.isVeg,
   available: i => i.available !== false,
   station: i => i.station || 'hot',
+  // Course defaults to 1 the same way station defaults to 'hot': the export writes a blank for
+  // course 1, so re-importing that file must not read as a change.
+  course: i => i.course || 1,
   variants: i => (i.variants || []).map(v => [v.id, v.label, v.price, v.available !== false])
 };
 
@@ -178,6 +181,18 @@ function processRow(raw, idx, menu, catMap, seen, usedIds, idGen, finalKeys) {
   if (stationCell) {
     if (!STATIONS.includes(stationCell)) errors.push(`station must be one of ${STATIONS.join(', ')}`);
     else item.station = stationCell;
+  }
+
+  // Serving course, 1-9 (1 starters, 2 mains, 3 desserts). A blank cell leaves an existing
+  // dish's course alone and gives a new dish the default, exactly like every other column here.
+  const courseCell = cell('course');
+  if (courseCell) {
+    const course = Number(courseCell);
+    if (!Number.isInteger(course) || course < 1 || course > 9) {
+      errors.push('course must be a whole number from 1 to 9');
+    } else {
+      item.course = course;
+    }
   }
 
   if (name || existing) {

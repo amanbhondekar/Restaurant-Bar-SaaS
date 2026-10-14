@@ -34,7 +34,8 @@ export const FEATURES = Object.freeze({
   REFUNDS: 'refunds',
   MODIFIERS: 'modifiers',
   DAY_PART_PRICING: 'day_part_pricing',
-  MULTI_STATION_KOT: 'multi_station_kot'
+  MULTI_STATION_KOT: 'multi_station_kot',
+  COURSE_FIRING: 'course_firing'
 });
 
 export const PLANS = Object.freeze({
@@ -47,7 +48,8 @@ export const PLANS = Object.freeze({
       refunds: false,
       modifiers: false,
       day_part_pricing: false,
-      multi_station_kot: false
+      multi_station_kot: false,
+      course_firing: false
     }
   },
   pro: {
@@ -59,7 +61,8 @@ export const PLANS = Object.freeze({
       refunds: true,
       modifiers: true,
       day_part_pricing: true,
-      multi_station_kot: true
+      multi_station_kot: true,
+      course_firing: true
     }
   },
   enterprise: {
@@ -71,7 +74,8 @@ export const PLANS = Object.freeze({
       refunds: true,
       modifiers: true,
       day_part_pricing: true,
-      multi_station_kot: true
+      multi_station_kot: true,
+      course_firing: true
     }
   }
 });

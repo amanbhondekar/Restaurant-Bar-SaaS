@@ -369,3 +369,45 @@ test('NO_VALID_ROWS: an unchanged row still counts as valid, and one valid row a
   assert.equal(mixed.meta.skipped, 1);
   assert.equal(mixed.data.items.find(i => i.id === 'm1').price, 240);
 });
+
+// --- the course column (M2 leftover) -----------------------------------------------------------
+
+test('course: a valid course is applied to a new dish', () => {
+  const rows = [{ name: 'Gajar Halwa', category: 'Desserts', price: '120', veg: 'yes', course: '3' }];
+  const result = applyImport(menu(), rows, { mode: 'merge' });
+  assert.equal(result.ok, true);
+  const added = result.data.items.find(i => i.name === 'Gajar Halwa');
+  assert.equal(added.course, 3);
+});
+
+test('course: an existing dish can be moved to another course', () => {
+  const rows = [{ id: 'm1', name: 'Paneer Tikka', category: 'Starters', price: '230', course: '2' }];
+  const p = previewImport(menu(), rows);
+  assert.equal(p.rows[0].status, 'updated');
+  const result = applyImport(menu(), rows, { mode: 'merge' });
+  assert.equal(result.data.items.find(i => i.id === 'm1').course, 2);
+});
+
+test('course: a blank cell leaves an existing dish alone, like every other column', () => {
+  const base = menu();
+  base.items[0].course = 2;
+  const rows = [{ id: 'm1', name: 'Paneer Tikka', category: 'Starters', price: '230', course: '' }];
+  const result = applyImport(base, rows, { mode: 'merge' });
+  assert.equal(result.data.items.find(i => i.id === 'm1').course, 2, 'blank is "leave it", not "reset it"');
+});
+
+test('course: out of range, zero and non-numeric are errors rather than silent defaults', () => {
+  // Silently coercing a typo to course 1 would reorder a restaurant's service without telling
+  // anyone, which is exactly the kind of quiet wrong this importer reports instead.
+  for (const bad of ['0', '10', '-1', '2.5', 'main', ' ']) {
+    const p = previewImport(menu(), [{ name: 'X', category: 'Mains', price: '10', course: bad }]);
+    assert.equal(p.rows[0].status, 'error', `course '${bad}' should be refused`);
+  }
+});
+
+test('course: the column is optional, so a file written before it still imports', () => {
+  const rows = [{ name: 'Jeera Rice', category: 'Mains', price: '140', veg: 'yes' }];
+  const result = applyImport(menu(), rows, { mode: 'merge' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.items.find(i => i.name === 'Jeera Rice').course, undefined);
+});

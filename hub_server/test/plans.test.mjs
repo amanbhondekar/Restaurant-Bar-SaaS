@@ -302,7 +302,9 @@ test('hub: split-bill and refund routes return 403 PLAN_FEATURE_UNAVAILABLE on s
     ['/invoices/any/split-by-seats', { count: 2 }, 'split_bill'],
     ['/invoices/any/split-by-items', { assignments: [] }, 'split_bill'],
     ['/invoices/any/split-by-amounts', { shares: [] }, 'split_bill'],
-    ['/invoices/any/refund', { reason: 'test' }, 'refunds']
+    ['/invoices/any/refund', { reason: 'test' }, 'refunds'],
+    // The gate runs before the handler, so this 403s whether or not the ticket exists.
+    ['/orders/any/fire', { course: 2 }, 'course_firing']
   ];
   for (const [route, payload, feature] of cases) {
     const res = await api(route, { token: tokens[0], method: 'POST', body: JSON.stringify(payload) });
@@ -323,4 +325,14 @@ test('hub: core flows are never blocked by a degraded plan (order entry, bill pr
   assert.ok(tickets.length >= 1);
   const kot = await api(`/orders/${tickets[0].id}/print-kot`, { token: tokens[0], method: 'POST' });
   assert.equal(kot.status, 200);
+});
+
+test('hub: recall is never plan-gated, even though firing is', async () => {
+  // Firing a course is menu depth and is gated. Recall undoes a mistake on a ticket already
+  // on the pass, so refusing it would strand a kitchen mid-service -- the one thing plan
+  // enforcement must never do. This tenant is degraded to starter, which has no course_firing.
+  const res = await api('/orders/any/recall', { token: tokens[0], method: 'POST' });
+  assert.notEqual(res.status, 403, 'recall must not be refused over a plan');
+  const body = await res.json();
+  assert.notEqual(body.code, 'PLAN_FEATURE_UNAVAILABLE');
 });

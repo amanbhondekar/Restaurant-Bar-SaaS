@@ -218,7 +218,10 @@ export function recallTicket(input, nowIso) {
   const { ready_at: _gone, ...rest } = entry;
   const course_log = { ...ticket.course_log, [latest]: { ...rest, stations_ready: {}, recalled_at: nowIso, recall_count: (entry.recall_count || 0) + 1 } };
   const next = derive({ ...ticket, course_log, updated_at: nowIso });
-  return { ok: true, ticket: next, recalled_course: latest };
+  // The lines that are being cooked again, so the caller can reprint them -- same derivation
+  // fireCourse uses for fired_items.
+  const recalled_items = ticket.items.filter(l => groupOf(ticket, l) === latest);
+  return { ok: true, ticket: next, recalled_course: latest, recalled_items };
 }
 
 /**
