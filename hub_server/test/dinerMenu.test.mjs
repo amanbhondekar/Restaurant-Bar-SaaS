@@ -253,3 +253,62 @@ test('hub: the table QR is reception-only, even though the menu behind it is pub
     handset.stop();
   }
 });
+
+test('hub: the printable sheet carries one code per table, and is reception-only', async () => {
+  const { startHub, call: hubCall, RESTAURANT_ID } = await import('./helpers/spawnHub.mjs');
+  const MENU = {
+    restaurant_id: RESTAURANT_ID, categories: ['Starters'],
+    items: [{ id: 'm1', name: 'Paneer Tikka', price: 230, category: 'Starters', isVeg: true, available: true }]
+  };
+  // A name with an apostrophe and one with angle brackets: the first is a real restaurant's
+  // table ("Chef's Table"), the second is what an admin console will happily accept.
+  const TABLES = {
+    restaurant_id: RESTAURANT_ID,
+    tables: [
+      { id: 1, name: 'T1', section: 'Main Hall', capacity: 4 },
+      { id: 2, name: "Chef's Table", section: 'Main Hall', capacity: 2 },
+      { id: 3, name: '<script>x</script>', section: 'Terrace', capacity: 4 }
+    ]
+  };
+
+  const reception = await startHub({ trustLoopback: true, menu: MENU, tables: TABLES });
+  const handset = await startHub({ trustLoopback: false, menu: MENU, tables: TABLES });
+
+  try {
+    assert.equal((await fetch(`${handset.base}/qr/diner/sheet`)).status, 403,
+      'the sheet embeds the hub address, so a guest phone must not get it');
+
+    const res = await hubCall(reception, '/qr/diner/sheet');
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/html/);
+    const html = await res.text();
+
+    assert.equal((html.match(/data:image\/png;base64,/g) || []).length, 3, 'one code per table');
+    assert.match(html, /Main Hall/);
+    assert.match(html, /Terrace/);
+
+    // Escaped, not dropped: the table is still printable, it just cannot break the page.
+    assert.match(html, /Chef&#39;s Table/);
+    assert.ok(!html.includes('<script>x</script>'), 'a table name must not become markup');
+    assert.match(html, /&lt;script&gt;/);
+  } finally {
+    reception.stop();
+    handset.stop();
+  }
+});
+
+test('hub: a hub with no tables says so rather than printing an empty page', async () => {
+  const { startHub, call: hubCall, RESTAURANT_ID } = await import('./helpers/spawnHub.mjs');
+  const hub = await startHub({
+    trustLoopback: true,
+    menu: { restaurant_id: RESTAURANT_ID, categories: [], items: [] },
+    tables: { restaurant_id: RESTAURANT_ID, tables: [] }
+  });
+  try {
+    const html = await (await hubCall(hub, '/qr/diner/sheet')).text();
+    assert.match(html, /nothing to print/i);
+    assert.ok(!html.includes('data:image/png'));
+  } finally {
+    hub.stop();
+  }
+});

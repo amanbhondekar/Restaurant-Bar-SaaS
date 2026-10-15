@@ -1558,6 +1558,89 @@ app.get('/qr', async (req, res) => {
   }
 });
 
+/**
+ * Text going into server-rendered HTML. Table names are the restaurant's own, typed in the admin
+ * console, so this is not guarding against an attacker so much as against an apostrophe in
+ * "Chef's Table" quietly breaking the page it is printed on.
+ */
+const escapeHtml = value => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+// GET /qr/diner/sheet — every table's code on one printable page, for reception.
+//
+// Server-rendered rather than another React entry: its whole job is to come out of a printer
+// correctly, and the laptop that prints it is the only thing that may see it.
+app.get('/qr/diner/sheet', async (req, res) => {
+  if (!isReceptionRequest(req)) {
+    return res.status(403).json({ error: 'Table QR codes are only available on the reception laptop.', code: 'RECEPTION_ONLY' });
+  }
+  const pairing = hubConfig.getPairingInfo();
+  const layout = restaurantCache.getTablesCache(pairing.restaurant_id);
+  const tables = Array.isArray(layout?.tables) ? layout.tables : [];
+
+  try {
+    const cards = await Promise.all(tables.map(async t => {
+      const label = String(t.name ?? t.id ?? '');
+      const url = `${SERVER_URL}/diner?t=${encodeURIComponent(label)}`;
+      const qr = await QRCode.toDataURL(url, { width: 420, margin: 1, errorCorrectionLevel: 'M' });
+      return `
+        <figure class="card">
+          <img src="${qr}" alt="QR code for table ${escapeHtml(label)}">
+          <figcaption>
+            <strong>${escapeHtml(label)}</strong>
+            <span>${escapeHtml(t.section || '')}</span>
+          </figcaption>
+          <p class="hint">Scan for the menu</p>
+        </figure>`;
+    }));
+
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Table codes — ${escapeHtml(pairing.name || 'Restaurant')}</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 1.5rem; background: #fff; color: #111;
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { margin-bottom: 1.25rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.25rem; }
+  .muted { color: #666; font-size: .875rem; margin: 0; }
+  .sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 1rem; }
+  .card { margin: 0; border: 1px dashed #bbb; border-radius: .5rem; padding: .75rem; text-align: center; }
+  .card img { width: 100%; height: auto; display: block; }
+  figcaption { display: flex; flex-direction: column; margin-top: .4rem; }
+  figcaption strong { font-size: 1.05rem; }
+  figcaption span { color: #666; font-size: .8rem; }
+  .hint { margin: .3rem 0 0; font-size: .75rem; color: #444; }
+  .empty { color: #666; }
+  @media print {
+    /* The dashed border is the cut line, so it has to survive the printer's colour dropping. */
+    body { padding: 0; }
+    header { display: none; }
+    .card { break-inside: avoid; page-break-inside: avoid; border-color: #999; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>${escapeHtml(pairing.name || 'Restaurant')} — table codes</h1>
+    <p class="muted">Print, cut along the dashed lines and put one on each table. A guest scans it to read the menu; they must be on the restaurant's wifi.</p>
+  </header>
+  ${tables.length ? `<div class="sheet">${cards.join('')}</div>` : '<p class="empty">This hub has no tables yet, so there is nothing to print.</p>'}
+</body>
+</html>`);
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to generate the table codes' });
+  }
+});
+
 // GET /qr/diner?table=4 — the code that goes on a table, for reception to print or display.
 //
 // Reception-only even though what it points at is public: the code embeds this hub's LAN

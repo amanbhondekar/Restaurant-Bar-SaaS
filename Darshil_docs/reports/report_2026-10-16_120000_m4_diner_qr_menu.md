@@ -114,11 +114,6 @@ the restaurant's order, veg/non-veg marks, prices right-aligned and tabular, no 
   this one is on for everybody because whether a diner QR menu is a Starter feature or a Pro one
   is a pricing decision, not a technical one. Adding the flag later is the same one-liner the
   other features use.
-- **No printable sheet.** `/qr/diner` returns one code as a data URL; there is no "print a code
-  for every table" page, so a restaurant with twelve tables currently fetches twelve codes by
-  hand. That is the obvious next piece of UI and is not built.
-- **Nothing links to it.** Neither the KDS nor the admin console shows the diner QR anywhere — the
-  endpoint exists but a user has to know the URL. It belongs on the Tables tab.
 - **The guest's phone must be on the restaurant's wifi.** Inherent to the LAN-first architecture,
   but worth saying plainly: a code on the table is useless to a guest on mobile data. A
   cloud-served menu would fix that and is a different design.
@@ -127,6 +122,30 @@ the restaurant's order, veg/non-veg marks, prices right-aligned and tabular, no 
 - The 30-second `Cache-Control` means an 86'd dish can linger on a guest's screen for up to half a
   minute after the kitchen pulls it.
 
+## ADDENDUM — the printable sheet and the link (same day)
+
+The two gaps this report listed as not done are closed.
+
+`GET /qr/diner/sheet` renders every table's code on one printable page: a card per table with
+its name and section, dashed cut lines, and `break-inside: avoid` so the printer does not split
+one in half. Server-rendered rather than another React entry, because its whole job is to come
+out of a printer correctly and the laptop that prints it is the only thing that may see it. The
+page header is hidden under `@media print` so the paper carries only the codes.
+
+This put restaurant-typed text into server-rendered HTML for the first time, which needed an
+`escapeHtml` the file did not have. The risk is less an attacker than an apostrophe: "Chef's
+Table" is an ordinary name and would have broken the page it is printed on. A test asserts both
+that such a name survives escaped and that `<script>` in a table name does not become markup.
+
+The Tables tab now links to it, which is where someone setting up a floor plan would look.
+
+Two more tests (553 total). Verified against the pilot hub: 12 cards rendered, the encoded URL
+resolves to `http://192.168.1.8:4000/diner?t=T1`, and that page serves 200.
+
+Still open from the list below: no ordering or payment, not plan-gated, guests must be on the
+restaurant's wifi, and no allergen information.
+
 ## STATUS
 
-✅ VERIFIED — 551/551, build clean, checked on a phone viewport in both colour schemes.
+✅ VERIFIED — 553/553 (and under TZ=UTC as CI runs it), build clean, checked on a phone viewport
+in both colour schemes and the print sheet against the pilot hub's 12 tables.

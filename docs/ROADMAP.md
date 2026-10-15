@@ -261,7 +261,8 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Diner QR menu, view-only: a table code opens a read-only menu served
   by the hub over the restaurant's own wifi. Effective (day-part) prices,
   86'd dishes hidden, built from an allow-list so the cache cannot leak
-  into it. No printable code sheet and nothing links to it yet.
+  into it. Reception prints a sheet of one code per table from the Tables
+  tab.
 - ⬜ Order-and-pay from that menu (blocked with PR 19 on the payment
   provider decision).
 - ⬜ Loyalty / repeat-visit identifier.
