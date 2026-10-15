@@ -4,6 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// The cache logs every save, reconnect and sync, and this file exercises all three many times
+// over. On Node 20 that volume of interleaved stdout from a test child corrupts the test runner's
+// own IPC framing -- the whole file dies with "Unable to deserialize cloned data" before a single
+// assertion is reported. The subject's logging is not what is under test here.
+//
+// console.warn is deliberately left alone: one test below captures warnings to assert on them.
+console.log = () => {};
+
 const RID = '11111111-1111-1111-1111-111111111111';
 let dir;
 let cache;
