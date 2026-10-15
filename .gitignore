@@ -49,3 +49,6 @@ hub_server/data/sync_queue.corrupt-*.json
 
 # Waiter records: names plus scrypt PIN hashes, seeded on first boot. Local to each hub.
 hub_server/data/waiters.json
+
+# Guest feedback left from the diner menu. Local to each hub, like the invoices it references.
+hub_server/data/feedback.json

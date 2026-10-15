@@ -30,6 +30,7 @@ import { addItem, updateItem, deleteItem, addCategory, renameCategory, reorderCa
 import { previewImport, applyImport } from './lib/menuImport.js';
 import { applyLayout } from './lib/tablesAdmin.js';
 import { publicMenu } from './lib/dinerMenu.js';
+import { feedbackStore, validateFeedback, BILL_WINDOW_MS } from './lib/feedbackStore.js';
 import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js';
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
@@ -634,6 +635,65 @@ app.get('/public/menu', (req, res) => {
     success: true,
     restaurant: { name: pairing.name || 'Restaurant', currency: pairing.currency || '₹' },
     ...publicMenu(menuData, new Date())
+  });
+});
+
+// 5b-3. POST /public/feedback — a guest rates their meal (M4 · 4.5).
+//
+// The hub's only unauthenticated WRITE, so it is deliberately narrow: a rating, an optional
+// comment, and the table from the code they scanned. Nothing else is read from the body.
+//
+// The bill is resolved here rather than sent by the guest. A guest cannot see or guess an invoice,
+// and asking them to name one would hand an unauthenticated caller a way to probe the ledger --
+// so the hub finds the table's own most recently settled bill and stamps it. Reception learns
+// which meal a comment is about; the guest learns nothing.
+app.post('/public/feedback', (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+  const checked = validateFeedback(body);
+  if (!checked.ok) {
+    return res.status(400).json({ success: false, error: checked.errors[0], errors: checked.errors, code: 'INVALID_FEEDBACK' });
+  }
+
+  // Carried from the QR, same rule as the diner page: a label, never trusted, never a lookup key
+  // beyond matching a table we already know about.
+  const raw = body.table === undefined ? '' : String(body.table).trim().slice(0, 20);
+  const table = /^[A-Za-z0-9 _-]*$/.test(raw) ? raw : '';
+
+  if (feedbackStore.isCoolingDown(pairing.restaurant_id, table || null)) {
+    return res.status(429).json({ success: false, error: 'Thanks — we have already got your feedback for this table.', code: 'ALREADY_SUBMITTED' });
+  }
+
+  // The table's own most recent settled bill, within the window. Never exposed in the response.
+  const since = Date.now() - BILL_WINDOW_MS;
+  const invoice = table
+    ? invoiceStore.listInvoices(pairing.restaurant_id)
+        .filter(inv => String(inv.table_name ?? inv.table_id) === table && inv.paid_at && new Date(inv.paid_at).getTime() >= since)
+        .sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at)))[0] || null
+    : null;
+
+  const entry = feedbackStore.add({
+    restaurantId: pairing.restaurant_id,
+    table: table || null,
+    rating: checked.rating,
+    comment: checked.comment,
+    invoice
+  });
+
+  console.log(`⭐ Feedback ${entry.rating}/5 from ${entry.table || 'the floor'}${entry.invoice_number ? ` (${entry.invoice_number})` : ''}`);
+  broadcast('FEEDBACK_RECEIVED', { rating: entry.rating, table: entry.table });
+  // Deliberately thin: a guest gets an acknowledgement, not a record id they could enumerate.
+  res.status(201).json({ success: true });
+});
+
+// GET /feedback — what guests have said. Reception only; this is the restaurant's own mail.
+app.get('/feedback', requireReceptionFor('Guest feedback'), (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  res.json({
+    success: true,
+    ...feedbackStore.summary(pairing.restaurant_id),
+    entries: feedbackStore.list(pairing.restaurant_id, req.query.limit)
   });
 });
 

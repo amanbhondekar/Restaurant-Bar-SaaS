@@ -266,7 +266,11 @@ milestones (§5) when a theme is pulled into a release.
 - ⬜ Order-and-pay from that menu (blocked with PR 19 on the payment
   provider decision).
 - ⬜ Loyalty / repeat-visit identifier.
-- ⬜ Feedback capture at bill-close.
+- ✅ Feedback at bill-close: a guest rates their meal on the diner page and
+  the hub attaches it to that table's own settled bill server-side, so
+  reception knows which meal it is about without the guest ever seeing a
+  bill. Reception reads it at GET /feedback; no UI for it yet, and it is
+  not replicated to the cloud.
 
 ### 4.6 Reservations & waitlist  ⬜
 - Time-slot reservations independent of walk-in waitlist.

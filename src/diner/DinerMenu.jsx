@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
+import { Feedback } from './Feedback';
+
 // The menu a guest sees after scanning the code on their table (M4 · diner QR menu).
 //
 // Read-only on purpose: ordering and paying from here is the next slice and needs a payment
@@ -107,6 +109,9 @@ export function DinerMenu() {
           </ul>
         </section>
       ))}
+
+      {/* After the menu, not before it: a guest reading the menu has not eaten yet. */}
+      <Feedback table={table} />
 
       <footer className="foot">
         <p className="muted">Prices include all taxes shown on your bill. To order, please ask a member of staff.</p>
