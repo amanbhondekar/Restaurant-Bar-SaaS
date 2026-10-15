@@ -9,7 +9,11 @@ import { publicItem, publicMenu } from '../lib/dinerMenu.js';
 // The menu a guest sees (M4 · diner QR menu). This is the hub's only unauthenticated read, so
 // most of what matters here is what does NOT come out.
 
-const at = hhmm => new Date(`2026-10-16T${hhmm}:00+05:30`);
+// A day-part window is wall-clock time in the restaurant's own timezone: resolveActiveDayPart
+// compares against getHours(). So these have to be built as LOCAL times, not pinned to an offset
+// -- "17:30+05:30" is 12:00 in CI's UTC and falls outside a 16:00-19:00 happy hour, which is
+// exactly how the first version of these two tests passed here and failed there.
+const at = (hh, mm = 0) => new Date(2026, 9, 16, hh, mm, 0, 0);
 
 const dish = (over = {}) => ({
   id: 'm1',
@@ -38,7 +42,7 @@ test('diner menu: the day-part schedule never reaches the guest', () => {
   // the late-night markup is -- is pricing strategy and stays inside.
   const out = publicItem(dish({
     day_parts: [{ id: 'dp_hh', label: 'Happy hour', starts_at: '16:00', ends_at: '19:00', price: 150 }]
-  }), at('12:00'));
+  }), at(12));
   assert.equal(out.day_parts, undefined);
   assert.equal(out.price, 230);
 });
@@ -89,8 +93,8 @@ test('diner menu: the price shown is the one that would be charged right now', (
   const happyHour = dish({
     day_parts: [{ id: 'dp_hh', label: 'Happy hour', starts_at: '16:00', ends_at: '19:00', price: 150 }]
   });
-  assert.equal(publicItem(happyHour, at('17:30')).price, 150);
-  assert.equal(publicItem(happyHour, at('12:00')).price, 230);
+  assert.equal(publicItem(happyHour, at(17, 30)).price, 150);
+  assert.equal(publicItem(happyHour, at(12)).price, 230);
 });
 
 test('diner menu: a day-part price applies to sizes too', () => {
@@ -102,7 +106,7 @@ test('diner menu: a day-part price applies to sizes too', () => {
       price: 150, variant_prices: { v_h: 90, v_f: 150 }
     }]
   });
-  assert.deepEqual(publicItem(item, at('17:30')).variants.map(v => v.price), [90, 150]);
+  assert.deepEqual(publicItem(item, at(17, 30)).variants.map(v => v.price), [90, 150]);
 });
 
 // --- options ------------------------------------------------------------------------------
