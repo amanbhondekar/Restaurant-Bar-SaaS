@@ -30,6 +30,7 @@ early pilots:
   cart, PIN sign-in, works while WAN is down.
 - **Reception admin console** (`/admin`) — menu, table layout, cash and
   payments, kitchen performance, printers, subscription plan.
+- **Diner menu** (`/diner`) — read-only, no sign-in, opened from a table code.
 - **Reception / server-laptop app** — sales analytics, waitlist.
 
 M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
@@ -256,10 +257,15 @@ milestones (§5) when a theme is pulled into a release.
 - ⬜ Billing integration (Razorpay / Stripe) for subscription (M3 · PR 19) —
   **blocked on a payment-provider decision**.
 
-### 4.5 Customer-facing surfaces  ⬜
-- Diner QR menu (view-only, then order-and-pay).
-- Loyalty / repeat-visit identifier.
-- Feedback capture at bill-close.
+### 4.5 Customer-facing surfaces  🟡
+- ✅ Diner QR menu, view-only: a table code opens a read-only menu served
+  by the hub over the restaurant's own wifi. Effective (day-part) prices,
+  86'd dishes hidden, built from an allow-list so the cache cannot leak
+  into it. No printable code sheet and nothing links to it yet.
+- ⬜ Order-and-pay from that menu (blocked with PR 19 on the payment
+  provider decision).
+- ⬜ Loyalty / repeat-visit identifier.
+- ⬜ Feedback capture at bill-close.
 
 ### 4.6 Reservations & waitlist  ⬜
 - Time-slot reservations independent of walk-in waitlist.
@@ -327,8 +333,8 @@ The product can onboard a new restaurant without engineering.
 - ⬜ PR 20 — Windows installer + fleet view.
 - ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
 
-### M4 — Customer surfaces  ⬜
-- 4.5 diner QR menu → order-and-pay → loyalty.
+### M4 — Customer surfaces  🟡
+- 🟡 4.5 diner QR menu shipped view-only; order-and-pay and loyalty open.
 - 4.6 reservations + WhatsApp notifications.
 
 ---

@@ -17,6 +17,7 @@ export default defineConfig({
         waiter: resolve(__dirname, 'waiter.html'),
         dashboard: resolve(__dirname, 'dashboard.html'),
         admin: resolve(__dirname, 'admin.html'),
+        diner: resolve(__dirname, 'diner.html'),
       },
     },
   },

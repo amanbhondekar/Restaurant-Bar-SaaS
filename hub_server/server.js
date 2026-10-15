@@ -29,6 +29,7 @@ import { waiterStore } from './lib/waiterStore.js';
 import { addItem, updateItem, deleteItem, addCategory, renameCategory, reorderCategories, deleteCategory } from './lib/menuAdmin.js';
 import { previewImport, applyImport } from './lib/menuImport.js';
 import { applyLayout } from './lib/tablesAdmin.js';
+import { publicMenu } from './lib/dinerMenu.js';
 import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js';
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
@@ -609,6 +610,31 @@ app.get('/menu', requireDevice, (req, res) => {
     });
   }
   res.json(menuData);
+});
+
+// 5b-2. GET /public/menu — the menu as a diner sees it (M4 · diner QR menu).
+//
+// The hub's only unauthenticated read, and deliberately so: a guest scans the code on their table
+// and gets the menu without being enrolled as a device. Three things keep that safe.
+//
+// It is still LAN-only in practice -- the hub binds the restaurant's wifi and CORS is already
+// restricted to private hosts -- so this is not an internet-facing endpoint.
+// lib/dinerMenu.js builds the answer from an allow-list rather than deleting fields from a copy,
+// so station routing, day-part schedules and anything the cache gains later stay invisible.
+// And the plan-gated cache is the input, so a tenant without modifiers does not leak them here.
+app.get('/public/menu', (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const menuData = restaurantCache.getMenuCache(pairing.restaurant_id);
+  if (!menuData || menuData.uninitialized) {
+    return res.status(503).json({ success: false, error: 'The menu is not available yet.', code: 'MENU_UNAVAILABLE' });
+  }
+  // A guest reloads; the kitchen does not. Short enough that an 86'd dish disappears quickly.
+  res.set('Cache-Control', 'public, max-age=30');
+  res.json({
+    success: true,
+    restaurant: { name: pairing.name || 'Restaurant', currency: pairing.currency || '₹' },
+    ...publicMenu(menuData, new Date())
+  });
 });
 
 // 5c. GET /tables/layout — Returns cached static table layout from local disk cache
@@ -1532,6 +1558,35 @@ app.get('/qr', async (req, res) => {
   }
 });
 
+// GET /qr/diner?table=4 — the code that goes on a table, for reception to print or display.
+//
+// Reception-only even though what it points at is public: the code embeds this hub's LAN
+// address, and handing that to anything that asks would be telling a stranger where the hub
+// lives. The menu behind it is public; the directions to it are not advertised.
+app.get('/qr/diner', async (req, res) => {
+  if (!isReceptionRequest(req)) {
+    return res.status(403).json({ error: 'Table QR codes are only available on the reception laptop.', code: 'RECEPTION_ONLY' });
+  }
+  // Carried through to the page so a guest can see they scanned their own table's code.
+  // Nothing is decided by it, so an odd value is harmless -- but it still has to survive a URL.
+  const raw = req.query.table === undefined ? '' : String(req.query.table).trim().slice(0, 20);
+  const table = /^[A-Za-z0-9 _-]*$/.test(raw) ? raw : '';
+  const dinerUrl = `${SERVER_URL}/diner${table ? `?t=${encodeURIComponent(table)}` : ''}`;
+
+  try {
+    res.json({
+      success: true,
+      table: table || null,
+      diner_url: dinerUrl,
+      // Bigger and more error-tolerant than the pairing QR: this one gets printed small, stuck
+      // to a table, and scanned in low light by whatever phone a guest happens to own.
+      qr_code: await QRCode.toDataURL(dinerUrl, { width: 512, margin: 2, errorCorrectionLevel: 'M' })
+    });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to generate QR code' });
+  }
+});
+
 // The admin page is reception-only. A person in a browser gets a plain-text 403 (the JSON API under
 // /admin answers RECEPTION_ONLY as JSON). The static handler below would also serve dist/admin.html as
 // a file, so that path gets the same answer.
@@ -1583,6 +1638,15 @@ app.get('/admin', (req, res) => {
 });
 
 // Dedicated route for Waiter App PWA
+// The page a table QR opens. Public, like the menu it reads.
+app.get('/diner', (req, res) => {
+  const dinerHtml = path.join(distPath, 'diner.html');
+  if (fs.existsSync(dinerHtml)) {
+    return res.sendFile(dinerHtml);
+  }
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
 app.get('/waiter', (req, res) => {
   const waiterHtml = path.join(distPath, 'waiter.html');
   if (fs.existsSync(waiterHtml)) {
