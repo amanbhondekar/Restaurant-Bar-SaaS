@@ -16,6 +16,7 @@ import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
 import { RESTAURANT_ID, startHub } from './helpers/spawnHub.mjs';
 
@@ -1511,9 +1512,16 @@ test('M1: POST /orders without waiter_id still works (backwards-compat)', async 
 // M1 — Crash reporting (PR 10)
 // ---------------------------------------------------------------------------
 
-import { crashReporter } from '../lib/crashReporter.js';
 
-test('M1: crashReporter caps entries, trims oversized fields, coerces unknown sources to hub', () => {
+test('M1: crashReporter caps entries, trims oversized fields, coerces unknown sources to hub', async () => {
+  // Imported here, not at the top of the file, and pointed at a throwaway directory first.
+  // crashReporter resolves HUB_DATA_DIR when the module loads, and a static import hoists
+  // above any statement that could redirect it -- so this test used to write into the repo's
+  // real hub_server/data/crash_log.json. Over a few hundred runs that evicted every genuine
+  // crash from the log the hub keeps for diagnosing a reception laptop.
+  process.env.HUB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-crash-'));
+  const { crashReporter } = await import('../lib/crashReporter.js');
+
   const entry = crashReporter.report({
     source: 'martian',
     message: 'x'.repeat(5000),
