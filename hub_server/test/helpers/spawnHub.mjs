@@ -55,11 +55,11 @@ export async function startHub(options = {}) {
   return bootHub({ ...options, port: options.port ?? 0 });
 }
 
-async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TESTCODE', config, files }) {
+async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TESTCODE', config, files, env: extraEnv, nameSuffix = '' }) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-catalog-'));
   // Unique per start and served by /pairing-info. The readiness check below only accepts an
   // answer carrying it, so a stale hub already holding the port can never pass for this one.
-  const hubName = `Test Kitchen ${crypto.randomUUID()}`;
+  const hubName = `Test Kitchen ${crypto.randomUUID()}${nameSuffix}`;
   fs.writeFileSync(path.join(dataDir, 'menu_cache.json'), JSON.stringify(menu));
   fs.writeFileSync(path.join(dataDir, 'tables_cache.json'), JSON.stringify(tables));
   fs.writeFileSync(path.join(dataDir, 'tickets.json'), '[]');
@@ -86,7 +86,8 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
       PORT: String(port),
       HUB_DATA_DIR: dataDir,
       HUB_TRUST_LOOPBACK: trustLoopback ? 'true' : 'false',
-      SUPABASE_URL: 'https://example.supabase.co'
+      SUPABASE_URL: 'https://example.supabase.co',
+      ...extraEnv
     },
     // stdout carries the port the hub bound; the last 2 KB of stderr is kept so a hub that
     // dies at startup can say why.

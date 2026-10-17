@@ -82,6 +82,10 @@ is covered by automated tests.
   rest, rate-limited enrollment, constant-time compare.
 - ✅ Reception-only guard on catalog writes and admin routes; enrolled
   handsets get 403 `RECEPTION_ONLY`.
+- ✅ The hub's server-rendered fallback page escapes the restaurant name,
+  pairing code, table name and item names it prints. Table names come
+  straight off an order body from a handset, so this was reachable by staff,
+  not only by an admin.
 - ✅ CORS locked to LAN / loopback; `/qr` and `/toggle-outage` restricted
   to the reception laptop.
 - ✅ WebSocket `/live` authorised (token in query string).
@@ -197,10 +201,13 @@ is covered by automated tests.
   this file flagged flaky hydration. Re-checked on 2026-10-13 against a
   running hub — sales, floor grid, active KOTs and billed orders all render
   with no console errors. Moved out of this section.
+- 🟡 **Fallback page discloses**: with no frontend build, `GET /` renders its
+  own page for any caller and prints the pairing code and the live kitchen
+  tickets, while `/pairing-info` withholds the pairing code on purpose. Only
+  reachable before the first build; not yet gated to reception.
 - 🟡 **Test coverage**: the hub is well covered; no frontend test runner
-  exists, so the KDS, admin console and waiter PWA are verified by hand.
-  The suite also still writes to the repository's own `hub_server/data/`
-  from modules imported in-process.
+  exists, so the KDS, admin console, waiter PWA and diner page are verified
+  by hand.
 
 ---
 
@@ -290,7 +297,9 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
   there is no window between choosing a port and holding it. Runner
   concurrency capped so the suite stops oversubscribing the machine.
-- ⬜ Hermetic test runs (the suite still writes to the repo's data dir).
+- ✅ Hermetic test runs: a before/after snapshot of `hub_server/data/` shows the
+  suite touching nothing there. (It used to fill the real crash log with test
+  records, displacing any genuine crash.)
 
 ### 4.9 Deployment & fleet  ⬜
 - One-click hub installer for Windows (auto-start service, firewall rule,

@@ -1737,7 +1737,9 @@ const refuseNonReception = (res) => res.status(403).type('text/plain').send('Rec
 app.get('/admin.html', (req, res, next) => (isReceptionRequest(req) ? next() : refuseNonReception(res)));
 
 // Serve static built frontend files if dist folder exists
-const distPath = path.join(__dirname, '../dist');
+// Where the built frontend lives. Overridable so the route that renders its own fallback page when
+// there is no build (GET /) can be exercised against a real hub without deleting the real dist/.
+const distPath = process.env.HUB_DIST_DIR || path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
 }
@@ -1820,7 +1822,7 @@ app.get('/', async (req, res) => {
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reception Local Hub — ${pairing.name || 'POS Server'}</title>
+    <title>Reception Local Hub — ${escapeHtml(pairing.name || 'POS Server')}</title>
     <style>
       :root {
         --bg: #0d0f12;
@@ -1952,7 +1954,7 @@ app.get('/', async (req, res) => {
             <span class="big-val" style="color: ${syncStatus.queued > 0 ? 'var(--amber)' : 'var(--green)'}">${syncStatus.queued}</span>
           </div>
           <div style="font-size: 12px; color: var(--muted)">
-            Paired Tenant: <strong>${pairing.name}</strong> (${pairing.pairing_code})
+            Paired Tenant: <strong>${escapeHtml(pairing.name)}</strong> (${escapeHtml(pairing.pairing_code)})
           </div>
           <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">
             Last Synced: <strong>${syncStatus.last_synced_at ? new Date(syncStatus.last_synced_at).toLocaleTimeString() : 'Never'}</strong>
@@ -1966,8 +1968,8 @@ app.get('/', async (req, res) => {
           ${activeTickets.map(t => `
             <div class="ticket-item">
               <div>
-                <strong style="font-family: var(--mono); color: var(--amber)">Ticket #${t.ticket_number}</strong> — Table ${t.table_name}
-                <div style="font-size: 12px; color: var(--muted)">${t.items.map(i => i.qty + 'x ' + i.name).join(', ')}</div>
+                <strong style="font-family: var(--mono); color: var(--amber)">Ticket #${t.ticket_number}</strong> — Table ${escapeHtml(t.table_name)}
+                <div style="font-size: 12px; color: var(--muted)">${escapeHtml(t.items.map(i => i.qty + 'x ' + i.name).join(', '))}</div>
               </div>
               <div>
                 <span class="badge ${t.status === 'ready' ? 'badge-green' : 'badge-amber'}">${t.status}</span>
