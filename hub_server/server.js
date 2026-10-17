@@ -1807,6 +1807,13 @@ app.get('/', async (req, res) => {
     return res.sendFile(indexHtml);
   }
 
+  // Everything below is this page rendering for itself, with no build to serve. Unlike the built
+  // KDS -- a static bundle that fetches through authenticated routes -- it prints the pairing code
+  // and the live kitchen tickets directly into the HTML, so it is reception's to see. /pairing-info
+  // withholds the pairing code from anyone else on the LAN on purpose; this page used to hand the
+  // same code, and every open ticket, to any caller that asked.
+  if (!isReceptionRequest(req)) return refuseNonReception(res);
+
   const pairing = hubConfig.getPairingInfo();
   const qrDataUrl = await QRCode.toDataURL(`${SERVER_URL}/waiter`);
   const activeTickets = ticketStore.getActiveTickets(pairing.restaurant_id);

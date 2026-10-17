@@ -99,6 +99,9 @@ npm run build  # clean
 
 ### A related finding, deliberately not fixed
 
+> **Update (2026-10-18):** fixed in the next slice — see
+> `report_2026-10-18_100000_fallback_page_gate.md`. The text below is left as written.
+
 While proving this I probed what an **unauthenticated** caller receives from that fallback page.
 With the hub treating the caller as a stranger on the wifi and no token supplied, `GET /` returned
 200 and printed **the pairing code and the live kitchen tickets** — table names and the items on
