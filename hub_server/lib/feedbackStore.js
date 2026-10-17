@@ -103,12 +103,19 @@ class FeedbackStore {
     return entry;
   }
 
-  /** What reception sees at a glance: how many, and the average to one decimal. */
+  /**
+   * What reception sees at a glance: how many, the average to one decimal, and how the ratings
+   * split. The split is counted here rather than from the listed entries because the list is
+   * capped (100 by default) while this covers everything -- a distribution worked out from the
+   * list would quietly stop adding up the day the restaurant passes a hundred.
+   */
   summary(restaurantId) {
     const mine = this.entries.filter(e => e.restaurant_id === restaurantId);
-    if (mine.length === 0) return { count: 0, average: null };
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const e of mine) if (distribution[e.rating] !== undefined) distribution[e.rating] += 1;
+    if (mine.length === 0) return { count: 0, average: null, distribution };
     const total = mine.reduce((sum, e) => sum + e.rating, 0);
-    return { count: mine.length, average: Math.round((total / mine.length) * 10) / 10 };
+    return { count: mine.length, average: Math.round((total / mine.length) * 10) / 10, distribution };
   }
 }
 

@@ -56,7 +56,7 @@ test('feedback: entries come back newest first, with a summary', () => {
   feedbackStore.add({ restaurantId: RID, table: 'T3', rating: 5, comment: null });
 
   assert.deepEqual(feedbackStore.list(RID).map(e => e.rating), [5, 2, 4]);
-  assert.deepEqual(feedbackStore.summary(RID), { count: 3, average: 3.7 });
+  assert.deepEqual(feedbackStore.summary(RID), { count: 3, average: 3.7, distribution: { 1: 0, 2: 1, 3: 0, 4: 1, 5: 1 } });
 });
 
 test('feedback: another tenant\'s feedback is never listed or counted', () => {
@@ -65,12 +65,12 @@ test('feedback: another tenant\'s feedback is never listed or counted', () => {
   feedbackStore.add({ restaurantId: '22222222-2222-2222-2222-222222222222', table: 'T1', rating: 1, comment: null });
 
   assert.equal(feedbackStore.list(RID).length, 1);
-  assert.deepEqual(feedbackStore.summary(RID), { count: 1, average: 5 });
+  assert.deepEqual(feedbackStore.summary(RID), { count: 1, average: 5, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 1 } });
 });
 
 test('feedback: an empty ledger has no average rather than a zero', () => {
   reset();
-  assert.deepEqual(feedbackStore.summary(RID), { count: 0, average: null });
+  assert.deepEqual(feedbackStore.summary(RID), { count: 0, average: null, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } });
 });
 
 test('feedback: a table that has just been heard from is cooling down', () => {
