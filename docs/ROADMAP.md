@@ -251,7 +251,11 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Reprint on recall, banner-marked so a reprint cannot be mistaken for a new order.
 - ⬜ Per-station KDS *instances* (today a station screen is a filter on the
   one display, reached as `/?station=bar`).
-- ⬜ Course state replicated to the cloud.
+- ✅ Course state replicated to the cloud (migration 008): `staged` and a
+  per-course log of when each was fired and each station finished, plus each
+  line's course and station. A cloud without 008 still gets the order and its
+  status; only the course detail waits. Also fixed: a station finishing its
+  part before the ticket was ready used to enqueue nothing.
 
 ### 4.4 Tenant lifecycle  🟡
 - ✅ Plan model and enforcement against `restaurants.plan`.

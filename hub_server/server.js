@@ -464,7 +464,7 @@ app.post('/orders/:id/ready', requireDevice, (req, res) => {
   broadcast('order_ready', readyPayload);
 
   // Step 2: Queue status update for background cloud sync
-  syncQueue.enqueueStatusUpdate(updatedTicket.ticket_number, 'ready', pairing.restaurant_id);
+  syncQueue.enqueueStatusUpdate(updatedTicket.ticket_number, 'ready', pairing.restaurant_id, updatedTicket);
 
   res.json({
     success: true,
@@ -510,9 +510,11 @@ app.post('/orders/:id/stations/:station/ready', requireDevice, (req, res) => {
     };
     broadcast('TICKET_READY', readyPayload);
     broadcast('order_ready', readyPayload);
-    syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'ready', pairing.restaurant_id);
+    syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'ready', pairing.restaurant_id, ticket);
   } else {
     broadcastTicketChange('STATION_READY', ticket, { station });
+    // The status has not changed, but which stations have finished has: send the course state.
+    syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id, ticket);
   }
   res.json({ success: true, ticket, ticket_ready: Boolean(result.ticket_ready), station });
 });
@@ -532,7 +534,7 @@ app.post('/orders/:id/fire', requireDevice, requireFeature(FEATURES.COURSE_FIRIN
   console.log(`🔥 Fired course ${result.fired_course} on #${ticket.ticket_number} (${result.fired_items.length} item(s))`);
   broadcastTicketChange('COURSE_FIRED', ticket, { course: result.fired_course });
   // A ticket that had been marked ready is cooking again.
-  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id);
+  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id, ticket);
   autoPrintKot(ticket, pairing, { items: result.fired_items, course: result.fired_course }).catch(() => {});
   res.json({ success: true, ticket, fired_course: result.fired_course, fired_items: result.fired_items.length });
 });
@@ -547,7 +549,7 @@ app.post('/orders/:id/recall', requireDevice, (req, res) => {
   const ticket = result.ticket;
   console.log(`↩︎ Recalled #${ticket.ticket_number} (course ${result.recalled_course})`);
   broadcastTicketChange('TICKET_RECALLED', ticket, { course: result.recalled_course });
-  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id);
+  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id, ticket);
   // The paper KOT for this course was spiked when the course was marked ready, so without this
   // the kitchen is asked to cook again from memory. Fire already reprints; recall now matches it.
   autoPrintKot(ticket, pairing, {

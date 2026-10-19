@@ -9,6 +9,7 @@ import { pushInvoice, pullInvoices } from './invoiceSync.js';
 import { invoiceStore } from './invoiceStore.js';
 import { pushReconciliation, pullReconciliations } from './reconciliationSync.js';
 import { reconciliationStore } from './reconciliationStore.js';
+import { orderCourseColumns, itemCourseColumns, isMissingCourseColumn, withoutCourseColumns } from './courseSync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -327,11 +328,16 @@ class SyncQueue {
     this.processQueue();
   }
 
-  enqueueStatusUpdate(ticketId, newStatus, restaurantId) {
+  /**
+   * Queues a status change. Pass the ticket (as it stands after the change) and its course state
+   * travels with the status: a station marking its part ready or a course being fired changes the
+   * state without always changing the status, so the status alone would lose it.
+   */
+  enqueueStatusUpdate(ticketId, newStatus, restaurantId, ticket) {
     const queueItem = {
       queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       type: 'UPDATE_STATUS',
-      payload: { ticketId, status: newStatus, restaurantId },
+      payload: { ticketId, status: newStatus, restaurantId, ...(ticket ? { course: orderCourseColumns(ticket) } : {}) },
       queued_at: new Date().toISOString(),
       attempts: 0
     };
@@ -742,7 +748,7 @@ class SyncQueue {
   async syncOrderToSupabase(ticket) {
     try {
       // Pre-insert session sanity check requested
-      const { data: { user } } = await supabase.auth.getUser().catch(() => ({ data: {} }));
+      const { data: { user } = {} } = (await this.cloud.auth?.getUser?.().catch(() => ({ data: {} }))) ?? { data: {} };
       console.log('[sync] 🔑 About to insert into orders as auth.uid():', user?.id ?? 'NONE');
 
       const isUUID = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -752,7 +758,7 @@ class SyncQueue {
       // Check idempotency if order_request_id is present
       if (reqId) {
         try {
-          const { data: existingOrder } = await supabase
+          const { data: existingOrder } = await this.cloud
             .from('orders')
             .select('id')
             .eq('restaurant_id', restId)
@@ -776,6 +782,7 @@ class SyncQueue {
         created_by_waiter: ticket.created_by_waiter || 'Waiter',
         order_request_id: reqId,
         synced_to_cloud: true,
+        ...orderCourseColumns(ticket),
         created_at: ticket.created_at || new Date().toISOString()
       };
 
@@ -784,18 +791,31 @@ class SyncQueue {
       }
 
       // 1. Insert order record
-      let { data: insertedOrder, error: orderErr } = await supabase
+      let sentRecord = orderRecord;
+      let { data: insertedOrder, error: orderErr } = await this.cloud
         .from('orders')
-        .insert(orderRecord)
+        .insert(sentRecord)
         .select('id')
         .single();
+
+      // Graceful fallback if migration 008 (course state) has not been applied yet: the order itself
+      // is what matters, and it must not wait for a schema change.
+      let courseColumnsMissing = false;
+      if (orderErr && isMissingCourseColumn(orderErr)) {
+        console.warn('[sync] ⚠️ Course-state columns not present in cloud database (migration 008). Retrying order without them...');
+        courseColumnsMissing = true;
+        sentRecord = withoutCourseColumns(sentRecord);
+        const retryRes = await this.cloud.from('orders').insert(sentRecord).select('id').single();
+        insertedOrder = retryRes.data;
+        orderErr = retryRes.error;
+      }
 
       // Graceful fallback if migration 002 has not been applied to Supabase yet
       if (orderErr && (orderErr.message?.includes('order_request_id') || orderErr.code === 'PGRST204')) {
         console.warn(`[sync] ⚠️ 'order_request_id' column not present in cloud database. Retrying insert without it...`);
-        const fallbackRecord = { ...orderRecord };
+        const fallbackRecord = { ...sentRecord };
         delete fallbackRecord.order_request_id;
-        const retryRes = await supabase
+        const retryRes = await this.cloud
           .from('orders')
           .insert(fallbackRecord)
           .select('id')
@@ -825,10 +845,17 @@ class SyncQueue {
           order_id: dbOrderId,
           name: item.name,
           qty: Number(item.qty) || 1,
-          price: Number(item.price) || 0
+          price: Number(item.price) || 0,
+          ...(courseColumnsMissing ? {} : itemCourseColumns(item))
         }));
 
-        const { error: itemsErr } = await supabase.from('order_items').insert(itemRecords);
+        let { error: itemsErr } = await this.cloud.from('order_items').insert(itemRecords);
+        // The order row accepted the course columns but the line table has not been migrated (or the
+        // reverse): the order is already in, so send the lines without them rather than failing.
+        if (itemsErr && isMissingCourseColumn(itemsErr)) {
+          console.warn('[sync] ⚠️ Course columns not present on order_items (migration 008). Retrying lines without them...');
+          ({ error: itemsErr } = await this.cloud.from('order_items').insert(itemRecords.map(withoutCourseColumns)));
+        }
         if (itemsErr) {
           this.lastFailureSystemic = isSystemicFailure(itemsErr);
           console.error('[sync] ❌ Supabase Order Items Insert Failed:', {
@@ -852,12 +879,19 @@ class SyncQueue {
     }
   }
 
-  async syncStatusToSupabase({ ticketId, status, restaurantId }) {
+  async syncStatusToSupabase({ ticketId, status, restaurantId, course }) {
     try {
-      const { error } = await supabase
+      const update = (extra = {}) => this.cloud
         .from('orders')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update({ status, updated_at: new Date().toISOString(), ...extra })
         .eq('ticket_number', Number(ticketId));
+
+      let { error } = await update(course || {});
+      // Cloud not migrated yet (008): the status is the part that must get through.
+      if (error && course && isMissingCourseColumn(error)) {
+        console.warn('[sync] ⚠️ Course-state columns not present in cloud database (migration 008). Sending the status alone...');
+        ({ error } = await update());
+      }
 
       if (error) {
         this.lastFailureSystemic = isSystemicFailure(error);
