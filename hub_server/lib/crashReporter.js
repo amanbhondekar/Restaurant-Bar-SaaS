@@ -26,7 +26,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const MAX_ENTRIES = 200;
 const MAX_MESSAGE_LEN = 1000;
 const MAX_STACK_LEN = 6000;
-const SOURCES = new Set(['hub', 'kds', 'waiter']);
+const SOURCES = new Set(['hub', 'kds', 'waiter', 'station']);
 
 function trimField(raw, cap) {
   if (raw == null) return null;
@@ -58,7 +58,7 @@ class CrashReporter {
   }
 
   /**
-   * Record a crash. `source` is one of 'hub' / 'kds' / 'waiter';
+   * Record a crash. `source` is one of 'hub' / 'kds' / 'waiter' / 'station';
    * anything else is coerced to 'hub'. Returns the persisted entry
    * so callers can log or forward it.
    */

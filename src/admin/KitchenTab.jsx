@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { explainError, hubGet } from './api';
 import { Field, ListSkeleton, NativeSelect, Notice } from './ui';
+import { StationScreensPanel } from './StationScreensPanel';
 
 // Kitchen performance: how long dishes take, measured from the moment a course is sent to the kitchen
 // until the station says it is ready. The hub keeps these timestamps on every ticket already; this page
@@ -37,7 +38,7 @@ function Tile({ label, value, hint }) {
   );
 }
 
-export function KitchenTab() {
+function PerformanceReport() {
   const [period, setPeriod] = useState('24h');
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
@@ -149,6 +150,17 @@ export function KitchenTab() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// The station screens come first and stand on their own: they must show even while the report below
+// is loading or has failed, since "nobody is looking at the bar" is the more urgent of the two.
+export function KitchenTab() {
+  return (
+    <div className="flex flex-col gap-4 pt-2">
+      <StationScreensPanel />
+      <PerformanceReport />
     </div>
   );
 }

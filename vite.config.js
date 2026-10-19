@@ -18,6 +18,7 @@ export default defineConfig({
         dashboard: resolve(__dirname, 'dashboard.html'),
         admin: resolve(__dirname, 'admin.html'),
         diner: resolve(__dirname, 'diner.html'),
+        station: resolve(__dirname, 'station.html'),
       },
     },
   },

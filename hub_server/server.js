@@ -32,6 +32,7 @@ import { applyLayout } from './lib/tablesAdmin.js';
 import { publicMenu } from './lib/dinerMenu.js';
 import { inventoryStore } from './lib/inventoryStore.js';
 import { refusalFor, UNITS } from './lib/inventory.js';
+import { StationScreens, STATIONS as STATION_IDS, parseScreen, snapshot as stationSnapshot } from './lib/stationScreens.js';
 import { feedbackStore, validateFeedback, BILL_WINDOW_MS } from './lib/feedbackStore.js';
 import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js';
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
@@ -113,6 +114,9 @@ trustLocalAddress(LAN_IP);
 // -------------------------------------------------------------
 const wss = new WebSocketServer({ noServer: true });
 const connectedClients = new Set();
+// Which stations have a screen up. A screen declares its station when it opens the live connection
+// (/live?station=bar), so the hub can tell reception when a station has nobody looking at it.
+const stationScreens = new StationScreens();
 
 server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
@@ -155,9 +159,27 @@ function broadcast(type, payload) {
   });
 }
 
+// A tablet that drops off the wifi, or is put to sleep, does not always close its connection: the hub
+// would keep counting it for as long as the operating system takes to give up, which for the station
+// panel means "1 screen up" over a bar that nobody is watching. So every connection is pinged on an
+// interval, and one that did not answer the previous ping is dropped. Browsers answer a ping by
+// themselves, so no client needs to know about it.
+const WS_HEARTBEAT_MS = Number(process.env.HUB_WS_HEARTBEAT_MS) || 30000;
+setInterval(() => {
+  for (const client of connectedClients) {
+    if (client.isAlive === false) { client.terminate(); continue; }
+    client.isAlive = false;
+    try { client.ping(); } catch { /* it is closing; the close handler will tidy up */ }
+  }
+}, WS_HEARTBEAT_MS).unref();
+
 wss.on('connection', (ws, req) => {
   connectedClients.add(ws);
-  console.log(`📱 Client connected over LAN WebSocket (Total active: ${connectedClients.size})`);
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  const screen = parseScreen(new URL(req.url, 'http://hub'));
+  if (screen) stationScreens.add(ws, screen);
+  console.log(`📱 Client connected over LAN WebSocket (Total active: ${connectedClients.size})${screen ? ` -- ${screen.station} screen${screen.label ? ` "${screen.label}"` : ''}` : ''}`);
 
   // Send initial connection handshake with pairing & sync info.
   // Only safe fields: the raw config carries the enrollment code and the
@@ -193,6 +215,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     connectedClients.delete(ws);
+    stationScreens.remove(ws);
     console.log(`📱 Client disconnected from LAN WebSocket (Total active: ${connectedClients.size})`);
   });
 });
@@ -1845,6 +1868,55 @@ app.get('/qr/diner', async (req, res) => {
   } catch {
     res.status(500).json({ success: false, error: 'Failed to generate QR code' });
   }
+});
+
+// GET /qr/station/:station -- the code a tablet scans to become that station's screen.
+//
+// The same enrollment code the waiters' QR carries, in the page's address fragment, so the tablet
+// is enrolled as a device and told which station it is in one scan. Reception only: it hands out
+// the hub's enrollment code.
+app.get('/qr/station/:station', async (req, res) => {
+  if (!isReceptionRequest(req)) {
+    return res.status(403).json({ success: false, error: 'Station screen codes are only available on the reception laptop.', code: 'RECEPTION_ONLY' });
+  }
+  const station = String(req.params.station).toLowerCase();
+  if (!STATION_IDS.includes(station)) {
+    return res.status(404).json({ success: false, error: `Station must be one of ${STATION_IDS.join(', ')}.`, code: 'UNKNOWN_STATION' });
+  }
+  const stationUrl = `${SERVER_URL}/station/${station}`;
+  try {
+    res.json({
+      success: true,
+      station,
+      label: STATION_LABELS[station],
+      station_url: stationUrl,
+      enrollment_code: deviceAuth.getEnrollmentCode(),
+      qr_code: await QRCode.toDataURL(`${stationUrl}#e=${deviceAuth.getEnrollmentCode()}`, { width: 384, margin: 2, errorCorrectionLevel: 'M' })
+    });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to generate QR code' });
+  }
+});
+
+// GET /kds/screens -- for reception: per station, how many screens are up and what is waiting.
+// The point is the case where a station has work and nobody looking at it.
+app.get('/kds/screens', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  res.json({
+    success: true,
+    stations: stationSnapshot(stationScreens, ticketStore.getActiveTickets(pairing.restaurant_id)),
+    screens: stationScreens.list()
+  });
+});
+
+// The page a station tablet opens. Static, like /waiter: everything it shows comes through the
+// authenticated routes, so the page itself carries nothing.
+app.get('/station/:station', (req, res) => {
+  const station = String(req.params.station).toLowerCase();
+  if (!STATION_IDS.includes(station)) return res.status(404).type('text/plain').send(`No such station. Use one of: ${STATION_IDS.join(', ')}.`);
+  const page = path.join(distPath, 'station.html');
+  if (!fs.existsSync(page)) return res.status(404).type('text/plain').send('The station screen has not been built yet (run npm run build).');
+  res.sendFile(page);
 });
 
 // The admin page is reception-only. A person in a browser gets a plain-text 403 (the JSON API under

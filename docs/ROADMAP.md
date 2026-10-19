@@ -31,6 +31,9 @@ early pilots:
 - **Reception admin console** (`/admin`) — menu, table layout, cash and
   payments, stock and recipes, kitchen performance, printers, guest feedback,
   subscription plan.
+- **Station screens** (`/station/hot`, `/cold`, `/bar`) — a tablet at one
+  kitchen station: that station's tickets only, a Ready button, a chime for new
+  work. Enrolled once by scanning a code from the admin Kitchen tab.
 - **Diner menu** (`/diner`) — read-only, no sign-in, opened from a table code.
 - **Reception / server-laptop app** — sales analytics, waitlist.
 
@@ -38,12 +41,12 @@ M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **718 hub tests across 37 files** (pure rules plus live
+Automated coverage is **741 hub tests across 38 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**116 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
-the admin Feedback and Stock tabs, and the waiter modifier sheet and menu grid.
-The KDS, the rest of the admin console and the rest of the waiter PWA are still
-verified by hand.
+**198 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
+the station screens, the admin Feedback, Stock and Kitchen-panel tabs, and the
+waiter modifier sheet and menu grid. The reception Kitchen Display, the rest of
+the admin console and the rest of the waiter PWA are still verified by hand.
 
 ---
 
@@ -140,6 +143,10 @@ verified by hand.
 - ✅ Prep-time telemetry per item and per station, surfaced in the admin
   console's Kitchen tab.
 - ✅ Ticket recall.
+- ✅ Per-station screens: a tablet at the hot line, cold line or bar is its own
+  authenticated page, tells the hub which station it is, and shows reception
+  when a station has work and nobody looking at it. Dead connections are
+  dropped by a heartbeat, so a tablet that fell off the wifi stops counting.
 
 ### Tenant lifecycle (M3, in progress)
 - ✅ Plan entitlements as one authoritative answer to "what may this tenant
@@ -198,11 +205,11 @@ verified by hand.
   not return stock. Migration 009 is unrun and its restore path is untested
   against a real project. Not plan-gated: whether stock is a paid feature is
   a pricing call.
-- 🟡 **Kitchen operations tail**: station screens are a filter on one display
-  rather than per-station KDS instances. Worse, the Kitchen Display sends no
-  device token, so a station screen on any device other than the reception
-  laptop gets 401 on its tickets and is refused on the live feed: today only
-  the reception laptop can host a KDS at all.
+- 🟡 **Station screens are not role-scoped**: a station tablet carries the same
+  device token as a waiter's handset, which can do anything an enrolled device
+  can, bills and voids included. The reception Kitchen Display still sends no
+  token, so it only works on the reception laptop itself (its station filter
+  remains, and it does not show which station screens are up).
 - 🟡 **Billing replication is one-way and unproven**: bills and cash-ups now
   push to the cloud (005, 006) and a boot backfill carries up anything the
   cloud has not confirmed, but nothing has run against a real Supabase
@@ -219,8 +226,9 @@ verified by hand.
   running hub — sales, floor grid, active KOTs and billed orders all render
   with no console errors. Moved out of this section.
 - 🟡 **Test coverage**: the hub is well covered. A frontend runner now exists
-  and covers the diner page, the admin Feedback tab and the waiter modifier
-  sheet; the KDS, the other admin tabs, order entry and login are still
+  and covers the diner page, the station screens, the admin Feedback, Stock and
+  Kitchen panels and the waiter modifier sheet and menu grid; the reception
+  Kitchen Display, the other admin tabs, order entry and login are still
   verified by hand, and nothing yet drives a real browser.
 
 ---
@@ -266,8 +274,10 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Multi-station routing, course firing / hold-and-fire, prep-time
   telemetry, ticket recall.
 - ✅ Reprint on recall, banner-marked so a reprint cannot be mistaken for a new order.
-- ⬜ Per-station KDS *instances* (today a station screen is a filter on the
-  one display, reached as `/?station=bar`).
+- ✅ Per-station KDS instances: `/station/<station>`, its own authenticated page
+  rather than a filter on the reception display (which could not run on any
+  other device: it sent no token). The hub knows which stations have a screen
+  up; reception sees what is waiting at one that has none.
 - ✅ Course state replicated to the cloud (migration 008): `staged` and a
   per-course log of when each was fired and each station finished, plus each
   line's course and station. A cloud without 008 still gets the order and its
@@ -308,6 +318,8 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.7 Auth & access control  🟡
 - ✅ Waiter PIN login wired into the PWA, session bound to a device token.
 - ⬜ Role UIs for owner / manager / waiter / kitchen.
+- ⬜ Role-scoped device tokens: a kitchen tablet should be able to mark tickets
+  ready and not void a bill.
 - ⬜ Password reset + optional SSO for owner accounts.
 
 ### 4.8 Reliability & observability  🟡
