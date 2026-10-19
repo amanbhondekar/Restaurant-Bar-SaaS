@@ -52,3 +52,8 @@ hub_server/data/waiters.json
 
 # Guest feedback left from the diner menu. Local to each hub, like the invoices it references.
 hub_server/data/feedback.json
+
+# Stock and recipes. Local to each hub: figures change with every order, and a hub that is re-paired
+# keeps the previous restaurant's file aside as inventory.<id>.json. Unreadable files are kept as
+# inventory.corrupt-<ts>.json.
+hub_server/data/inventory*.json

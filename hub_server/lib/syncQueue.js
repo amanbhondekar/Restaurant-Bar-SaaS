@@ -5,6 +5,8 @@ import { supabase, checkSupabaseConnection, authenticateHubStaff } from './supab
 import { ticketStore } from './ticketStore.js';
 import { hubConfig } from './hubConfig.js';
 import { pushMenu, pushTables, isUuid } from './catalogSync.js';
+import { pushInventory, pullInventory } from './inventorySync.js';
+import { inventoryStore } from './inventoryStore.js';
 import { pushInvoice, pullInvoices } from './invoiceSync.js';
 import { invoiceStore } from './invoiceStore.js';
 import { pushReconciliation, pullReconciliations } from './reconciliationSync.js';
@@ -19,8 +21,12 @@ const QUARANTINE_FILE = path.join(DATA_DIR, 'quarantine_sync_queue.json');
 // Newest catalog revision the cloud is known to hold, per catalog. Survives restarts so the admin page
 // can say "synced" without pushing again.
 const CATALOG_STATE_FILE = path.join(DATA_DIR, 'catalog_sync.json');
-const CATALOG_OPS = { menu: 'SYNC_MENU', tables: 'SYNC_TABLES' };
-const isCatalogOp = item => item?.type === CATALOG_OPS.menu || item?.type === CATALOG_OPS.tables;
+// The hub's replicated catalogs. Each keeps one pending push (always the newest snapshot) and a
+// record of the newest revision the cloud is known to hold. Stock is the third: it is not edited like
+// the other two, but it is pushed the same way (a full snapshot), so it shares the machinery.
+const CATALOG_OPS = { menu: 'SYNC_MENU', tables: 'SYNC_TABLES', inventory: 'SYNC_INVENTORY' };
+const CATALOG_KINDS = Object.fromEntries(Object.entries(CATALOG_OPS).map(([kind, type]) => [type, kind]));
+const isCatalogOp = item => Boolean(item) && item.type in CATALOG_KINDS;
 
 const INVOICE_OP = 'SYNC_INVOICE';
 const isInvoiceOp = item => item?.type === INVOICE_OP;
@@ -542,12 +548,63 @@ class SyncQueue {
     }
   }
 
+  /**
+   * Queues the stock snapshot if the cloud has not confirmed the hub's current revision. Pushes are
+   * driven by a change, so stock changed while the cloud was rejecting pushes (or before migration
+   * 009 existed) has nothing coming to carry it up. Runs at boot; a no-op once the cloud is level.
+   */
+  enqueueInventoryIfBehind(restaurantId) {
+    const state = inventoryStore.stateFor(restaurantId);
+    if (!state.restaurant_id || state.revision === 0) return { queued: false, reason: 'NOTHING_TO_PUSH' };
+    if (state.revision <= (this.catalogState.inventory?.synced_revision ?? 0)) return { queued: false, reason: 'UP_TO_DATE' };
+    this.enqueueCatalog('inventory', state);
+    return { queued: true, revision: state.revision };
+  }
+
+  /**
+   * Fills an EMPTY inventory from the cloud, for a reinstalled or replaced reception laptop. It will
+   * only ever act on a store that has never held anything (revision 0). A store whose owner deleted
+   * every ingredient is also empty, but has a revision, and restoring would resurrect what they
+   * deleted -- worse than starting empty. What comes back is the cloud's last snapshot, so on_hand is
+   * as of that push: a recount is the honest next step, and the console is where it happens.
+   */
+  async restoreInventoryFromCloud(restaurantId) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { restored: false, reason: 'NOT_PAIRED' };
+    }
+    if (inventoryStore.state.revision > 0 || !inventoryStore.isEmpty()) return { restored: false, reason: 'INVENTORY_PRESENT' };
+
+    const { online } = await this.checkConnection();
+    if (!online) return { restored: false, reason: 'OFFLINE' };
+
+    let pulled;
+    try {
+      pulled = await pullInventory(this.cloud, restaurantId);
+    } catch (err) {
+      // Fail soft, like the ledger restore: refusing to boot over an unreachable cloud would be worse.
+      console.warn(`⚠️ Could not restore stock from the cloud: ${err.message}`);
+      return { restored: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+    if (!pulled.items.length && !pulled.recipes.length) return { restored: false, reason: 'NOTHING_IN_CLOUD' };
+
+    // Re-check: the connection test above awaited, and an ingredient could have been added meanwhile.
+    if (inventoryStore.state.revision > 0 || !inventoryStore.isEmpty()) return { restored: false, reason: 'INVENTORY_PRESENT' };
+    const state = inventoryStore.replaceAll(restaurantId, { ...pulled, revision: 1, movements: [] });
+    // It came FROM the cloud, so the cloud already holds it: do not push it straight back.
+    this.saveCatalogState('inventory', state.revision);
+    console.log(`📥 Restored ${state.items.length} ingredient(s) and ${state.recipes.length} recipe(s) from the cloud.`);
+    return { restored: true, items: state.items.length, recipes: state.recipes.length };
+  }
+
   /** Queues the whole catalog for the cloud. `data` is the committed cache, revision included. */
   enqueueCatalog(kind, data) {
     const pairing = hubConfig.getPairingInfo();
     const body = kind === 'menu'
       ? { categories: data.categories, items: data.items }
-      : { tables: data.tables };
+      : kind === 'inventory'
+        ? { items: data.items, recipes: data.recipes }
+        : { tables: data.tables };
     const op = {
       queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       type: CATALOG_OPS[kind],
@@ -566,7 +623,7 @@ class SyncQueue {
 
   async syncCatalogToSupabase(item) {
     const { revision, restaurant_id, ...body } = item.payload;
-    const kind = item.type === CATALOG_OPS.menu ? 'menu' : 'tables';
+    const kind = CATALOG_KINDS[item.type];
     const pairing = hubConfig.getPairingInfo();
 
     if (!pairing.paired || !isUuid(restaurant_id) || String(restaurant_id) !== String(pairing.restaurant_id)) {
@@ -578,7 +635,9 @@ class SyncQueue {
     try {
       const pushed = kind === 'menu'
         ? await pushMenu(this.cloud, restaurant_id, body)
-        : await pushTables(this.cloud, restaurant_id, body);
+        : kind === 'inventory'
+          ? await pushInventory(this.cloud, restaurant_id, body)
+          : await pushTables(this.cloud, restaurant_id, body);
       this.saveCatalogState(kind, Math.max(revision, this.catalogState[kind]?.synced_revision ?? 0));
       console.log(`[sync] ✅ ${kind} revision ${revision} pushed to Supabase`, pushed);
       return true;

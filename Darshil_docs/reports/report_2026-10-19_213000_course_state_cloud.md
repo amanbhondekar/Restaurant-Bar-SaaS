@@ -119,6 +119,15 @@ npm run test:hub   # 605 (589 + 16), green under TZ=UTC
   under test does not touch those paths (`recall` does enqueue with the new argument, so I looked
   there first). Recorded rather than dismissed.
 
+  **Update, 2026-10-19 (inventory slice):** it happened twice more in the same file. Reading the failure
+  showed it was not a printer timeout, as first assumed: `fetch failed: read ECONNRESET` on one request
+  and then `connect ECONNREFUSED` on every later one -- **the test hub process had exited**, and the
+  harness only kept a hub's stderr for startup failures, so nothing said why. `spawnHub.mjs` now prints
+  a hub's last stdout and stderr, with its exit code, if it exits while a test is using it. Since then
+  **eight consecutive full runs (and three before) have passed**, so the diagnostic has not yet caught the
+  cause, and neither CPU load (twelve busy-loop processes) nor rewriting the hub files reproduced it on
+  demand. Still unexplained; the next occurrence will now say why.
+
 ## STATUS
 
 ✅ VERIFIED against a fake cloud and a real hub — 605/605 on the last two runs. ⚠ Migration 008 unrun.

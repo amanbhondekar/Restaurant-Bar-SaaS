@@ -27,7 +27,10 @@ const price = value => {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 };
 
-const isAvailable = thing => thing?.available !== false;
+// Not on offer either way: reception 86'd it by hand (`available: false`), or the kitchen has run out of
+// something it needs (`stock_out`, set by the stock overlay). A guest cannot tell the two apart and
+// has no use for the difference.
+const isAvailable = thing => thing?.available !== false && thing?.stock_out !== true;
 
 /** Options a diner can choose, with what each adds. Prep instructions carry no price. */
 function publicModifierGroups(groups) {

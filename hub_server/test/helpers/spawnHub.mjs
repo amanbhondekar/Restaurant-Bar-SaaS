@@ -95,6 +95,19 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
   });
   let stderrTail = '';
   child.stderr.on('data', chunk => { stderrTail = (stderrTail + chunk).slice(-2000); });
+  // The last of what the hub printed, kept for the whole run (the port-reader below stops looking once
+  // it has the port). A hub that dies while a test is using it otherwise shows up only as an
+  // ECONNRESET and then a string of ECONNREFUSED, with nothing to say why.
+  let stdoutTail = '';
+  child.stdout.on('data', chunk => { stdoutTail = (stdoutTail + chunk).slice(-3000); });
+  let stopping = false;
+  child.once('exit', (code, signal) => {
+    if (stopping) return;
+    console.error(
+      `\n!!! test hub on port ${boundPort ?? '?'} exited on its own (code ${code}, signal ${signal}) -- ` +
+      `later requests to it will be refused.\n--- its last stdout ---\n${stdoutTail.trim()}\n--- its last stderr ---\n${stderrTail.trim()}\n`
+    );
+  });
 
   // The hub prints this once, before its banner. With PORT=0 it is the only way to learn the
   // port; with a fixed port it simply confirms it.
@@ -114,6 +127,7 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
   const hasExited = () => child.exitCode !== null || child.signalCode !== null;
   const fail = async reason => {
     if (hasExited()) for (let i = 0; i < 10 && !closed; i++) await sleep(50); // let stderr drain
+    stopping = true;
     child.kill();
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     throw new Error(`hub server on port ${boundPort ?? '(never reported one)'} ${reason}${stderrTail.trim() ? `\n--- hub stderr ---\n${stderrTail.trim()}` : ''}`);
@@ -147,6 +161,7 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
     // The per-start name in hub_config.json, for tests that assert on what /pairing-info serves.
     name: hubName,
     stop() {
+      stopping = true;
       child.kill();
       fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }

@@ -57,7 +57,12 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
         // `available: false` on the menu keeps its row visible but
         // disabled with an 86'd chip, so reception sees WHY the size
         // they wanted isn't takeable tonight.
-        available: v.available !== false
+        //
+        // `stock_out` is the hub saying the kitchen has run out of something this size needs. It is
+        // a separate flag from the hand 86: same disabled row, but it says so, and it clears by
+        // itself on a delivery. A size 86'd by hand is shown as 86'd even if stock is also out.
+        available: v.available !== false && v.stock_out !== true,
+        stock_out: v.available !== false && v.stock_out === true
       }));
     }
     return [{
@@ -74,7 +79,8 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
       category: item.category,
       hasModifiers,
       modifier_groups: hasModifiers ? item.modifier_groups : null,
-      available: true
+      available: item.stock_out !== true,
+      stock_out: item.stock_out === true
     }];
   });
 
@@ -207,7 +213,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                     )}
                     {isEightySixd && (
                       <span
-                        title="86'd — currently unavailable"
+                        title={row.stock_out ? 'Out of stock — the kitchen has run out of something this needs' : "86'd — currently unavailable"}
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6,
                           fontSize: '9px', color: 'var(--status-rust-text)', fontFamily: 'var(--font-mono)',
@@ -217,7 +223,7 @@ export const RapidOrderBuilder = ({ selectedTableId, draftItems, onAddItem, onRe
                           fontWeight: 700
                         }}
                       >
-                        86'D
+                        {row.stock_out ? 'OUT OF STOCK' : "86'D"}
                       </span>
                     )}
                   </div>

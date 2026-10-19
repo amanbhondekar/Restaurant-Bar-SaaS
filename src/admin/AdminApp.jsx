@@ -14,6 +14,7 @@ import { PrintersTab } from './PrintersTab';
 import { KitchenTab } from './KitchenTab';
 import { PlanTab } from './PlanTab';
 import { FeedbackTab } from './FeedbackTab';
+import { InventoryTab } from './InventoryTab';
 
 // The reception laptop's Menu & Tables page. It reads the menu, the table layout and the live table
 // states from the hub, hands them to the two tabs, and shows one "Saved on hub" indicator. Every
@@ -169,7 +170,7 @@ export const AdminApp = () => {
 
   const revision = tab === 'menu' ? menu?.revision : layout?.revision;
   const offline = Boolean(catalog.menuError && catalog.layoutError && !menu && !layout);
-  const cloudStatus = cloud.status && (tab === 'menu' ? cloud.status.menu : cloud.status.tables);
+  const cloudStatus = cloud.status && (tab === 'menu' ? cloud.status.menu : tab === 'stock' ? cloud.status.inventory : cloud.status.tables);
   const cloudNow = offline ? null : cloudState(cloudStatus, cloud.status?.online !== false);
 
   const retryCloud = async () => {
@@ -195,9 +196,9 @@ export const AdminApp = () => {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {/* The saved-revision and cloud pills describe the menu and table catalog only. */}
+            {/* The saved-revision pill describes the menu and table catalog only; the cloud pill also follows stock. */}
             {(tab === 'menu' || tab === 'tables') && <StatusPill revision={revision} offline={offline} />}
-            {(tab === 'menu' || tab === 'tables') && <CloudPill state={cloudNow} onRetry={retryCloud} />}
+            {(tab === 'menu' || tab === 'tables' || tab === 'stock') && <CloudPill state={cloudNow} onRetry={retryCloud} />}
             <a href={`${hubBase()}/`} className={cn(buttonVariants({ variant: 'outline' }), 'h-10')}>Kitchen display</a>
             <ThemeToggle className="size-10" />
           </div>
@@ -220,6 +221,7 @@ export const AdminApp = () => {
             <TabsTrigger value="menu" className="px-5">Menu</TabsTrigger>
             <TabsTrigger value="tables" className="px-5">Tables</TabsTrigger>
             <TabsTrigger value="cash" className="px-5">Cash &amp; payments</TabsTrigger>
+            <TabsTrigger value="stock" className="px-5">Stock</TabsTrigger>
             <TabsTrigger value="kitchen" className="px-5">Kitchen</TabsTrigger>
             <TabsTrigger value="printers" className="px-5">Printers</TabsTrigger>
             <TabsTrigger value="feedback" className="px-5">Feedback</TabsTrigger>
@@ -252,6 +254,9 @@ export const AdminApp = () => {
           {/* These two load on demand (default unmounted), so opening the page stays as light as before. */}
           <TabsContent value="cash" className="pt-2">
             <CashTab notify={notify} />
+          </TabsContent>
+          <TabsContent value="stock" className="pt-2">
+            <InventoryTab menu={menu} notify={notify} />
           </TabsContent>
           <TabsContent value="kitchen" className="pt-2">
             <KitchenTab />

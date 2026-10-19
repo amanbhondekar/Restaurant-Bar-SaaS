@@ -278,6 +278,14 @@ export function MenuTab({ menu, error, onRetry, onReload, onStale, notify }) {
                             {variants > 0 && <Badge variant="outline">{variants} {variants === 1 ? 'variant' : 'variants'}</Badge>}
                             {modifiers > 0 && <Badge variant="outline">{modifiers} {modifiers === 1 ? 'modifier group' : 'modifier groups'}</Badge>}
                             {dayParts > 0 && <Badge variant="outline">{dayParts} day-part {dayParts === 1 ? 'price' : 'prices'}</Badge>}
+                            {/* Set by the hub from stock, not by a switch here: it clears itself on a delivery. */}
+                            {item.stock_out && (
+                              <Badge
+                                variant="outline"
+                                title="The kitchen has run out of something this needs. It comes back by itself when stock is recorded."
+                                style={{ background: 'var(--status-rust-bg)', color: 'var(--status-rust-text)', borderColor: 'var(--status-rust-border)' }}
+                              >Out of stock</Badge>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{priceLabel(item)}</TableCell>

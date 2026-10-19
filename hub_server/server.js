@@ -30,6 +30,8 @@ import { addItem, updateItem, deleteItem, addCategory, renameCategory, reorderCa
 import { previewImport, applyImport } from './lib/menuImport.js';
 import { applyLayout } from './lib/tablesAdmin.js';
 import { publicMenu } from './lib/dinerMenu.js';
+import { inventoryStore } from './lib/inventoryStore.js';
+import { refusalFor, UNITS } from './lib/inventory.js';
 import { feedbackStore, validateFeedback, BILL_WINDOW_MS } from './lib/feedbackStore.js';
 import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js';
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
@@ -209,6 +211,38 @@ syncQueue.onStatusChange((status) => {
 // agree on what the plan lets the restaurant sell.
 restaurantCache.setFeatureProvider(() => hubConfig.getEffectivePlan().features);
 
+// Stock (inventory). The overlay flags dishes that cannot be made from what is on hand, in the same
+// read point as the plan so every menu agrees. The store judges stock against the raw cache, not the
+// overlaid one it is itself producing.
+inventoryStore.setMenuProvider(() => restaurantCache.menuCache?.items ?? []);
+restaurantCache.setStockProvider((items, restaurantId) => inventoryStore.overlay(restaurantId, items));
+
+// When a change moves a dish in or out of stock, every handset's menu has to hear about it, the
+// same as when reception 86s something by hand.
+inventoryStore.onChange(({ availability_changed }) => {
+  scheduleInventoryPush();
+  if (!availability_changed) return;
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  broadcast('menu_updated', restaurantCache.getMenuCache(rid));
+  broadcast('STOCK_CHANGED', { restaurant_id: rid });
+});
+
+// Stock changes with every order, and every push is a full snapshot, so pushing on each change would
+// send the whole ingredient list once per order. One push a few seconds after the last change is
+// enough: the cloud's copy is a backup, not something anyone reads at the pass. Anything the timer
+// has not flushed when the hub stops is carried up by the boot-time backfill.
+const INVENTORY_PUSH_MS = Number(process.env.HUB_INVENTORY_PUSH_MS) || 5000;
+let inventoryPushTimer = null;
+function scheduleInventoryPush() {
+  if (inventoryPushTimer) return;
+  inventoryPushTimer = setTimeout(() => {
+    inventoryPushTimer = null;
+    const state = inventoryStore.stateFor(hubConfig.getPairingInfo().restaurant_id);
+    if (state.restaurant_id) syncQueue.enqueueCatalog('inventory', state);
+  }, INVENTORY_PUSH_MS);
+  inventoryPushTimer.unref?.();
+}
+
 /** Refuse a route whose feature isn't in the tenant's effective plan. */
 function requireFeature(feature) {
   return (req, res, next) => {
@@ -332,8 +366,26 @@ app.post('/orders', requireDevice, (req, res) => {
     return res.status(400).json({ error: priced.error, code: priced.code, details: priced.details });
   }
 
+  // Step 0b: Stock. An order is checked as a whole against what is on hand -- two dishes that share
+  // an ingredient are checked against it together -- and refused before anything is created. A dish
+  // with no recipe needs nothing, so a restaurant that has not set stock up is never held up by it.
+  const short = inventoryStore.check(pairing.restaurant_id, priced.items);
+  if (short.length > 0) {
+    const refusal = refusalFor(short, priced.items);
+    console.warn(`📦 Order rejected for stock: ${refusal.error}`);
+    return res.status(409).json({ success: false, ...refusal });
+  }
+
   // Step 1: Assign ticket number & update memory store
   const newTicket = ticketStore.addTicket(orderData, pairing.restaurant_id, priced);
+
+  // The kitchen is going to cook this, so it comes out of stock now. Never allowed to fail the
+  // order: a bad write here must not lose a table's food.
+  try {
+    inventoryStore.consume(pairing.restaurant_id, priced.items, { ref: `#${newTicket.ticket_number}`, by: orderData.created_by_waiter });
+  } catch (err) {
+    console.error('📦 Could not record stock use for ticket', newTicket.ticket_number, err);
+  }
 
   // Step 2: Instantly push ticket to all connected Kitchen Display & Waiter WS clients over LAN BEFORE disk write
   const orderCreatedPayload = {
@@ -818,7 +870,8 @@ app.get('/admin/sync-status', requireReception, (req, res) => {
     success: true,
     online: syncQueue.isOnline,
     menu: { revision: restaurantCache.getMenuCache().revision, ...catalog.menu },
-    tables: { revision: restaurantCache.getTablesCache().revision, ...catalog.tables }
+    tables: { revision: restaurantCache.getTablesCache().revision, ...catalog.tables },
+    inventory: { revision: inventoryStore.stateFor(hubConfig.getPairingInfo().restaurant_id).revision, ...catalog.inventory }
   });
 });
 
@@ -850,8 +903,70 @@ app.put('/admin/menu/categories', requireReception, (req, res) =>
 app.delete('/admin/menu/categories', requireReception, (req, res) =>
   commitMenu(req, res, menu => deleteCategory(menu, req.query?.name)));
 
+// ----- Stock & recipes (inventory). Reception only: it is the owner's costing and counts. -----
+// Stock changes with every order, so these carry no base_revision guard (the menu's would conflict
+// constantly). Adjustments are deltas rather than overwrites, except a count, which is by design.
+const inventoryRefusal = (res, result) => res.status(result.status).json({
+  success: false, error: result.error, code: result.code, ...(result.errors ? { errors: result.errors } : {})
+});
+
+app.get('/admin/inventory', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const menu = restaurantCache.menuCache?.items ?? [];
+  const snap = inventoryStore.snapshot(rid);
+  // A recipe for a dish that has since left the menu is kept, and flagged rather than silently hidden.
+  const recipes = snap.recipes.map(r => {
+    const dish = menu.find(i => String(i.id) === r.item_id);
+    return { ...r, item_name: dish?.name ?? null, on_menu: Boolean(dish) };
+  });
+  res.json({ success: true, ...snap, recipes, units: UNITS });
+});
+
+app.get('/admin/inventory/movements', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const itemId = typeof req.query.item_id === 'string' ? req.query.item_id : undefined;
+  res.json({ success: true, movements: inventoryStore.movements(rid, { itemId, limit: req.query.limit }) });
+});
+
+app.post('/admin/inventory/items', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const result = inventoryStore.addIngredient(rid, req.body?.item, { by: 'Reception' });
+  if (!result.ok) return inventoryRefusal(res, result);
+  res.status(201).json({ success: true, revision: result.data.revision, item: result.meta.item });
+});
+
+app.put('/admin/inventory/items/:id', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const result = inventoryStore.updateIngredient(rid, req.params.id, req.body?.item);
+  if (!result.ok) return inventoryRefusal(res, result);
+  res.json({ success: true, revision: result.data.revision, item: result.meta.item });
+});
+
+app.delete('/admin/inventory/items/:id', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const result = inventoryStore.deleteIngredient(rid, req.params.id);
+  if (!result.ok) return inventoryRefusal(res, result);
+  res.json({ success: true, revision: result.data.revision });
+});
+
+app.post('/admin/inventory/items/:id/adjust', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const result = inventoryStore.adjust(rid, req.params.id, req.body, { by: 'Reception' });
+  if (!result.ok) return inventoryRefusal(res, result);
+  res.json({ success: true, revision: result.data.revision, item: result.meta.item, delta: result.meta.delta });
+});
+
+app.put('/admin/inventory/recipes', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const result = inventoryStore.setRecipe(rid, req.body, { items: restaurantCache.menuCache?.items ?? [] });
+  if (!result.ok) return inventoryRefusal(res, result);
+  res.json({ success: true, revision: result.data.revision, ...(result.meta.recipe ? { recipe: result.meta.recipe } : { removed: true }) });
+});
+
 app.post('/admin/menu/import/preview', requireReception, (req, res) => {
-  const menu = restaurantCache.getMenuCache();
+  // The stored menu, as the commit below will see it: a preview of what a save will do must not be
+  // worked out from a view with the plan's or stock's overlays on.
+  const menu = restaurantCache.getStoredMenu();
   if (menu.uninitialized) {
     return res.status(409).json({ success: false, error: menu.message, code: 'HUB_UNINITIALIZED' });
   }
@@ -2058,6 +2173,9 @@ server.listen(PORT, '0.0.0.0', () => {
       // until someone restarted it. Cheap to repeat: it short-circuits once the ledger is there.
       syncQueue.restoreLedgerFromCloud(pairingInfo.restaurant_id)
         .catch(err => console.warn('⚠️ Ledger restore on reconnect failed:', err.message));
+      syncQueue.restoreInventoryFromCloud(pairingInfo.restaurant_id)
+        .catch(err => console.warn('⚠️ Stock restore on reconnect failed:', err.message))
+        .finally(() => syncQueue.enqueueInventoryIfBehind(pairingInfo.restaurant_id));
     });
     // Refresh the subscription plan now and every 15 min. Fail-soft: offline
     // keeps the last synced plan, so LAN-only service is never interrupted.
@@ -2079,6 +2197,13 @@ server.listen(PORT, '0.0.0.0', () => {
         syncQueue.enqueueUnsyncedInvoices(pairingInfo.restaurant_id);
         syncQueue.enqueueUnsyncedReconciliations(pairingInfo.restaurant_id);
       });
+
+    // Stock the same way: a replacement laptop starts empty and rebuilds from the cloud, then whatever
+    // the cloud has not confirmed is carried up. Restore first, or the backfill would push nothing
+    // and the restore would then find a store that already had a revision.
+    syncQueue.restoreInventoryFromCloud(pairingInfo.restaurant_id)
+      .catch(err => console.warn('⚠️ Stock restore failed:', err.message))
+      .finally(() => syncQueue.enqueueInventoryIfBehind(pairingInfo.restaurant_id));
   }
 
   // Start background sync retry loop

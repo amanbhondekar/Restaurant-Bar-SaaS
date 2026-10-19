@@ -73,13 +73,13 @@ const check = ({ error }) => {
   if (error) throw error;
 };
 
-async function upsertAll(client, table, rows) {
+export async function upsertAll(client, table, rows) {
   for (const part of chunks(rows)) {
     check(await client.from(table).upsert(part, { onConflict: 'restaurant_id,hub_ref' }));
   }
 }
 
-async function deleteStale(client, table, restaurantId, keep) {
+export async function deleteStale(client, table, restaurantId, keep) {
   const res = await client.from(table).select('id, hub_ref').eq('restaurant_id', restaurantId);
   check(res);
   const stale = (res.data || []).filter(row => !row.hub_ref || !keep.has(row.hub_ref)).map(row => row.id);

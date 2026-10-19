@@ -79,6 +79,29 @@ test('diner menu: 86\'d sizes drop out, and a dish with none left is hidden', ()
   assert.equal(publicItem(dish({ variants: [{ ...half, available: false }, full] })), null);
 });
 
+test('diner menu: a dish the kitchen has run out of is hidden, the same as one that was 86\'d by hand', () => {
+  // `stock_out` is set by the stock overlay; the guest cannot tell it from an 86 and has no use for the difference.
+  assert.equal(publicItem(dish({ stock_out: true }), at(12)), null);
+  const menu = publicMenu(cache([dish({ id: 'a', name: 'Out', stock_out: true }), dish({ id: 'b', name: 'In' })]), at(12));
+  assert.deepEqual(menu.categories[0].items.map(i => i.name), ['In']);
+  assert.equal(menu.item_count, 1);
+});
+
+test('diner menu: a size the kitchen has run out of drops out, and a dish with none left is hidden', () => {
+  const sizes = [{ id: 'h', label: 'Half', price: 100, available: true }, { id: 'f', label: 'Full', price: 180, available: true, stock_out: true }];
+  const one = publicItem(dish({ variants: sizes }), at(12));
+  assert.deepEqual(one.variants.map(v => v.label), ['Half']);
+
+  const none = sizes.map(v => ({ ...v, stock_out: true }));
+  assert.equal(publicItem(dish({ variants: none }), at(12)), null, 'every size out: the dish is not listed with an empty price');
+});
+
+test('diner menu: the stock flag itself never reaches the guest', () => {
+  const out = publicItem(dish({ variants: [{ id: 'h', label: 'Half', price: 100 }] }), at(12));
+  assert.equal('stock_out' in out, false);
+  assert.equal(JSON.stringify(out).includes('stock'), false);
+});
+
 test('diner menu: a dish with no usable price is hidden rather than shown as free', () => {
   assert.equal(publicItem(dish({ price: 0 })), null);
   assert.equal(publicItem(dish({ price: undefined })), null);

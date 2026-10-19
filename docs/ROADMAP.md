@@ -29,7 +29,8 @@ early pilots:
 - **Waiter Handset PWA** — installable, LAN-paired, floor grid + menu +
   cart, PIN sign-in, works while WAN is down.
 - **Reception admin console** (`/admin`) — menu, table layout, cash and
-  payments, kitchen performance, printers, subscription plan.
+  payments, stock and recipes, kitchen performance, printers, guest feedback,
+  subscription plan.
 - **Diner menu** (`/diner`) — read-only, no sign-in, opened from a table code.
 - **Reception / server-laptop app** — sales analytics, waitlist.
 
@@ -37,11 +38,12 @@ M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **589 hub tests across 31 files** (pure rules plus live
+Automated coverage is **718 hub tests across 37 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**49 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
-the admin Feedback tab and the waiter modifier sheet. The KDS, the rest of the
-admin console and the rest of the waiter PWA are still verified by hand.
+**116 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
+the admin Feedback and Stock tabs, and the waiter modifier sheet and menu grid.
+The KDS, the rest of the admin console and the rest of the waiter PWA are still
+verified by hand.
 
 ---
 
@@ -121,6 +123,15 @@ admin console and the rest of the waiter PWA are still verified by hand.
 - ✅ Hub write layer for menu and tables: validated, revision-guarded,
   reception-only, with CSV row import.
 - ✅ Admin console tabs for menu, tables and import.
+- ✅ Stock and recipes: ingredients with one unit each, per-dish and per-size
+  recipes, deliveries / waste / counts with an audit log. Orders are checked
+  against stock as a whole and refused with a readable reason; a dish that
+  cannot be made is flagged `stock_out` on the waiter grid and hidden from the
+  diner menu, and returns by itself on a delivery. The flag is separate from
+  the hand 86, so the two never undo each other. Cloud copy: migration 009.
+- ✅ Menu edits start from the stored menu, not the plan- or stock-overlaid
+  one. Before, a tenant whose plan hides modifiers lost them for good the first
+  time they edited any dish.
 
 ### Kitchen operations (M2)
 - ✅ Multi-station routing (hot / cold / bar) with per-station KDS filtering
@@ -182,13 +193,16 @@ admin console and the rest of the waiter PWA are still verified by hand.
 - 🟡 **Owner console**: plan and usage have shipped; staff invites, role
   management, PIN rotation and hub device revocation have not. The console
   is reception-only — there is no remote owner view.
-- 🟡 **Inventory**: the M2 leftover. There are no `inventory_items` or
-  `recipes` tables, so 86'd is set by hand in the editor rather than driven
-  by stock-out.
-- 🟡 **Kitchen operations tail**: course state is still not replicated to
-  Supabase (only ticket status is), and station screens are a filter on one
-  display rather than per-station KDS instances. Recall now reprints, firing
-  is plan-gated, and the CSV carries course.
+- 🟡 **Inventory limits**: modifier choices (extra cheese) do not use stock,
+  there is no costing, par level or reorder prompt, and a cancelled order does
+  not return stock. Migration 009 is unrun and its restore path is untested
+  against a real project. Not plan-gated: whether stock is a paid feature is
+  a pricing call.
+- 🟡 **Kitchen operations tail**: station screens are a filter on one display
+  rather than per-station KDS instances. Worse, the Kitchen Display sends no
+  device token, so a station screen on any device other than the reception
+  laptop gets 401 on its tickets and is refused on the live feed: today only
+  the reception laptop can host a KDS at all.
 - 🟡 **Billing replication is one-way and unproven**: bills and cash-ups now
   push to the cloud (005, 006) and a boot backfill carries up anything the
   cloud has not confirmed, but nothing has run against a real Supabase
@@ -241,9 +255,12 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.2 Inventory & menu depth  🟡
 - ✅ `menu_item_variants`, modifiers and day-part scheduling, surfaced in
   the order draft drawer.
-- ⬜ `inventory_items` and `recipes` tables.
-- ⬜ 86'd-item propagation from stock-out to the waiter menu grid
-  (per-variant 86'd exists, but it is set by hand).
+- ✅ `inventory_items` and `recipes` (migration 009): hub-authoritative, pushed
+  as a debounced snapshot, restorable onto an empty replacement laptop.
+- ✅ Stock-out propagates to the waiter grid and the diner menu as a `stock_out`
+  flag over the menu, never a write to `available`; the order check is the
+  backstop for a stale handset.
+- ⬜ Modifier choices that use stock; costing and par levels; reorder prompts.
 
 ### 4.3 Kitchen operations  🟡
 - ✅ Multi-station routing, course firing / hold-and-fire, prep-time
@@ -341,10 +358,10 @@ parallel manual bill book. **Complete 2026-10-05.**
 
 ### M2 — Menu depth  ✅
 Enough menu modelling to onboard restaurants beyond a flat item list.
-**Complete 2026-10-07**, less the inventory tail.
+**Complete 2026-10-07**; the inventory tail closed 2026-10-19.
 - ✅ 4.2 modifiers, variants, per-variant 86'd, day-part pricing.
 - ✅ 4.3 multi-station KDS routing and course firing.
-- 🟡 Carried to 4.2: stock-driven 86'd and inventory tables.
+- ✅ 4.2 stock-driven 86'd and inventory tables.
 
 ### M3 — Self-serve tenant  🟡
 The product can onboard a new restaurant without engineering.

@@ -173,10 +173,17 @@ class RestaurantCache {
     // server.js; the default grants everything so unit tests and tools that
     // use the cache standalone see the full menu.
     this.featureProvider = () => null;
+    // Flags dishes that cannot be made from the stock on hand (lib/inventory.js). Wired by server.js;
+    // the default leaves the menu as it is, so the cache used standalone sees no stock at all.
+    this.stockProvider = items => items;
   }
 
   setFeatureProvider(fn) {
     this.featureProvider = typeof fn === 'function' ? fn : () => null;
+  }
+
+  setStockProvider(fn) {
+    this.stockProvider = typeof fn === 'function' ? fn : items => items;
   }
 
   loadFromDisk() {
@@ -261,7 +268,8 @@ class RestaurantCache {
   }
 
   async _applyCatalogUpdate(kind, baseRevision, mutator) {
-    const current = kind === 'menu' ? this.getMenuCache() : this.getTablesCache();
+    // The stored menu, never the shown one (see getStoredMenu): saving must not write overlays.
+    const current = kind === 'menu' ? this.getStoredMenu() : this.getTablesCache();
     if (current.uninitialized) {
       return failure(409, 'HUB_UNINITIALIZED', 'No catalog yet — connect this hub to the internet once to complete setup.');
     }
@@ -549,6 +557,20 @@ class RestaurantCache {
     }
   }
 
+  /**
+   * The menu as STORED, with no overlay of any kind. This is what an edit must start from.
+   *
+   * `getMenuCache` is the menu as SHOWN: the plan hides fields a tenant's plan does not include,
+   * and stock flags what cannot be made. An edit that began from the shown menu would write those
+   * overlays into the stored one when it saved. A tenant downgraded to Starter would lose every
+   * modifier, day-part price and station the first time they corrected a typo, and a stock-out
+   * would become a permanent 86. So reads get the overlays and writes never do.
+   */
+  getStoredMenu(restaurantId) {
+    if (this.isUninitialized || !this.menuCache) return this.getMenuCache(restaurantId);
+    return { ...this.menuCache, revision: this.menuCache.revision || 0, uninitialized: false };
+  }
+
   getMenuCache(restaurantId) {
     if (this.isUninitialized || !this.menuCache) {
       return {
@@ -565,9 +587,13 @@ class RestaurantCache {
     // stripped here, at the single read point shared by GET /menu and the
     // order pricer, so handsets and billing always agree on what's sellable.
     const features = this.featureProvider();
-    const items = features
+    const planned = features
       ? applyPlanToMenuItems(this.menuCache.items, features)
       : this.menuCache.items;
+    // Stock-out (inventory): a `stock_out` flag layered over the menu, never a write to it, so the
+    // editor never sees it as a hand 86 and restocking undoes it. Same single read point as the plan,
+    // so the handset grid, the diner menu and the order check all agree on what can be made.
+    const items = this.stockProvider(planned, restaurantId);
     return {
       ...this.menuCache,
       revision: this.menuCache.revision || 0,
