@@ -40,9 +40,15 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Hub regression suite
-        run: npm test
+        run: npm run test:hub
         env:
           # Deterministic order and time-based tests don't need a real timezone.
+          TZ: UTC
+
+      # A separate step rather than one npm test, so a red run says which side broke.
+      - name: Frontend suite (diner, admin, waiter)
+        run: npm run test:web
+        env:
           TZ: UTC
 
       - name: Production build (KDS + waiter PWA)

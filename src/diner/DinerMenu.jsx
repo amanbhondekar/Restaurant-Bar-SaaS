@@ -62,8 +62,10 @@ export function DinerMenu() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  // Carried from the QR on the table, shown so a guest can tell they scanned their own code.
-  // It is never sent anywhere and nothing is decided by it.
+  // Carried from the QR on the table, shown so a guest can tell they scanned their own code. The
+  // menu does not depend on it. Feedback does send it: the hub uses it to find that table's most
+  // recently settled bill, so it is guest-supplied input there and the hub treats it as such
+  // (a per-table cooldown, and a bill it resolves itself rather than one the guest names).
   const table = new URLSearchParams(window.location.search).get('t');
 
   const load = useCallback(async () => {

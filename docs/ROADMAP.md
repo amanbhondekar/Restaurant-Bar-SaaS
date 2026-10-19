@@ -37,10 +37,11 @@ M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **455 tests across 22 files, hub-side only**: pure
-rules plus live hub fixtures that boot a real server against a throwaway
-data directory. There is still no frontend test runner, so no surface above
-is covered by automated tests.
+Automated coverage is **589 hub tests across 31 files** (pure rules plus live
+hub fixtures that boot a real server against a throwaway data directory) and
+**49 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
+the admin Feedback tab and the waiter modifier sheet. The KDS, the rest of the
+admin console and the rest of the waiter PWA are still verified by hand.
 
 ---
 
@@ -203,9 +204,10 @@ is covered by automated tests.
   this file flagged flaky hydration. Re-checked on 2026-10-13 against a
   running hub — sales, floor grid, active KOTs and billed orders all render
   with no console errors. Moved out of this section.
-- 🟡 **Test coverage**: the hub is well covered; no frontend test runner
-  exists, so the KDS, admin console, waiter PWA and diner page are verified
-  by hand.
+- 🟡 **Test coverage**: the hub is well covered. A frontend runner now exists
+  and covers the diner page, the admin Feedback tab and the waiter modifier
+  sheet; the KDS, the other admin tabs, order entry and login are still
+  verified by hand, and nothing yet drives a real browser.
 
 ---
 
@@ -290,7 +292,11 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.8 Reliability & observability  🟡
 - ✅ CI pipeline (GitHub Actions): hub tests + build on Node 20/22.
 - ✅ Crash / error reporting from the hub and both PWAs.
-- ⬜ Frontend test suite (Vitest + Playwright smoke on KDS and PWA).
+- 🟡 Frontend test suite: Vitest + Testing Library runs in CI as its own step.
+  First surfaces are the diner page, the admin Feedback tab and the waiter
+  modifier sheet, including a contract test that feeds the sheet's output to
+  the hub's real `priceOrder`. Still to do: the KDS, order entry, login, the
+  other admin tabs, and a Playwright smoke run in a real browser.
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
   there is no window between choosing a port and holding it. Runner
