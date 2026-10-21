@@ -1129,6 +1129,30 @@ app.get('/invoices', requireDevice, (req, res) => {
 const receptionCash = requireReceptionFor('Cash and payment reconciliation');
 
 // 7c-1. GET /reconciliation/preview — the period since the last close, per payment method. Stores nothing.
+// A hub that holds SOME bills is refused by the restore (it is the authority on what it holds), so a
+// ledger that is merely short stays short and nobody finds out. This reports the gap, and fills it
+// only when asked: the merge adds what is missing and never touches a record already here.
+app.get('/reconciliation/ledger-gap', receptionCash, async (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  res.json({ success: true, ...(await syncQueue.checkLedgerGap(pairing.restaurant_id)) });
+});
+
+app.post('/reconciliation/ledger-repair', receptionCash, async (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = await syncQueue.repairLedgerFromCloud(pairing.restaurant_id, { apply: req.body?.apply === true });
+  if (!result.ok) {
+    const status = result.reason === 'OFFLINE' ? 503 : result.reason === 'NOT_PAIRED' ? 409 : 502;
+    return res.status(status).json({ success: false, code: result.reason, error: ledgerRepairRefusal(result) });
+  }
+  res.json({ success: true, ...result });
+});
+
+const ledgerRepairRefusal = result => ({
+  OFFLINE: 'The hub cannot reach the internet, so it cannot compare its bills with the cloud. Try again when it is back.',
+  NOT_PAIRED: 'This hub is not paired to a restaurant, so there is no cloud ledger to compare with.',
+  CLOUD_ERROR: `The cloud refused the request${result.detail ? `: ${result.detail}` : '.'}`
+}[result.reason] || 'The ledger could not be checked.');
+
 app.get('/reconciliation/preview', receptionCash, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   res.json({ success: true, ...reconciliationStore.preview(invoiceStore.listInvoices(pairing.restaurant_id), pairing.restaurant_id) });
@@ -2268,6 +2292,10 @@ server.listen(PORT, '0.0.0.0', () => {
         // changing, so anything settled before migrations 005/006 has nothing coming for it.
         syncQueue.enqueueUnsyncedInvoices(pairingInfo.restaurant_id);
         syncQueue.enqueueUnsyncedReconciliations(pairingInfo.restaurant_id);
+        // A ledger the restore refused because it was not empty may still be SHORT. Counting is
+        // cheap and is the only way anyone would find out; filling the gap stays reception's call.
+        syncQueue.checkLedgerGap(pairingInfo.restaurant_id)
+          .catch(err => console.warn('⚠️ Ledger gap check failed:', err.message));
       });
 
     // Stock the same way: a replacement laptop starts empty and rebuilds from the cloud, then whatever

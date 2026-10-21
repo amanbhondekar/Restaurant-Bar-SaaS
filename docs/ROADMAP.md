@@ -41,9 +41,9 @@ M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **741 hub tests across 38 files** (pure rules plus live
+Automated coverage is **776 hub tests across 40 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**198 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
+**207 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
 the station screens, the admin Feedback, Stock and Kitchen-panel tabs, and the
 waiter modifier sheet and menu grid. The reception Kitchen Display, the rest of
 the admin console and the rest of the waiter PWA are still verified by hand.
@@ -247,8 +247,11 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Restore: a hub with an empty ledger pulls its bills and cash-ups back
   from the cloud at boot and on reconnect. Only ever fills, never merges —
   a hub that holds bills is the authority on them.
-- ⬜ Repairing a *partial* ledger (some bills present, others missing) is
-  not attempted; that needs a per-bill merge rule.
+- ✅ Repairing a *partial* ledger: a union keyed on the hub's own id where the
+  hub wins every conflict, so a local void or refund stands and a bill issued
+  offline is never deleted for being absent from the cloud. Reception is shown
+  what it would add and confirms; the hub counts both sides at boot and warns
+  when the cloud has more.
 - ✅ Cloud replication of cash-up records (migration 006), inserted rather
   than upserted: a closed shift is immutable.
 - ✅ Backfill at boot for bills and cash-ups the cloud has not confirmed,
@@ -256,9 +259,12 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ A sync queue file that will not parse is salvaged, preserved for
   recovery by hand and reported loudly, instead of being answered with an
   empty queue and overwritten.
-- ⬜ The queue's disk write is still not atomic, so the entry being written
-  when a hub crashes is still lost. Making it atomic was tried and reverted
-  on measurement; it needs a transactional design, not a swapped call.
+- ✅ The queue's write survives a crash: the state is appended to a journal
+  before the snapshot is touched, so a torn snapshot no longer loses the
+  newest unsent takings. An append cannot damage what is already on disk,
+  which is why this works where a rename was reverted on measurement.
+- ⬜ Nothing calls `fsync`, so a power cut can still lose an append the OS
+  had buffered. That is the cost the earlier measurement rejected.
 
 ### 4.2 Inventory & menu depth  🟡
 - ✅ `menu_item_variants`, modifiers and day-part scheduling, surfaced in

@@ -4,6 +4,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from 'cn';
 import { explainError, hubBase, hubGet, hubSend } from './api';
 import { ConfirmDialog, Field, ListSkeleton, Notice, TextInput, formatPrice } from './ui';
+import { LedgerRepair } from './LedgerRepair';
 
 // Cash & payments: what the system says was taken since the last close, what the drawer and the
 // card/UPI statements say, and the stored record of each closed shift. The hub does all the
@@ -246,6 +247,11 @@ export function CashTab({ notify }) {
           ? 'The counts do not match the system. The difference is saved in the record, and a closed shift cannot be changed.'
           : 'Everything balances. A closed shift is saved as a permanent record and cannot be changed.'}
       </ConfirmDialog>
+
+      {/* Quiet unless something is wrong: it says nothing at all when the ledgers agree. */}
+      <div className="lg:col-span-2">
+        <LedgerRepair notify={notify} />
+      </div>
     </div>
   );
 }

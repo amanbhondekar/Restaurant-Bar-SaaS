@@ -57,3 +57,6 @@ hub_server/data/feedback.json
 # keeps the previous restaurant's file aside as inventory.<id>.json. Unreadable files are kept as
 # inventory.corrupt-<ts>.json.
 hub_server/data/inventory*.json
+
+# The sync queue's write-ahead journal: the hub's own crash-recovery record, rewritten constantly.
+hub_server/data/sync_queue.wal

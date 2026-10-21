@@ -86,6 +86,20 @@ export function reconciliationFromCloud(row) {
 }
 
 /** Every cash-up the cloud holds for this tenant, oldest first so `seq` reads in order. */
+/** How many cash-ups the cloud holds, counted rather than downloaded. See countInvoices. */
+export async function countReconciliations(client, restaurantId) {
+  const { count, error } = await client
+    .from('reconciliations')
+    .select('id', { count: 'exact', head: true })
+    .eq('restaurant_id', restaurantId);
+  if (error) {
+    const err = new Error(error.message || 'Supabase refused to count cash-ups');
+    err.code = error.code;
+    throw err;
+  }
+  return Number(count) || 0;
+}
+
 export async function pullReconciliations(client, restaurantId) {
   const { data, error } = await client
     .from('reconciliations')

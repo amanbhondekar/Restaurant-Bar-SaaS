@@ -117,6 +117,23 @@ export function invoiceFromCloud(row) {
   };
 }
 
+/**
+ * How many bills the cloud holds for this tenant, without downloading any of them. `head: true`
+ * asks PostgREST for the count and no rows, so this stays cheap enough to run at boot.
+ */
+export async function countInvoices(client, restaurantId) {
+  const { count, error } = await client
+    .from('invoices')
+    .select('id', { count: 'exact', head: true })
+    .eq('restaurant_id', restaurantId);
+  if (error) {
+    const err = new Error(error.message || 'Supabase refused to count invoices');
+    err.code = error.code;
+    throw err;
+  }
+  return Number(count) || 0;
+}
+
 /** Every bill the cloud holds for this tenant, newest first -- the order the hub stores them in. */
 export async function pullInvoices(client, restaurantId) {
   const { data, error } = await client

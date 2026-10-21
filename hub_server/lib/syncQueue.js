@@ -7,16 +7,20 @@ import { hubConfig } from './hubConfig.js';
 import { pushMenu, pushTables, isUuid } from './catalogSync.js';
 import { pushInventory, pullInventory } from './inventorySync.js';
 import { inventoryStore } from './inventoryStore.js';
-import { pushInvoice, pullInvoices } from './invoiceSync.js';
+import { pushInvoice, pullInvoices, countInvoices } from './invoiceSync.js';
 import { invoiceStore } from './invoiceStore.js';
-import { pushReconciliation, pullReconciliations } from './reconciliationSync.js';
+import { pushReconciliation, pullReconciliations, countReconciliations } from './reconciliationSync.js';
+import { mergeById, byIssuedDesc, bySeqAsc, describeRepair, ledgerGap } from './ledgerRepair.js';
 import { reconciliationStore } from './reconciliationStore.js';
 import { orderCourseColumns, itemCourseColumns, isMissingCourseColumn, withoutCourseColumns } from './courseSync.js';
+import { encodeRecord, lastCompleteRecord } from './queueJournal.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = process.env.HUB_DATA_DIR || path.join(__dirname, '..', 'data');
 const QUEUE_FILE = path.join(DATA_DIR, 'sync_queue.json');
+// Appended before every snapshot, emptied after. See lib/queueJournal.js for why.
+const QUEUE_JOURNAL = path.join(DATA_DIR, 'sync_queue.wal');
 const QUARANTINE_FILE = path.join(DATA_DIR, 'quarantine_sync_queue.json');
 // Newest catalog revision the cloud is known to hold, per catalog. Survives restarts so the admin page
 // can say "synced" without pushing again.
@@ -130,7 +134,18 @@ class SyncQueue {
     }
   }
 
+  /**
+   * The queue as the hub last committed it.
+   *
+   * The journal wins whenever it holds a complete state: it is written BEFORE the snapshot, so it
+   * is never older, and it is the only one of the two that cannot have been damaged by a crash
+   * part-way through a write. It is empty in the ordinary case (truncated after each snapshot),
+   * which is why the snapshot is still the usual answer.
+   */
   loadQueue() {
+    const journalled = this.loadJournal();
+    if (journalled) return journalled;
+
     let raw = null;
     try {
       if (!fs.existsSync(QUEUE_FILE)) return [];
@@ -141,6 +156,31 @@ class SyncQueue {
     } catch (err) {
       return this.recoverQueue(raw, err);
     }
+  }
+
+  /**
+   * The newest complete state in the journal, or null when there is nothing usable in it.
+   *
+   * A journal that survived a restart means the hub stopped between committing a state and
+   * finishing the snapshot, so it is worth saying so: it is the one moment this machinery exists
+   * for, and silence would make a real crash indistinguishable from a clean shutdown.
+   */
+  loadJournal() {
+    let raw;
+    try {
+      if (!fs.existsSync(QUEUE_JOURNAL)) return null;
+      raw = fs.readFileSync(QUEUE_JOURNAL, 'utf-8');
+    } catch (err) {
+      console.warn(`⚠️ Could not read ${path.basename(QUEUE_JOURNAL)}: ${err.message}`);
+      return null;
+    }
+    const record = lastCompleteRecord(raw);
+    if (!record) return null;
+    console.warn(
+      `🛟 The hub stopped before it finished saving its sync queue. Recovered ${record.queue.length} ` +
+      `item(s) from ${path.basename(QUEUE_JOURNAL)}${record.at ? `, committed ${record.at}` : ''}.`
+    );
+    return record.queue;
   }
 
   /**
@@ -178,16 +218,20 @@ class SyncQueue {
     // succession (the ticket updates, then the bill), and unchained writes finish in whatever
     // order the OS returns them -- so the file could end up holding an older snapshot than
     // memory and silently lose the newest ops if the hub then stopped. Chaining keeps the last
-    // call the last write. The JSON is captured now, not inside the chain, so each link writes
-    // the queue as it was when that save was asked for.
+    // call the last write. Both payloads are built now, not inside the chain, so each link
+    // writes the queue as it was when that save was asked for.
     //
-    // NOTE: still not atomic. A crash inside the write leaves a truncated file, and loadQueue
-    // answers a parse failure with an empty queue, discarding everything unsent. Writing to a
-    // temp file and renaming was tried and reverted: on Windows the rename contends with
-    // readers, and this is a far hotter path than a catalog write. That needs its own slice.
+    // The journal is appended FIRST and emptied LAST, which is what makes a crash survivable:
+    // an append cannot damage what is already on disk, so the state is durable before the
+    // snapshot -- the part that CAN be torn -- is touched at all. See lib/queueJournal.js.
+    const record = encodeRecord(queueList);
     const snapshot = JSON.stringify(queueList, null, 2);
     this._writeChain = this._writeChain
+      .then(() => fs.promises.appendFile(QUEUE_JOURNAL, record, 'utf-8'))
       .then(() => fs.promises.writeFile(QUEUE_FILE, snapshot, 'utf-8'))
+      // Only now is the snapshot known to hold this state, so the journal has nothing left to
+      // protect. Truncating rather than deleting keeps one file for the life of the hub.
+      .then(() => fs.promises.truncate(QUEUE_JOURNAL, 0))
       .catch(err => console.error('❌ Async save queue error:', err));
     return true;
   }
@@ -495,6 +539,89 @@ class SyncQueue {
       console.log(`📥 Restored ${invoices} bill(s) and ${cashups} cash-up(s) from the cloud.`);
     }
     return { restored: Boolean(invoices || cashups), invoices, cashups };
+  }
+
+  /**
+   * Whether the cloud holds bills or cash-ups this hub does not, from counts alone.
+   *
+   * Runs at boot when the ledger is NOT empty -- the case `restoreLedgerFromCloud` refuses and
+   * where a shortfall would otherwise never be noticed by anyone. Two counting queries, and every
+   * failure is soft: not knowing is not a reason to hold up a hub that is about to open.
+   */
+  async checkLedgerGap(restaurantId) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { checked: false, reason: 'NOT_PAIRED' };
+    }
+    const { online } = await this.checkConnection();
+    if (!online) return { checked: false, reason: 'OFFLINE' };
+
+    try {
+      const gap = ledgerGap({
+        localInvoices: invoiceStore.listInvoices(restaurantId).length,
+        cloudInvoices: await countInvoices(this.cloud, restaurantId),
+        localCashups: reconciliationStore.list(restaurantId).length,
+        cloudCashups: await countReconciliations(this.cloud, restaurantId)
+      });
+      this.lastLedgerGap = { ...gap, at: new Date().toISOString() };
+      if (gap.short) {
+        console.warn(
+          `⚠️ The cloud holds ${gap.invoices} bill(s) and ${gap.cashups} cash-up(s) this hub does not. ` +
+          'Reception can fill the gap from Cash & payments -> Repair ledger; nothing already here is changed.'
+        );
+      }
+      return { checked: true, ...gap };
+    } catch (err) {
+      console.warn(`⚠️ Could not compare the ledger with the cloud: ${err.message}`);
+      return { checked: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+  }
+
+  /**
+   * Fills the gaps in a partial ledger from the cloud. With `apply: false` (the default) it only
+   * reports what it WOULD add, so reception can look before it leaps.
+   *
+   * The merge rule is in lib/ledgerRepair.js: a union keyed on the hub's own id, where anything
+   * already here wins. Nothing is overwritten and nothing is removed.
+   */
+  async repairLedgerFromCloud(restaurantId, { apply = false } = {}) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { ok: false, reason: 'NOT_PAIRED' };
+    }
+    const { online } = await this.checkConnection();
+    if (!online) return { ok: false, reason: 'OFFLINE' };
+
+    let cloudInvoices;
+    let cloudCashups;
+    try {
+      cloudInvoices = await pullInvoices(this.cloud, restaurantId);
+      cloudCashups = await pullReconciliations(this.cloud, restaurantId);
+    } catch (err) {
+      console.warn(`⚠️ Could not read the cloud ledger: ${err.message}`);
+      return { ok: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+
+    const bills = mergeById(invoiceStore.listInvoices(restaurantId), cloudInvoices, byIssuedDesc);
+    const cashups = mergeById(reconciliationStore.list(restaurantId), cloudCashups, bySeqAsc);
+    const described = describeRepair({ invoices: bills.added, cashups: cashups.added });
+    const result = {
+      ok: true,
+      applied: false,
+      added: { invoices: bills.added.length, cashups: cashups.added.length },
+      invoice_numbers: bills.added.map(i => i.invoice_number).filter(Boolean),
+      ...described
+    };
+    if (!apply || !described.changed) return result;
+
+    // Everything pulled is already in the cloud, so it is stored as replicated: the backfill that
+    // follows must not push it all straight back up.
+    invoiceStore.invoices = bills.merged;
+    invoiceStore.save();
+    reconciliationStore.records = cashups.merged;
+    reconciliationStore.persist();
+    console.log(`🩹 Ledger repaired: added ${bills.added.length} bill(s) and ${cashups.added.length} cash-up(s) from the cloud.`);
+    return { ...result, applied: true };
   }
 
   /** Queues every cash-up the cloud has not confirmed. Runs at boot, alongside the bills. */
