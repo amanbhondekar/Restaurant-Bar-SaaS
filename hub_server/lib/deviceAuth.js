@@ -29,6 +29,13 @@ function generateEnrollmentCode() {
   return Array.from(bytes, b => ENROLL_ALPHABET[b % ENROLL_ALPHABET.length]).join('');
 }
 
+/**
+ * How a device is named in the API. Grants issued before ids existed fall back to a prefix of
+ * their token hash: it is already stored, it is stable, and a 16-hex-character prefix identifies
+ * one grant among at most 50 without being enough to reconstruct the token.
+ */
+const deviceId = device => device?.id || `legacy_${String(device?.token_hash || '').slice(0, 16)}`;
+
 /** Constant-time compare that tolerates length differences without leaking them. */
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
@@ -60,6 +67,57 @@ class DeviceAuth {
 
   listDevices() {
     return hubConfig.getPairingInfo().devices || [];
+  }
+
+  /**
+   * The enrolled devices as reception may see them: never the token hash, which is the only
+   * secret here. `id` identifies one device for revocation.
+   *
+   * Devices enrolled before ids existed get one derived from their token hash, which is stable
+   * for the life of the grant -- so an old handset can still be revoked without re-enrolling
+   * every device in the restaurant first.
+   */
+  listDevicesPublic(now = new Date()) {
+    return this.listDevices().map(d => ({
+      id: deviceId(d),
+      label: d.label || 'Device',
+      issued_at: d.issued_at ?? null,
+      expires_at: d.expires_at ?? null,
+      expired: new Date(d.expires_at).getTime() <= now.getTime()
+    }));
+  }
+
+  /**
+   * Revoke one device. The handset is refused on its very next request -- there is no session to
+   * expire -- so this is what reception reaches for when a phone is lost or someone leaves.
+   *
+   * Rotating the enrollment code also revokes every device, which is the right answer when a code
+   * has been shared around and the wrong one when a single phone is missing: it makes every other
+   * handset in the restaurant re-enrol mid-service.
+   */
+  revokeDevice(id) {
+    const cfg = hubConfig.getPairingInfo();
+    const devices = cfg.devices || [];
+    const match = devices.find(d => deviceId(d) === String(id));
+    if (!match) return { ok: false, code: 'NOT_FOUND', error: 'That device is not enrolled on this hub.' };
+
+    hubConfig.saveConfig({ ...cfg, devices: devices.filter(d => d !== match) });
+    return { ok: true, device: { id: deviceId(match), label: match.label || 'Device' } };
+  }
+
+  /**
+   * Drop every grant that has already expired. Housekeeping, not a security action: an expired
+   * token is already refused: this only stops reception reading a list of ghosts.
+   *
+   * Deliberately not prunedDevices(), which also caps the roster because it runs while ADDING one.
+   */
+  pruneExpiredDevices(now = new Date()) {
+    const cfg = hubConfig.getPairingInfo();
+    const devices = cfg.devices || [];
+    const kept = devices.filter(d => new Date(d.expires_at).getTime() > now.getTime());
+    if (kept.length === devices.length) return { removed: 0 };
+    hubConfig.saveConfig({ ...cfg, devices: kept });
+    return { removed: devices.length - kept.length };
   }
 
   isRateLimited(ip) {
@@ -121,6 +179,8 @@ class DeviceAuth {
     const cfg = hubConfig.getPairingInfo();
 
     const device = {
+      // Stable, and not derived from the secret, so it can be shown on a screen and put in a URL.
+      id: 'dev_' + crypto.randomBytes(5).toString('hex'),
       // Only a hash is persisted, so a leaked hub_config.json cannot be replayed.
       token_hash: crypto.createHash('sha256').update(token).digest('hex'),
       label: deviceLabel,

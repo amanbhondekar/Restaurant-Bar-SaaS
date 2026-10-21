@@ -41,9 +41,9 @@ M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **776 hub tests across 40 files** (pure rules plus live
+Automated coverage is **800 hub tests across 41 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**207 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
+**231 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
 the station screens, the admin Feedback, Stock and Kitchen-panel tabs, and the
 waiter modifier sheet and menu grid. The reception Kitchen Display, the rest of
 the admin console and the rest of the waiter PWA are still verified by hand.
@@ -296,8 +296,13 @@ milestones (§5) when a theme is pulled into a release.
 - 🟡 Tenant provisioning: `provision_restaurant()` (migration 007) creates a
   complete trialing tenant in one call, replacing four manual SQL steps.
   There is still no signup surface in front of it (M3 · PR 17).
-- ⬜ Owner console: staff invites, role management, PIN rotation, hub device
-  revocation (M3 · PR 18 follow-up).
+- ✅ Owner console: staff invites, role management, PIN rotation and hub device
+  revocation. Reception never types someone else's PIN: they add a person with
+  a role and read out a one-time invite code, and the staff member chooses
+  their own PIN on a handset. An invited person has no hash at all until they
+  do, so they cannot sign in with anything. A single device can be revoked and
+  is refused on its next request, instead of rotating the code and making every
+  handset in the restaurant re-enrol mid-service.
 - ⬜ Billing integration (Razorpay / Stripe) for subscription (M3 · PR 19) —
   **blocked on a payment-provider decision**.
 
@@ -323,7 +328,9 @@ milestones (§5) when a theme is pulled into a release.
 
 ### 4.7 Auth & access control  🟡
 - ✅ Waiter PIN login wired into the PWA, session bound to a device token.
-- ⬜ Role UIs for owner / manager / waiter / kitchen.
+- ⬜ Role UIs for owner / manager / waiter / kitchen. Roles are now STORED per
+  staff member and shown to reception, but nothing enforces them: anyone signed
+  in can still void a bill.
 - ⬜ Role-scoped device tokens: a kitchen tablet should be able to mark tickets
   ready and not void a bill.
 - ⬜ Password reset + optional SSO for owner accounts.

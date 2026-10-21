@@ -15,6 +15,7 @@ import { KitchenTab } from './KitchenTab';
 import { PlanTab } from './PlanTab';
 import { FeedbackTab } from './FeedbackTab';
 import { InventoryTab } from './InventoryTab';
+import { StaffTab } from './StaffTab';
 
 // The reception laptop's Menu & Tables page. It reads the menu, the table layout and the live table
 // states from the hub, hands them to the two tabs, and shows one "Saved on hub" indicator. Every
@@ -224,6 +225,7 @@ export const AdminApp = () => {
             <TabsTrigger value="stock" className="px-5">Stock</TabsTrigger>
             <TabsTrigger value="kitchen" className="px-5">Kitchen</TabsTrigger>
             <TabsTrigger value="printers" className="px-5">Printers</TabsTrigger>
+            <TabsTrigger value="staff" className="px-5">Staff</TabsTrigger>
             <TabsTrigger value="feedback" className="px-5">Feedback</TabsTrigger>
             <TabsTrigger value="plan" className="px-5">Plan</TabsTrigger>
           </TabsList>
@@ -263,6 +265,9 @@ export const AdminApp = () => {
           </TabsContent>
           <TabsContent value="printers" className="pt-2">
             <PrintersTab notify={notify} />
+          </TabsContent>
+          <TabsContent value="staff" className="pt-2">
+            <StaffTab notify={notify} />
           </TabsContent>
           <TabsContent value="feedback" className="pt-2">
             <FeedbackTab />

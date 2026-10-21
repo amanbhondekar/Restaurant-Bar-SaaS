@@ -25,7 +25,7 @@ import { listSystemPrinters } from './lib/usbPrinter.js';
 import { groupTicketByStation, STATION_LABELS } from './lib/kotRouting.js';
 import { withCourseState, firedItems, heldCourses } from './lib/courses.js';
 import { prepReport } from './lib/prepTelemetry.js';
-import { waiterStore } from './lib/waiterStore.js';
+import { waiterStore, ROLES, ROLE_LABEL } from './lib/waiterStore.js';
 import { addItem, updateItem, deleteItem, addCategory, renameCategory, reorderCategories, deleteCategory } from './lib/menuAdmin.js';
 import { previewImport, applyImport } from './lib/menuImport.js';
 import { applyLayout } from './lib/tablesAdmin.js';
@@ -1263,6 +1263,93 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
 });
 
 // 7c-2. GET /waiters — Active waiters (public shape only; PIN hashes never leave the hub)
+// ----- Staff and devices (§4.4). Reception only: this is who may take money in the restaurant. --
+//
+// The handset's own /waiters routes below are unchanged. These are the managing half: who is on
+// the list, what they are, how they get a PIN, and which devices may talk to this hub at all.
+const staffRefusal = (res, result) =>
+  res.status({ NOT_FOUND: 404, DUPLICATE_NAME: 409, ALREADY_SET_UP: 409 }[result.code] || 400)
+    .json({ success: false, error: result.error, code: result.code });
+
+app.get('/admin/staff', requireReception, (req, res) => {
+  res.json({
+    success: true,
+    staff: waiterStore.listAll(),
+    devices: deviceAuth.listDevicesPublic(),
+    roles: ROLES.map(id => ({ id, label: ROLE_LABEL[id] }))
+  });
+});
+
+// Creates the person and returns their invite code ONCE. Reception reads it to them; it is
+// stored only as a hash, so this screen is the only place it ever exists in full.
+app.post('/admin/staff', requireReception, (req, res) => {
+  const result = waiterStore.invite({ name: req.body?.name, role: req.body?.role });
+  if (!result.ok) return staffRefusal(res, result);
+  res.status(201).json({ success: true, ...result });
+});
+
+app.post('/admin/staff/:id/reinvite', requireReception, (req, res) => {
+  const result = waiterStore.reinvite(req.params.id);
+  if (!result.ok) return staffRefusal(res, result);
+  res.json({ success: true, ...result });
+});
+
+app.post('/admin/staff/:id/pin', requireReception, (req, res) => {
+  const result = waiterStore.rotatePin(req.params.id, req.body?.pin);
+  if (!result.ok) return staffRefusal(res, result);
+  res.json({ success: true, waiter: result.waiter });
+});
+
+app.put('/admin/staff/:id/role', requireReception, (req, res) => {
+  const result = waiterStore.setRole(req.params.id, req.body?.role);
+  if (!result.ok) return staffRefusal(res, result);
+  res.json({ success: true, waiter: result.waiter });
+});
+
+app.delete('/admin/staff/:id', requireReception, (req, res) => {
+  const result = waiterStore.deactivate(req.params.id);
+  if (!result.ok) return staffRefusal(res, result);
+  res.json({ success: true });
+});
+
+// Revoking one device refuses that handset on its very next request. Rotating the enrollment
+// code instead revokes EVERY device, which is the right answer for a leaked code and the wrong
+// one for a lost phone -- it makes every other handset re-enrol mid-service.
+app.delete('/admin/devices/:id', requireReception, (req, res) => {
+  const result = deviceAuth.revokeDevice(req.params.id);
+  if (!result.ok) return res.status(404).json({ success: false, error: result.error, code: result.code });
+  console.warn(`🔒 Device revoked: ${result.device.label} (${result.device.id}).`);
+  res.json({ success: true, device: result.device });
+});
+
+app.post('/admin/devices/prune', requireReception, (req, res) => {
+  res.json({ success: true, ...deviceAuth.pruneExpiredDevices() });
+});
+
+// Every handset must enrol again with the new code. Deliberately separate from revoking one.
+app.post('/admin/devices/rotate-code', requireReception, (req, res) => {
+  const revoked = deviceAuth.listDevices().length;
+  deviceAuth.rotateEnrollmentCode();
+  console.warn(`🔒 Enrollment code rotated; ${revoked} device(s) must enrol again.`);
+  res.json({ success: true, revoked });
+});
+
+// The one staff route a handset may call without being reception: redeeming an invite. It needs
+// a device token (so only an enrolled handset can try) and is rate-limited by the same bucket as
+// enrollment, because it is a second place a short code is guessed at.
+app.post('/waiters/redeem-invite', requireDevice, (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  if (deviceAuth.isRateLimited(ip)) {
+    return res.status(429).json({ success: false, error: 'Too many attempts. Wait a minute and try again.', code: 'RATE_LIMITED' });
+  }
+  const result = waiterStore.redeemInvite(req.body?.code, req.body?.pin);
+  if (!result.ok) {
+    if (result.code === 'INVALID_INVITE') deviceAuth.recordFailure(ip);
+    return res.status(result.code === 'INVALID_INVITE' ? 401 : 400).json({ success: false, error: result.error, code: result.code });
+  }
+  res.json({ success: true, waiter: result.waiter });
+});
+
 app.get('/waiters', requireDevice, (req, res) => {
   res.json({ success: true, waiters: waiterStore.listActive() });
 });
