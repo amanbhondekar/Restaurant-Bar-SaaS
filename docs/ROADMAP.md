@@ -36,12 +36,15 @@ early pilots:
   work. Enrolled once by scanning a code from the admin Kitchen tab.
 - **Diner menu** (`/diner`) — read-only, no sign-in, opened from a table code.
 - **Reception / server-laptop app** — sales analytics, waitlist.
+- **Operator service** (`signup_server/`) — not part of a restaurant's
+  installation. Holds the Supabase service key and the Razorpay webhook
+  secret: creates tenants, and keeps `plan_status` honest.
 
 M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **800 hub tests across 41 files** (pure rules plus live
+Automated coverage is **837 hub tests across 43 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **231 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
 the station screens, the admin Feedback, Stock and Kitchen-panel tabs, and the
@@ -293,9 +296,11 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.4 Tenant lifecycle  🟡
 - ✅ Plan model and enforcement against `restaurants.plan`.
 - ✅ Owner console: plan, limits, usage, entitlements.
-- 🟡 Tenant provisioning: `provision_restaurant()` (migration 007) creates a
-  complete trialing tenant in one call, replacing four manual SQL steps.
-  There is still no signup surface in front of it (M3 · PR 17).
+- ✅ Tenant provisioning end to end: `provision_restaurant()` (migration 007) is
+  deliberately unreachable by `anon` and `authenticated`, so nothing in this
+  product could call it. `signup_server/` is the trusted operator service its
+  own comment asked for: it holds the service key, validates a signup, and
+  hands back the pairing code and a one-time hub secret (M3 · PR 17).
 - ✅ Owner console: staff invites, role management, PIN rotation and hub device
   revocation. Reception never types someone else's PIN: they add a person with
   a role and read out a one-time invite code, and the staff member chooses
@@ -303,8 +308,15 @@ milestones (§5) when a theme is pulled into a release.
   do, so they cannot sign in with anything. A single device can be revoked and
   is refused on its next request, instead of rotating the code and making every
   handset in the restaurant re-enrol mid-service.
-- ⬜ Billing integration (Razorpay / Stripe) for subscription (M3 · PR 19) —
-  **blocked on a payment-provider decision**.
+- 🟡 Razorpay subscriptions (M3 · PR 19): migration 010 records which
+  subscription belongs to which tenant and logs every applied event, and the
+  operator service verifies Razorpay's webhooks against the raw body and keeps
+  `plan_status` honest. A payment problem becomes `past_due`, never
+  `suspended`, so a card that expires on a Friday night does not take the till
+  down mid-service.
+- ⬜ Nothing CREATES a subscription yet: the payload is built and tested, the
+  HTTP call and the owner-facing flow are not written, and a tenant's plan is
+  still set by hand.
 
 ### 4.5 Customer-facing surfaces  🟡
 - ✅ Diner QR menu, view-only: a table code opens a read-only menu served

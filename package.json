@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "hub": "node hub_server/server.js",
+    "signup": "node signup_server/server.js",
     "build": "vite build",
     "preview": "vite preview",
     "test": "npm run test:hub && npm run test:web",
