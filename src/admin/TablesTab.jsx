@@ -6,6 +6,7 @@ import { cn } from 'cn';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { explainError, hubBase, hubSend } from './api';
 import { ConfirmDialog, EmptyState, ListSkeleton, NativeSelect, Notice, TextInput, useLastValue } from './ui';
+import { GuestOrderingSwitch } from './GuestOrderingSwitch';
 import {
   addSection, addTable, deleteSection, deleteTable, draftFromLayout, isDirty, moveSection, moveTableToSection,
   moveTableWithin, orderedTables, renameSection, renameTable, setCapacity, tablesIn, toPayload, validateDraft
@@ -215,6 +216,10 @@ export function TablesTab({ layout, live, error, onRetry, onReload, onRefreshLiv
           <Button type="button" variant="outline" className="h-10" onClick={() => edit(d => addSection(d))} disabled={saving}><Plus aria-hidden="true" /> Add section</Button>
         </div>
       </div>
+
+      {/* Beside the codes it is about: the switch that decides whether scanning one can send a
+          ticket to the kitchen, rather than only show the menu. */}
+      {tableCount > 0 && <GuestOrderingSwitch notify={notify} />}
 
       {draft.sections.length === 0 ? (
         <EmptyState

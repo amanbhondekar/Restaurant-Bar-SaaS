@@ -324,9 +324,22 @@ milestones (§5) when a theme is pulled into a release.
   86'd dishes hidden, built from an allow-list so the cache cannot leak
   into it. Reception prints a sheet of one code per table from the Tables
   tab.
-- ⬜ Order-and-pay from that menu (blocked with PR 19 on the payment
-  provider decision).
-- ⬜ Loyalty / repeat-visit identifier.
+- ✅ Ordering from that menu, off by default. Reception turns it on from the
+  Tables tab, beside the codes it affects; until then the code shows the menu
+  only. A guest's basket sends ids and quantities and nothing else -- the hub
+  prices the order from its own menu, checks stock, and stamps the ticket
+  "Guest (QR)" so the kitchen and the floor can see where it came from. One
+  order per table per minute. The guest is told a ticket number, never a total.
+- ⬜ Paying from that menu is still open: it needs Razorpay keys and a public
+  address for the callback, neither of which exists yet. The bill is settled
+  with a member of staff, and the diner page says so.
+- ✅ Repeat visits recognised by phone number, the one thing a guest gives up
+  willingly. Reception sees "third visit, last here in March" while taking a
+  booking, and a Regulars list. Stored hashed per tenant for matching, so two
+  restaurants on the same cloud cannot work out that they share a guest, and
+  in plain only where staff need to ring the number back.
+- ⬜ No reward scheme (points, free dishes, tiers). Recognition is the useful
+  half and the half that needs no rules; a scheme is a pricing decision.
 - ✅ Feedback at bill-close: a guest rates their meal on the diner page and
   the hub attaches it to that table's own settled bill server-side, so
   reception knows which meal it is about without the guest ever seeing a
@@ -422,7 +435,8 @@ The product can onboard a new restaurant without engineering.
 - ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
 
 ### M4 — Customer surfaces  🟡
-- 🟡 4.5 diner QR menu shipped view-only; order-and-pay and loyalty open.
+- 🟡 4.5 diner QR menu, guest ordering (opt-in) and repeat-visit recognition
+  shipped; paying from the phone is open and needs Razorpay keys.
 - ✅ 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; a public
   booking page is still open and needs hosting.
 

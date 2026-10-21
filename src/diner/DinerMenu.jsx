@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { Feedback } from './Feedback';
+import { Basket } from './Basket';
+import { addToBasket, basketCount, removeFromBasket } from './lib/basket';
 
 // The menu a guest sees after scanning the code on their table (M4 · diner QR menu).
 //
@@ -23,13 +25,17 @@ function PriceLabel({ currency, item }) {
   );
 }
 
-function Item({ currency, item }) {
+function Item({ currency, item, onAdd }) {
   return (
     <li className="item">
       <div className="item-head">
         <span className={item.is_veg ? 'dot veg' : 'dot nonveg'} aria-hidden="true" />
         <span className="item-name">{item.name}</span>
         <PriceLabel currency={currency} item={item} />
+        {/* Only when the restaurant has switched guest ordering on; otherwise the menu is as it was. */}
+        {onAdd && !item.variants && (
+          <button type="button" className="add" onClick={() => onAdd(item)} aria-label={`Add ${item.name}`}>+</button>
+        )}
       </div>
 
       {item.variants && (
@@ -38,6 +44,9 @@ function Item({ currency, item }) {
             <li key={v.id}>
               <span>{v.label}</span>
               <span className="variant-price">{money(currency, v.price)}</span>
+              {onAdd && (
+                <button type="button" className="add" onClick={() => onAdd(item, v)} aria-label={`Add ${item.name}, ${v.label}`}>+</button>
+              )}
             </li>
           ))}
         </ul>
@@ -61,6 +70,10 @@ function Item({ currency, item }) {
 export function DinerMenu() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  // Whether this restaurant lets guests order from the table code. Off unless it says otherwise,
+  // so a hub that cannot answer shows the menu it always did rather than a basket that fails.
+  const [ordering, setOrdering] = useState(false);
+  const [basket, setBasket] = useState({});
 
   // Carried from the QR on the table, shown so a guest can tell they scanned their own code. The
   // menu does not depend on it. Feedback does send it: the hub uses it to find that table's most
@@ -80,6 +93,26 @@ export function DinerMenu() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let live = true;
+    fetch('/public/ordering', { cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(body => { if (live && body?.ordering && table) setOrdering(true); })
+      .catch(() => { /* the menu is the point; a basket is the extra */ });
+    return () => { live = false; };
+  }, [table]);
+
+  const addItem = (item, variant) => setBasket(b => addToBasket(b, item, variant));
+  // The basket's own + button hands back ids rather than the item, so it is matched here.
+  const addByIds = (itemId, variantId) => setBasket(b => {
+    for (const category of data?.categories ?? []) {
+      const item = category.items.find(i => String(i.id) === String(itemId));
+      if (!item) continue;
+      return addToBasket(b, item, variantId ? (item.variants ?? []).find(v => String(v.id) === String(variantId)) : undefined);
+    }
+    return b;
+  });
 
   if (error) {
     return (
@@ -107,16 +140,31 @@ export function DinerMenu() {
         <section key={cat.name}>
           <h2>{cat.name}</h2>
           <ul className="items">
-            {cat.items.map(item => <Item key={item.id} currency={currency} item={item} />)}
+            {cat.items.map(item => <Item key={item.id} currency={currency} item={item} onAdd={ordering ? addItem : undefined} />)}
           </ul>
         </section>
       ))}
+
+      {ordering && (
+        <Basket
+          basket={basket}
+          currency={currency}
+          table={table}
+          onAdd={addByIds}
+          onRemove={key => setBasket(b => removeFromBasket(b, key))}
+          onSent={() => setBasket({})}
+        />
+      )}
 
       {/* After the menu, not before it: a guest reading the menu has not eaten yet. */}
       <Feedback table={table} />
 
       <footer className="foot">
-        <p className="muted">Prices include all taxes shown on your bill. To order, please ask a member of staff.</p>
+        <p className="muted">
+          {ordering
+            ? 'Prices include all taxes shown on your bill. A member of staff will bring your order over.'
+            : 'Prices include all taxes shown on your bill. To order, please ask a member of staff.'}
+        </p>
       </footer>
     </main>
   );

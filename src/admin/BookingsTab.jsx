@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from 'cn';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { explainError, hubGet, hubSend } from './api';
+import { Regulars } from './Regulars';
 import { EmptyState, Field, ListSkeleton, NativeSelect, Notice, TextInput } from './ui';
 import {
   RESERVATION_LABEL, RESERVATION_TONE, WAITLIST_LABEL, WAITLIST_TONE,
@@ -61,9 +62,26 @@ function FormDialog({ open, title, description, confirmLabel, busy, canConfirm =
 function BookingDialog({ day, onSave, onCancel, busy, serverError, conflict }) {
   const [form, setForm] = useState(() => ({ guest_name: '', phone: '', party_size: '2', at: defaultBookingTime(day), duration_mins: '90', note: '' }));
   const [touched, setTouched] = useState(false);
+  const [known, setKnown] = useState(null);
   const check = checkBooking({ ...form, at: form.at });
   const set = key => e => { setForm(f => ({ ...f, [key]: e.target.value })); setTouched(true); };
   const err = key => (touched ? check.errors[key] : undefined);
+
+  // Recognise a regular while the number is being typed, so the host knows before the booking is
+  // taken rather than after. Debounced, because this fires on every keystroke.
+  const phone = form.phone;
+  useEffect(() => {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) { setKnown(null); return undefined; }
+    let live = true;
+    const timer = setTimeout(() => {
+      hubGet(`/admin/guests/lookup?phone=${encodeURIComponent(phone)}`)
+        .then(r => { if (live) setKnown(r.recognised ? { ...r.recognised, guest: r.guest } : null); })
+        // Not knowing is not worth a message: the booking is unaffected either way.
+        .catch(() => { if (live) setKnown(null); });
+    }, 400);
+    return () => { live = false; clearTimeout(timer); };
+  }, [phone]);
 
   return (
     <FormDialog
@@ -90,6 +108,11 @@ function BookingDialog({ day, onSave, onCancel, busy, serverError, conflict }) {
       <Field label="Phone" htmlFor="b-phone" error={err('phone')} hint="So you can confirm, or chase them if they are late.">
         <TextInput id="b-phone" inputMode="tel" value={form.phone} onChange={set('phone')} invalid={Boolean(err('phone'))} placeholder="98765 43210" />
       </Field>
+      {known && (
+        <Notice tone="info" aria-live="polite">
+          <strong>{known.guest?.guest_name}</strong> has been here before — {known.line}.
+        </Notice>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="People" htmlFor="b-party" error={err('party_size')}>
           <TextInput id="b-party" inputMode="numeric" value={form.party_size} onChange={set('party_size')} invalid={Boolean(err('party_size'))} />
@@ -170,6 +193,8 @@ export function BookingsTab({ notify }) {
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState(null);
   const [now, setNow] = useState(() => new Date());
+  // Bumped after anything is sent, so the regulars list below is not left behind by a seating.
+  const [seatings, setSeatings] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -196,6 +221,7 @@ export function BookingsTab({ notify }) {
       const result = await send();
       close();
       if (done) notify(done(result));
+      setSeatings(n => n + 1);
       await load();
       return result;
     } catch (e) {
@@ -304,6 +330,8 @@ export function BookingsTab({ notify }) {
           </ul>
         )}
       </section>
+
+      <Regulars refreshKey={seatings} />
 
       {dialog?.type === 'booking' && (
         <BookingDialog

@@ -32,7 +32,9 @@ import { applyLayout } from './lib/tablesAdmin.js';
 import { publicMenu } from './lib/dinerMenu.js';
 import { inventoryStore } from './lib/inventoryStore.js';
 import { reservationStore } from './lib/reservationStore.js';
-import { whatsappLink, telLink, formatPhone } from './lib/guestContact.js';
+import { whatsappLink, telLink, formatPhone, normalizePhone } from './lib/guestContact.js';
+import { guestByPhone, recognise, regulars } from './lib/loyalty.js';
+import { validateGuestOrder, guestOrderReceipt, isCoolingDown as orderCoolingDown } from './lib/guestOrdering.js';
 import { refusalFor, UNITS } from './lib/inventory.js';
 import { StationScreens, STATIONS as STATION_IDS, parseScreen, snapshot as stationSnapshot } from './lib/stationScreens.js';
 import { feedbackStore, validateFeedback, BILL_WINDOW_MS } from './lib/feedbackStore.js';
@@ -735,6 +737,89 @@ app.get('/public/menu', (req, res) => {
   });
 });
 
+// 5b-2b. Guest ordering (§4.5): a guest sends an order to the kitchen from the code on their table.
+//
+// The hub's SECOND unauthenticated write, and far more consequential than the first -- feedback adds
+// a row nobody acts on; this puts food on a pass. It is OFF unless the restaurant turns it on,
+// because a kitchen that starts receiving tickets because a hub updated itself would be a bad thing
+// to do to someone.
+//
+// When a table last ordered is held in memory rather than on disk: it bounds a nuisance, and a hub
+// restart clearing it is not worth a write on every guest order.
+const lastGuestOrderByTable = new Map();
+
+app.get('/public/ordering', (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  // Told to the diner page so it can show a basket, or not, without guessing.
+  res.json({ success: true, ordering: pairing.guest_ordering === true, pay_online: false });
+});
+
+app.post('/public/order', (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  if (pairing.guest_ordering !== true) {
+    return res.status(403).json({ success: false, code: 'ORDERING_OFF', error: 'Ordering from your phone is not switched on here. Please ask a member of staff.' });
+  }
+  if (!pairing.paired) {
+    return res.status(503).json({ success: false, code: 'NOT_READY', error: 'This hub is not set up yet.' });
+  }
+
+  const layout = restaurantCache.getTablesCache(pairing.restaurant_id);
+  const checked = validateGuestOrder(req.body, { tables: layout?.tables ?? [] });
+  if (!checked.ok) {
+    return res.status(400).json({ success: false, code: 'INVALID_ORDER', error: checked.errors[0].message, errors: checked.errors });
+  }
+
+  const tableKey = String(checked.order.table_id);
+  if (orderCoolingDown(lastGuestOrderByTable.get(tableKey))) {
+    return res.status(429).json({ success: false, code: 'TOO_SOON', error: 'That has just been sent to the kitchen. Give them a moment, or ask a member of staff.' });
+  }
+
+  // Priced by the hub, exactly as a waiter's order is: nothing in the body is trusted.
+  const priced = priceOrder(checked.order.items, pairing.restaurant_id);
+  if (!priced.ok) {
+    return res.status(400).json({ success: false, code: priced.code, error: 'Something on that order is no longer available. Please check the menu and try again.', details: priced.details });
+  }
+
+  const short = inventoryStore.check(pairing.restaurant_id, priced.items);
+  if (short.length > 0) {
+    const refusal = refusalFor(short, priced.items);
+    return res.status(409).json({ success: false, code: 'OUT_OF_STOCK', error: refusal.error });
+  }
+
+  const ticket = ticketStore.addTicket({
+    table_id: checked.order.table_id,
+    table_name: checked.order.table_name,
+    note: checked.order.note,
+    // How the kitchen and the waiter know this came from a phone rather than from staff. It is the
+    // name printed on the KOT and shown on the board, which is where someone would actually look.
+    created_by_waiter: 'Guest (QR)'
+  }, pairing.restaurant_id, priced);
+
+  lastGuestOrderByTable.set(tableKey, new Date().toISOString());
+  try {
+    inventoryStore.consume(pairing.restaurant_id, priced.items, { ref: `#${ticket.ticket_number}`, by: 'Guest (QR)' });
+  } catch (err) {
+    console.error('📦 Could not record stock use for guest ticket', ticket.ticket_number, err);
+  }
+
+  broadcast('NEW_ORDER', ticket);
+  broadcast('order_created', { ticket_id: ticket.id, ticket_number: ticket.ticket_number, table_id: ticket.table_id, table_name: ticket.table_name, status: 'in_progress', ticket });
+  syncQueue.enqueueTicket(ticket);
+  autoPrintKot(ticket, pairing).catch(() => {});
+  console.log(`📱 Guest order from ${ticket.table_name}: ticket #${ticket.ticket_number}.`);
+
+  res.status(201).json(guestOrderReceipt(ticket));
+});
+
+// Reception turns guest ordering on and off. Reception-only: it decides whether strangers on the
+// wifi may send tickets to the kitchen.
+app.put('/admin/guest-ordering', requireReception, (req, res) => {
+  const on = req.body?.ordering === true;
+  hubConfig.saveConfig({ ...hubConfig.getPairingInfo(), guest_ordering: on });
+  console.warn(`📱 Guest ordering from the table QR is now ${on ? 'ON' : 'OFF'}.`);
+  res.json({ success: true, ordering: on });
+});
+
 // 5b-3. POST /public/feedback — a guest rates their meal (M4 · 4.5).
 //
 // The hub's only unauthenticated WRITE, so it is deliberately narrow: a rating, an optional
@@ -1319,6 +1404,30 @@ const withContact = (row, message) => ({
   ...(row.phone ? { phone_display: formatPhone(row.phone), whatsapp: whatsappLink(row.phone, message), tel: telLink(row.phone) } : {})
 });
 const restaurantName = () => hubConfig.getPairingInfo().name || 'the restaurant';
+
+// ----- Recognising a returning guest (§4.5). ----------------------------------------------------
+//
+// Read from the booking diary rather than a list of its own, so there is one source of truth. The
+// identifier is the phone number, matched on a per-restaurant salted hash -- this never reads a
+// number back out of the key, and one tenant's guests cannot be joined against another's.
+//
+// There is deliberately no reward scheme: no points, no tiers, no discounts. Those are a
+// commercial decision nobody has made. This answers the question a host actually asks, which is
+// whether they have been here before.
+app.get('/admin/guests', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  res.json({ success: true, guests: regulars(reservationStore.stateFor(rid), { limit: Number(req.query.limit) || 50 }) });
+});
+
+// Asked as reception types a number into a booking, so a regular is recognised before the booking
+// is taken rather than after.
+app.get('/admin/guests/lookup', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const phone = normalizePhone(req.query.phone);
+  if (!phone) return res.json({ success: true, guest: null, recognised: null });
+  const guest = guestByPhone(reservationStore.stateFor(rid), phone, rid);
+  res.json({ success: true, guest, recognised: recognise(guest) });
+});
 
 app.get('/admin/bookings', requireReception, (req, res) => {
   const pairing = hubConfig.getPairingInfo();

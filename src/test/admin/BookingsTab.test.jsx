@@ -95,7 +95,7 @@ const answer = (over = {}) => ({
 });
 const setup = (routes = {}) => {
   const notify = vi.fn();
-  const hub = fakeHub({ 'GET /admin/bookings': answer(), ...routes });
+  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
   render(<BookingsTab notify={notify} />);
   return { hub, notify };
 };
@@ -183,6 +183,30 @@ describe('bookings tab', () => {
     await userEvent.type(within(form).getByLabelText('People'), '20');
     await userEvent.click(within(form).getByRole('button', { name: 'Take the booking' }));
     expect(await within(form).findByText('No table here seats 20.')).toBeInTheDocument();
+  });
+
+  it('a returning guest is recognised while the number is typed, before the booking is taken', async () => {
+    setup({
+      'GET /admin/guests/lookup': { body: { success: true, guest: { guest_name: 'Asha Deshmukh', visits: 4 }, recognised: { visits: 4, line: '4th visit, last 3 weeks ago' } } }
+    });
+    await userEvent.click(await screen.findByRole('button', { name: /Take a booking/ }));
+    const form = await screen.findByRole('dialog');
+    await userEvent.type(within(form).getByLabelText('Phone'), '98765 43210');
+
+    expect(await within(form).findByText(/has been here before/, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(within(form).getByText('Asha Deshmukh')).toBeInTheDocument();
+    expect(within(form).getByText(/4th visit, last 3 weeks ago/)).toBeInTheDocument();
+  });
+
+  it('a first-time guest is not announced -- a note on every new booking is noise', async () => {
+    setup({
+      'GET /admin/guests/lookup': { body: { success: true, guest: null, recognised: null } }
+    });
+    await userEvent.click(await screen.findByRole('button', { name: /Take a booking/ }));
+    const form = await screen.findByRole('dialog');
+    await userEvent.type(within(form).getByLabelText('Phone'), '98765 43210');
+    await new Promise(r => setTimeout(r, 600));
+    expect(within(form).queryByText(/has been here before/)).not.toBeInTheDocument();
   });
 
   it('nothing is sent while the form is wrong', async () => {
