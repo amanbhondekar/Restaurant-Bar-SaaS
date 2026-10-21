@@ -213,7 +213,8 @@ test('pull: a cloud error is thrown rather than read as an empty cloud', async (
 test('queue: stock is a replicated catalog, reported alongside the menu and tables', () => {
   reset();
   const status = syncQueue.getCatalogStatus();
-  assert.deepEqual(Object.keys(status).sort(), ['inventory', 'menu', 'tables']);
+  // The exact set, so a catalog that stops being reported is caught rather than silently dropped.
+  assert.deepEqual(Object.keys(status).sort(), ['inventory', 'menu', 'reservations', 'tables']);
   assert.deepEqual(status.inventory, { synced_revision: 0, pending_revision: null, failed: false });
 });
 

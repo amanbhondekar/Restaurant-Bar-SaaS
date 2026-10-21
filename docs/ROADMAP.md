@@ -28,9 +28,9 @@ early pilots:
   telemetry, sync status, per-station filtering and billing actions.
 - **Waiter Handset PWA** — installable, LAN-paired, floor grid + menu +
   cart, PIN sign-in, works while WAN is down.
-- **Reception admin console** (`/admin`) — menu, table layout, cash and
-  payments, stock and recipes, kitchen performance, printers, guest feedback,
-  subscription plan.
+- **Reception admin console** (`/admin`) — menu, table layout, bookings and the
+  walk-in queue, cash and payments, stock and recipes, kitchen performance,
+  printers, staff and devices, guest feedback, subscription plan.
 - **Station screens** (`/station/hot`, `/cold`, `/bar`) — a tablet at one
   kitchen station: that station's tickets only, a Ready button, a chime for new
   work. Enrolled once by scanning a code from the admin Kitchen tab.
@@ -44,9 +44,9 @@ M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
 M3 — self-serve tenant — of which plan enforcement and the owner console's
 plan view have shipped.
 
-Automated coverage is **837 hub tests across 43 files** (pure rules plus live
+Automated coverage is **892 hub tests across 46 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**231 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
+**252 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
 the station screens, the admin Feedback, Stock and Kitchen-panel tabs, and the
 waiter modifier sheet and menu grid. The reception Kitchen Display, the rest of
 the admin console and the rest of the waiter PWA are still verified by hand.
@@ -333,10 +333,22 @@ milestones (§5) when a theme is pulled into a release.
   bill. Reception reads it in the admin console's Feedback tab (average,
   rating split, low ratings flagged); it is not replicated to the cloud.
 
-### 4.6 Reservations & waitlist  ⬜
-- Time-slot reservations independent of walk-in waitlist.
-- SMS / WhatsApp notifications ("your table is ready").
-- Public reservation page per tenant.
+### 4.6 Reservations & waitlist  🟡
+- ✅ Time-slot reservations, checked against the real table layout: a party needs a
+  table at least its own size and competes for those tables with every overlapping
+  booking for a party at least as big. Walk-ins already seated are counted. A
+  restaurant can overbook anyway, and the booking records that it did.
+- ✅ A walk-in queue on the hub, replacing the browser-localStorage one. A number
+  is optional there and required for a booking, because a booking is a promise you
+  may have to chase.
+- ✅ "Your table is ready" by WhatsApp click-to-chat: the hub writes the message and
+  staff tap to send from their own phone. No Meta approval, no provider, no
+  per-message fee, and it works with the line down.
+- ✅ Cloud copy (migration 011), as the fourth replicated catalog.
+- ⬜ A public reservation page per tenant. The model and the replication are in
+  place for one; the page itself needs hosting this product does not have.
+- ⬜ Sending anything automatically: no reminder the morning of a booking, and
+  nothing records whether a message was really sent.
 
 ### 4.7 Auth & access control  🟡
 - ✅ Waiter PIN login wired into the PWA, session bound to a device token.
@@ -411,7 +423,8 @@ The product can onboard a new restaurant without engineering.
 
 ### M4 — Customer surfaces  🟡
 - 🟡 4.5 diner QR menu shipped view-only; order-and-pay and loyalty open.
-- 4.6 reservations + WhatsApp notifications.
+- ✅ 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; a public
+  booking page is still open and needs hosting.
 
 ---
 

@@ -31,6 +31,8 @@ import { previewImport, applyImport } from './lib/menuImport.js';
 import { applyLayout } from './lib/tablesAdmin.js';
 import { publicMenu } from './lib/dinerMenu.js';
 import { inventoryStore } from './lib/inventoryStore.js';
+import { reservationStore } from './lib/reservationStore.js';
+import { whatsappLink, telLink, formatPhone } from './lib/guestContact.js';
 import { refusalFor, UNITS } from './lib/inventory.js';
 import { StationScreens, STATIONS as STATION_IDS, parseScreen, snapshot as stationSnapshot } from './lib/stationScreens.js';
 import { feedbackStore, validateFeedback, BILL_WINDOW_MS } from './lib/feedbackStore.js';
@@ -238,6 +240,9 @@ restaurantCache.setFeatureProvider(() => hubConfig.getEffectivePlan().features);
 // read point as the plan so every menu agrees. The store judges stock against the raw cache, not the
 // overlaid one it is itself producing.
 inventoryStore.setMenuProvider(() => restaurantCache.menuCache?.items ?? []);
+// Bookings are checked against the real table layout, so a restaurant cannot sell a six-top it
+// does not have.
+reservationStore.setTableProvider(() => restaurantCache.getTablesCache()?.tables ?? []);
 restaurantCache.setStockProvider((items, restaurantId) => inventoryStore.overlay(restaurantId, items));
 
 // When a change moves a dish in or out of stock, every handset's menu has to hear about it, the
@@ -254,6 +259,21 @@ inventoryStore.onChange(({ availability_changed }) => {
 // send the whole ingredient list once per order. One push a few seconds after the last change is
 // enough: the cloud's copy is a backup, not something anyone reads at the pass. Anything the timer
 // has not flushed when the hub stops is carried up by the boot-time backfill.
+// The diary changes a handful of times an evening rather than on every order, but the same
+// debounce keeps a burst of seatings from becoming a burst of snapshots.
+const RESERVATION_PUSH_MS = Number(process.env.HUB_RESERVATION_PUSH_MS) || 5000;
+let reservationPushTimer = null;
+reservationStore.onChange(() => {
+  if (reservationPushTimer) return;
+  reservationPushTimer = setTimeout(() => {
+    reservationPushTimer = null;
+    const rid = hubConfig.getPairingInfo().restaurant_id;
+    const state = reservationStore.stateFor(rid);
+    if (state.restaurant_id) syncQueue.enqueueCatalog('reservations', { restaurant_id: state.restaurant_id, revision: state.revision, ...reservationStore.all(rid) });
+  }, RESERVATION_PUSH_MS);
+  reservationPushTimer.unref?.();
+});
+
 const INVENTORY_PUSH_MS = Number(process.env.HUB_INVENTORY_PUSH_MS) || 5000;
 let inventoryPushTimer = null;
 function scheduleInventoryPush() {
@@ -1263,6 +1283,96 @@ app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
 });
 
 // 7c-2. GET /waiters — Active waiters (public shape only; PIN hashes never leave the hub)
+// ----- Bookings and the walk-in queue (§4.6). Reception only: it is the front-of-house diary. ----
+//
+// Guests are reached by WhatsApp click-to-chat rather than an API: the hub builds a link, and a
+// member of staff taps it to send from their own phone. No provider, no approval, no per-message
+// fee, and it works on a hub with no internet at all -- the only cost is that a person presses
+// send, which when a table is about to be given away is not really a cost.
+const RESERVATION_REFUSAL = { NOT_FOUND: 404, ALREADY_SEATED: 409, NO_PHONE: 409, FULLY_BOOKED: 409, NO_TABLE_THAT_SIZE: 409 };
+const bookingRefusal = (res, result) =>
+  res.status(result.status || RESERVATION_REFUSAL[result.code] || 400).json({
+    success: false, error: result.error, code: result.code,
+    ...(result.errors ? { errors: result.errors } : {}),
+    ...(result.availability ? { availability: result.availability } : {})
+  });
+
+/** The restaurant's own day, since 'tonight's bookings' is a local idea, not a UTC one. */
+const localDay = (value, now = new Date()) => {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const pad = n => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+};
+
+/**
+ * What staff send a guest. Written here rather than on a screen so every route says the same thing,
+ * and so a booking taken at the counter and one listed in the diary carry an identical message.
+ */
+const bookingMessage = (row, restaurantName) =>
+  `Hello ${row.guest_name}, this is ${restaurantName}. We are looking forward to seeing you at ${new Date(row.at).toLocaleString()}.`;
+const readyMessage = (row, restaurantName) =>
+  `Hello ${row.guest_name}, your table at ${restaurantName} is ready.`;
+
+/** A guest row with the ways to reach them already built, so no screen has to know the format. */
+const withContact = (row, message) => ({
+  ...row,
+  ...(row.phone ? { phone_display: formatPhone(row.phone), whatsapp: whatsappLink(row.phone, message), tel: telLink(row.phone) } : {})
+});
+const restaurantName = () => hubConfig.getPairingInfo().name || 'the restaurant';
+
+app.get('/admin/bookings', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const snap = reservationStore.snapshot(pairing.restaurant_id, localDay(req.query.day));
+  const name = restaurantName();
+  res.json({
+    success: true,
+    ...snap,
+    reservations: snap.reservations.map(r => withContact(r, bookingMessage(r, name))),
+    waitlist: snap.waitlist.map(e => withContact(e, readyMessage(e, name)))
+  });
+});
+
+// Whether a time could be taken, without taking it: the console asks before it offers to book.
+app.get('/admin/bookings/availability', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  res.json({
+    success: true,
+    ...reservationStore.availability(pairing.restaurant_id, {
+      at: req.query.at,
+      party_size: Math.floor(Number(req.query.party_size)) || 1,
+      duration_mins: req.query.duration_mins ? Math.floor(Number(req.query.duration_mins)) : undefined
+    })
+  });
+});
+
+app.post('/admin/bookings', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.book(pairing.restaurant_id, req.body, { force: req.body?.force === true });
+  if (!result.ok) return bookingRefusal(res, result);
+  res.status(201).json({ success: true, revision: result.data.revision, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())), availability: result.meta.availability });
+});
+
+app.put('/admin/bookings/:id/status', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.setReservationStatus(pairing.restaurant_id, req.params.id, req.body?.status);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())) });
+});
+
+app.post('/admin/waitlist', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.addWalkIn(pairing.restaurant_id, req.body);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.status(201).json({ success: true, revision: result.data.revision, entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName())) });
+});
+
+app.put('/admin/waitlist/:id/status', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.setWaitlistStatus(pairing.restaurant_id, req.params.id, req.body?.status);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName())) });
+});
+
 // ----- Staff and devices (§4.4). Reception only: this is who may take money in the restaurant. --
 //
 // The handset's own /waiters routes below are unchanged. These are the managing half: who is on
@@ -2391,6 +2501,12 @@ server.listen(PORT, '0.0.0.0', () => {
     syncQueue.restoreInventoryFromCloud(pairingInfo.restaurant_id)
       .catch(err => console.warn('⚠️ Stock restore failed:', err.message))
       .finally(() => syncQueue.enqueueInventoryIfBehind(pairingInfo.restaurant_id));
+
+    // The booking diary the same way: a replacement laptop rebuilds it, then anything the cloud has
+    // not confirmed is carried up.
+    syncQueue.restoreReservationsFromCloud(pairingInfo.restaurant_id)
+      .catch(err => console.warn('⚠️ Booking diary restore failed:', err.message))
+      .finally(() => syncQueue.enqueueReservationsIfBehind(pairingInfo.restaurant_id));
   }
 
   // Start background sync retry loop

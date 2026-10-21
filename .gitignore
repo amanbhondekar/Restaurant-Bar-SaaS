@@ -60,3 +60,7 @@ hub_server/data/inventory*.json
 
 # The sync queue's write-ahead journal: the hub's own crash-recovery record, rewritten constantly.
 hub_server/data/sync_queue.wal
+
+# Tonight's bookings and who is at the door. Local to each hub; a re-paired hub keeps the
+# previous restaurant's diary aside as reservations.<id>.json.
+hub_server/data/reservations*.json

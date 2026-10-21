@@ -6,6 +6,8 @@ import { ticketStore } from './ticketStore.js';
 import { hubConfig } from './hubConfig.js';
 import { pushMenu, pushTables, isUuid } from './catalogSync.js';
 import { pushInventory, pullInventory } from './inventorySync.js';
+import { pushReservations, pullReservations } from './reservationSync.js';
+import { reservationStore } from './reservationStore.js';
 import { inventoryStore } from './inventoryStore.js';
 import { pushInvoice, pullInvoices, countInvoices } from './invoiceSync.js';
 import { invoiceStore } from './invoiceStore.js';
@@ -28,7 +30,7 @@ const CATALOG_STATE_FILE = path.join(DATA_DIR, 'catalog_sync.json');
 // The hub's replicated catalogs. Each keeps one pending push (always the newest snapshot) and a
 // record of the newest revision the cloud is known to hold. Stock is the third: it is not edited like
 // the other two, but it is pushed the same way (a full snapshot), so it shares the machinery.
-const CATALOG_OPS = { menu: 'SYNC_MENU', tables: 'SYNC_TABLES', inventory: 'SYNC_INVENTORY' };
+const CATALOG_OPS = { menu: 'SYNC_MENU', tables: 'SYNC_TABLES', inventory: 'SYNC_INVENTORY', reservations: 'SYNC_RESERVATIONS' };
 const CATALOG_KINDS = Object.fromEntries(Object.entries(CATALOG_OPS).map(([kind, type]) => [type, kind]));
 const isCatalogOp = item => Boolean(item) && item.type in CATALOG_KINDS;
 
@@ -675,6 +677,46 @@ class SyncQueue {
     }
   }
 
+  /** Queues the diary if the cloud has not confirmed the hub's current revision. See stock. */
+  enqueueReservationsIfBehind(restaurantId) {
+    const state = reservationStore.stateFor(restaurantId);
+    if (!state.restaurant_id || state.revision === 0) return { queued: false, reason: 'NOTHING_TO_PUSH' };
+    if (state.revision <= (this.catalogState.reservations?.synced_revision ?? 0)) return { queued: false, reason: 'UP_TO_DATE' };
+    this.enqueueCatalog('reservations', { restaurant_id: state.restaurant_id, revision: state.revision, ...reservationStore.all(restaurantId) });
+    return { queued: true, revision: state.revision };
+  }
+
+  /**
+   * Fills an EMPTY diary from the cloud, for a replacement laptop. Same rule as stock: only ever a
+   * store that has never held anything (revision 0), so a restaurant that deliberately cleared the
+   * book does not have last month's no-shows handed back to it.
+   */
+  async restoreReservationsFromCloud(restaurantId) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { restored: false, reason: 'NOT_PAIRED' };
+    }
+    if (reservationStore.state.revision > 0 || !reservationStore.isEmpty()) return { restored: false, reason: 'DIARY_PRESENT' };
+
+    const { online } = await this.checkConnection();
+    if (!online) return { restored: false, reason: 'OFFLINE' };
+
+    let pulled;
+    try {
+      pulled = await pullReservations(this.cloud, restaurantId);
+    } catch (err) {
+      console.warn(`⚠️ Could not restore the booking diary from the cloud: ${err.message}`);
+      return { restored: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+    if (!pulled.reservations.length && !pulled.waitlist.length) return { restored: false, reason: 'NOTHING_IN_CLOUD' };
+    if (reservationStore.state.revision > 0 || !reservationStore.isEmpty()) return { restored: false, reason: 'DIARY_PRESENT' };
+
+    const state = reservationStore.replaceAll(restaurantId, { ...pulled, revision: 1 });
+    this.saveCatalogState('reservations', state.revision);
+    console.log(`📥 Restored ${state.reservations.length} booking(s) and ${state.waitlist.length} queued party/parties from the cloud.`);
+    return { restored: true, reservations: state.reservations.length, waitlist: state.waitlist.length };
+  }
+
   /**
    * Queues the stock snapshot if the cloud has not confirmed the hub's current revision. Pushes are
    * driven by a change, so stock changed while the cloud was rejecting pushes (or before migration
@@ -731,7 +773,9 @@ class SyncQueue {
       ? { categories: data.categories, items: data.items }
       : kind === 'inventory'
         ? { items: data.items, recipes: data.recipes }
-        : { tables: data.tables };
+        : kind === 'reservations'
+          ? { reservations: data.reservations, waitlist: data.waitlist }
+          : { tables: data.tables };
     const op = {
       queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       type: CATALOG_OPS[kind],
@@ -764,7 +808,9 @@ class SyncQueue {
         ? await pushMenu(this.cloud, restaurant_id, body)
         : kind === 'inventory'
           ? await pushInventory(this.cloud, restaurant_id, body)
-          : await pushTables(this.cloud, restaurant_id, body);
+          : kind === 'reservations'
+            ? await pushReservations(this.cloud, restaurant_id, body)
+            : await pushTables(this.cloud, restaurant_id, body);
       this.saveCatalogState(kind, Math.max(revision, this.catalogState[kind]?.synced_revision ?? 0));
       console.log(`[sync] ✅ ${kind} revision ${revision} pushed to Supabase`, pushed);
       return true;

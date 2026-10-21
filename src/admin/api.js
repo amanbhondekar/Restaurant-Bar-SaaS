@@ -16,7 +16,7 @@ export function hubBase() {
 
 /** What every non-2xx answer (and every failure to get one) turns into. */
 export class HubError extends Error {
-  constructor({ status = 0, code = 'ERROR', error = 'The request failed.', errors, details, current_revision } = {}) {
+  constructor({ status = 0, code = 'ERROR', error = 'The request failed.', errors, details, current_revision, body } = {}) {
     super(error);
     this.name = 'HubError';
     this.status = status;
@@ -25,6 +25,10 @@ export class HubError extends Error {
     this.errors = errors;
     this.details = details;
     this.current_revision = current_revision;
+    // The whole answer, for routes that refuse with something of their own -- a booking clash comes
+    // back with what IS free, and a caller that has to re-ask the question needs it. Named fields
+    // above stay, so nothing has to reach through `body` for the common ones.
+    this.body = body ?? null;
   }
 }
 
@@ -68,7 +72,8 @@ export async function hubFetch(path, { method = 'GET', body } = {}) {
       error: data?.error ?? `The hub answered ${response.status}.`,
       errors: data?.errors,
       details: data?.details,
-      current_revision: data?.current_revision
+      current_revision: data?.current_revision,
+      body: data
     });
   }
   return data;
