@@ -14,6 +14,8 @@ import { invoiceStore } from './invoiceStore.js';
 import { pushReconciliation, pullReconciliations, countReconciliations } from './reconciliationSync.js';
 import { mergeById, byIssuedDesc, bySeqAsc, describeRepair, ledgerGap } from './ledgerRepair.js';
 import { reconciliationStore } from './reconciliationStore.js';
+import { pushFeedback, pullFeedback } from './feedbackSync.js';
+import { feedbackStore } from './feedbackStore.js';
 import { orderCourseColumns, itemCourseColumns, isMissingCourseColumn, withoutCourseColumns } from './courseSync.js';
 import { encodeRecord, lastCompleteRecord } from './queueJournal.js';
 
@@ -39,6 +41,9 @@ const isInvoiceOp = item => item?.type === INVOICE_OP;
 
 const RECONCILIATION_OP = 'SYNC_RECONCILIATION';
 const isReconciliationOp = item => item?.type === RECONCILIATION_OP;
+
+const FEEDBACK_OP = 'SYNC_FEEDBACK';
+const isFeedbackOp = item => item?.type === FEEDBACK_OP;
 export const MAX_SYNC_ATTEMPTS = 5;
 
 /**
@@ -634,6 +639,83 @@ class SyncQueue {
     return { ...result, applied: true };
   }
 
+  /**
+   * Queues one piece of guest feedback. Immutable once given, so nothing to collapse: an entry already
+   * queued is left alone. Called when the guest submits, and by the boot backfill.
+   */
+  enqueueFeedback(entry) {
+    const pairing = hubConfig.getPairingInfo();
+    const restaurantId = entry?.restaurant_id || pairing.restaurant_id || null;
+    if (!entry?.id) return;
+    if (this.queue.some(q => isFeedbackOp(q) && q.payload?.entry?.id === entry.id)) return;
+
+    this.saveQueue([...this.queue, {
+      queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      type: FEEDBACK_OP,
+      payload: { restaurant_id: restaurantId, entry },
+      queued_at: new Date().toISOString(),
+      attempts: 0
+    }]);
+    this.processQueue();
+  }
+
+  /** Queues every entry the cloud has not confirmed. Runs at boot, after the restore. */
+  enqueueUnsyncedFeedback(restaurantId) {
+    const pending = feedbackStore.listUnsynced(restaurantId);
+    if (!pending.length) return { queued: 0 };
+    for (const entry of pending) this.enqueueFeedback(entry);
+    console.log(`[sync] ⭐ Queued ${pending.length} unreplicated piece(s) of guest feedback for the cloud.`);
+    return { queued: pending.length };
+  }
+
+  async syncFeedbackToSupabase(item) {
+    const { restaurant_id, entry } = item.payload;
+    const pairing = hubConfig.getPairingInfo();
+
+    if (!pairing.paired || !isUuid(restaurant_id) || String(restaurant_id) !== String(pairing.restaurant_id)) {
+      console.warn(`[sync] ⚠️ Dropping ${FEEDBACK_OP} (${entry?.id}): it was left for a different restaurant than this hub is paired with.`);
+      return true;
+    }
+
+    try {
+      const pushed = await pushFeedback(this.cloud, restaurant_id, entry);
+      console.log(`[sync] ✅ Guest feedback ${pushed.id} (${pushed.rating}/5) pushed to Supabase`);
+      return true;
+    } catch (err) {
+      this.lastFailureSystemic = isSystemicFailure(err);
+      console.error(`[sync] ❌ ${FEEDBACK_OP} failed:`, { message: err.message, code: err.code || 'unknown', details: err.details || err.hint || null });
+      return false;
+    }
+  }
+
+  /**
+   * Fills an EMPTY feedback store from the cloud, for a replacement laptop. Never merges: a hub that holds
+   * any feedback is the authority on it.
+   */
+  async restoreFeedbackFromCloud(restaurantId) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { restored: false, reason: 'NOT_PAIRED' };
+    }
+    if (!feedbackStore.isEmpty(restaurantId)) return { restored: false, reason: 'FEEDBACK_PRESENT' };
+
+    const { online } = await this.checkConnection();
+    if (!online) return { restored: false, reason: 'OFFLINE' };
+
+    let pulled;
+    try {
+      pulled = await pullFeedback(this.cloud, restaurantId);
+    } catch (err) {
+      console.warn(`⚠️ Could not restore guest feedback from the cloud: ${err.message}`);
+      return { restored: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+    if (!pulled.length) return { restored: false, reason: 'NOTHING_IN_CLOUD' };
+
+    const restored = feedbackStore.restoreAll(restaurantId, pulled);   // re-checks emptiness: a guest may have answered meanwhile
+    if (restored) console.log(`📥 Restored ${restored} piece(s) of guest feedback from the cloud.`);
+    return { restored: restored > 0, count: restored };
+  }
+
   /** Queues every cash-up the cloud has not confirmed. Runs at boot, alongside the bills. */
   enqueueUnsyncedReconciliations(restaurantId) {
     const pending = reconciliationStore.listUnsynced(restaurantId);
@@ -926,6 +1008,12 @@ class SyncQueue {
             return false;
           });
           if (success) reconciliationStore.markSynced(item.payload?.record?.id, item.payload?.restaurant_id);
+        } else if (isFeedbackOp(item)) {
+          success = await this.syncFeedbackToSupabase(item).catch((err) => {
+            console.error('[sync] ❌ Sync feedback exception:', { message: err.message, code: err.code || 'unknown' });
+            return false;
+          });
+          if (success) feedbackStore.markSynced(item.payload?.entry?.id, item.payload?.restaurant_id);
         } else if (item.type === 'UPDATE_STATUS') {
           success = await this.syncStatusToSupabase(item.payload).catch((err) => {
             console.error('[sync] ❌ Sync status exception:', {

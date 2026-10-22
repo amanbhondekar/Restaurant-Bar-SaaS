@@ -43,8 +43,9 @@ early pilots:
 - **Diner menu** (`/diner`) — no sign-in, opened from a table code. Read-only
   unless reception switches guest ordering on, which lets a guest send an order
   to the kitchen (§4.5).
-- **Reception / server-laptop app** — the older shell, with a demo-era sales view
-  and waitlist; sales analytics now live in the admin console's Sales tab.
+- **Reception / server-laptop app** — the older shell. Its demo-era waitlist and
+  sales views are retired: those tabs now point at the admin console's Bookings
+  and Sales tabs.
 - **Operator service** (`signup_server/`) — not part of a restaurant's
   installation. Holds the Supabase service key and the Razorpay webhook
   secret: creates tenants, and keeps `plan_status` honest.
@@ -53,13 +54,13 @@ M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant �
 is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–012 are all unrun, because there are
+project or Razorpay keys: migrations 004–013 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1103 hub tests across 56 files** (pure rules plus live
+Automated coverage is **1126 hub tests across 57 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**667 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**676 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
 Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
@@ -219,9 +220,10 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
 - ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
   cash & payments, sales analytics, stock and recipes, kitchen performance and
   station screens, printers, staff and devices, guest feedback, plan.
-- ✅ Reception: the `ServerLaptopApp` shell. Its older `WaitlistView` is still
-  there too: see §4.6 for why that is a problem. So is its `SalesAnalyticsView`
-  (§3, Analytics): the admin Sales tab is the real one.
+- ✅ Reception: the `ServerLaptopApp` shell. Its demo-era `WaitlistView` and
+  `SalesAnalyticsView` are deleted; the Bookings and Sales tabs there link to the
+  admin console's, which are the real ones (the console opens on `/admin#bookings`
+  and `/admin#sales`).
 - ✅ Station screens (`src/station/`) and the diner page with its optional basket
   (`src/diner/`).
 - ✅ Waiter PWA (`src/waiter_mobile/`): floor grid with live table state,
@@ -242,7 +244,7 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1103 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1126 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -313,10 +315,9 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
   per-waiter or per-table view; no CSV export of sales. Found in a real browser,
   not by a test: the comparison period had no wording, so the screen read "set
   against ." and a summary read "up 5% on undefined". Fixed, with the test written
-  first. The older `SalesAnalyticsView` in the server-laptop shell is still there
-  and is **misleading**: it adds up every ticket in the browser's storage, with no
-  period and no regard for voids or refunds. It should be deleted once reception
-  stops opening it.
+  first. The older `SalesAnalyticsView` in the server-laptop shell, which added
+  up every ticket in the browser's storage with no regard for voids or refunds, has
+  been deleted; that tab now links here.
 - ✅ **Operational dashboard** (`/dashboard`): the 2026-09-19 revision of
   this file flagged flaky hydration. Re-checked on 2026-10-13 against a
   running hub — sales, floor grid, active KOTs and billed orders all render
@@ -471,7 +472,12 @@ milestones (§5) when a theme is pulled into a release.
   the hub attaches it to that table's own settled bill server-side, so
   reception knows which meal it is about without the guest ever seeing a
   bill. Reception reads it in the admin console's Feedback tab (average,
-  rating split, low ratings flagged); it is not replicated to the cloud.
+  rating split, low ratings flagged). Replicated to the cloud (migration 013,
+  `guest_feedback`): insert-only, like a cash-up, so a retried push is a no-op and
+  a guest's statement is never edited; restored onto a replacement laptop only
+  when it holds none of its own; entries from before the migration are carried up
+  by the boot backfill. Nothing identifying the guest is kept to copy. Unrun
+  against a real project, like the rest.
 
 ### 4.6 Reservations & waitlist  🟡
 - ✅ Time-slot reservations, checked against the real table layout: a party needs a
@@ -481,11 +487,12 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ A walk-in queue on the hub, in the admin Bookings tab. A number is optional
   there and required for a booking, because a booking is a promise you may have to
   chase.
-- ⬜ **The old Waitlist tab is still in the reception app.** The server-laptop app
-  keeps its original `WaitlistView`, a browser-`localStorage` list seeded with demo
-  rows (`PosContext`). It shares nothing with the hub queue, so a restaurant that
-  opens the wrong tab sees an unrelated, empty-looking list. Retire it, or point
-  it at the hub's queue.
+- ✅ **The old Waitlist tab is retired.** The server-laptop shell's `WaitlistView`
+  was a browser-`localStorage` list seeded with demo rows that shared nothing with
+  the hub queue, so a restaurant that opened the wrong tab saw an unrelated,
+  empty-looking list. It is deleted; the tab now says where bookings and the queue
+  are and links to the admin console's Bookings tab. (The unused waitlist state in
+  `PosContext` is still there.)
 - ✅ "Your table is ready" by WhatsApp click-to-chat: the hub writes the message and
   staff tap to send from their own phone. No Meta approval, no provider, no
   per-message fee, and it works with the line down.
@@ -593,11 +600,13 @@ The product can onboard a new restaurant without engineering.
 ### M4 — Customer surfaces  🟡
 - ✅ Sales analytics for reception (2026-10-22): period comparisons, guests new
   and returning, cohorts, and daily/weekly summaries sent by WhatsApp tap (§3).
-- 🟡 4.5 diner QR menu, guest ordering (opt-in) and repeat-visit recognition
-  shipped; paying from the phone is open and needs Razorpay keys.
-- 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; a public
-  booking page is still open and needs hosting, and the old browser-local
-  Waitlist tab has not been retired.
+- 🟡 4.5 diner QR menu, guest ordering (opt-in), repeat-visit recognition and
+  feedback (now replicated, migration 013) shipped. Open, and not for want of
+  code: paying from the phone needs Razorpay keys and a public callback address;
+  a reward scheme is a pricing decision.
+- 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; the old
+  browser-local Waitlist tab is retired. A public booking page is still open and
+  needs hosting.
 
 ---
 

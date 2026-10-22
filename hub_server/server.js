@@ -915,6 +915,7 @@ app.post('/public/feedback', (req, res) => {
     invoice
   });
 
+  syncQueue.enqueueFeedback(entry);
   console.log(`⭐ Feedback ${entry.rating}/5 from ${entry.table || 'the floor'}${entry.invoice_number ? ` (${entry.invoice_number})` : ''}`);
   broadcast('FEEDBACK_RECEIVED', { rating: entry.rating, table: entry.table });
   // Deliberately thin: a guest gets an acknowledgement, not a record id they could enumerate.
@@ -2720,6 +2721,12 @@ server.listen(PORT, '0.0.0.0', () => {
     syncQueue.restoreInventoryFromCloud(pairingInfo.restaurant_id)
       .catch(err => console.warn('⚠️ Stock restore failed:', err.message))
       .finally(() => syncQueue.enqueueInventoryIfBehind(pairingInfo.restaurant_id));
+
+    // Guest feedback the same way: a replacement laptop gets its ratings back, then whatever the cloud has not
+    // confirmed is carried up.
+    syncQueue.restoreFeedbackFromCloud(pairingInfo.restaurant_id)
+      .catch(err => console.warn('⚠️ Guest feedback restore failed:', err.message))
+      .finally(() => syncQueue.enqueueUnsyncedFeedback(pairingInfo.restaurant_id));
 
     // The booking diary the same way: a replacement laptop rebuilds it, then anything the cloud has
     // not confirmed is carried up.

@@ -246,3 +246,33 @@ test('hub: feedback from a table with no recent bill is still kept, just unattac
     hub.stop();
   }
 });
+
+// --- replication (migration 013) ----------------------------------------------------------------
+
+test('hub: feedback a guest leaves is queued for the cloud, and a refused rating is not', async () => {
+  const { startHub, RESTAURANT_ID } = await import('./helpers/spawnHub.mjs');
+  const hub = await startHub({
+    trustLoopback: true,
+    menu: { restaurant_id: RESTAURANT_ID, categories: [], items: [] },
+    tables: { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }] }
+  });
+  const queued = () => {
+    try { return JSON.parse(fs.readFileSync(path.join(hub.dataDir, 'sync_queue.json'), 'utf-8')).filter(q => q.type === 'SYNC_FEEDBACK'); } catch { return []; }
+  };
+  const post = body => fetch(`${hub.base}/public/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  try {
+    assert.equal((await post({ table: 'T1', rating: 9 })).status, 400);
+    assert.equal((await post({ table: 'T1', rating: 4, comment: 'Lovely' })).status, 201);
+
+    const deadline = Date.now() + 15000;
+    while (queued().length === 0 && Date.now() < deadline) await new Promise(r => setTimeout(r, 150));
+
+    const items = queued();
+    assert.equal(items.length, 1, 'one queued, for the one accepted');
+    assert.equal(items[0].payload.restaurant_id, RESTAURANT_ID);
+    assert.deepEqual([items[0].payload.entry.rating, items[0].payload.entry.comment, items[0].payload.entry.table], [4, 'Lovely', 'T1']);
+  } finally {
+    hub.stop();
+  }
+});

@@ -96,11 +96,45 @@ class FeedbackStore {
       // about a meal we can point at.
       invoice_number: invoice?.invoice_number ?? null,
       invoice_id: invoice?.id ?? null,
-      created_at: now.toISOString()
+      created_at: now.toISOString(),
+      // Whether the cloud holds it (migration 013). Entries from before this existed have no flag, which
+      // reads as "not yet", so the boot backfill carries them up.
+      synced_to_cloud: false
     };
     this.entries = [...this.entries, entry];
     this.save();
     return entry;
+  }
+
+  /** Entries the cloud has not confirmed, oldest first so the history replicates in order. */
+  listUnsynced(restaurantId) {
+    return this.entries.filter(e => e.restaurant_id === restaurantId && e.synced_to_cloud !== true);
+  }
+
+  /** Records that the cloud now holds this entry. A statement a guest made never goes back to pending. */
+  markSynced(entryId, restaurantId) {
+    const entry = this.entries.find(e => e.id === entryId && (!restaurantId || e.restaurant_id === restaurantId));
+    if (!entry || entry.synced_to_cloud === true) return false;
+    entry.synced_to_cloud = true;
+    this.save();
+    return true;
+  }
+
+  /** Whether this restaurant has left no feedback at all on this hub. */
+  isEmpty(restaurantId) {
+    return !this.entries.some(e => e.restaurant_id === restaurantId);
+  }
+
+  /**
+   * Fills an empty store from the cloud, for a replacement laptop. Only ever a restaurant with nothing here:
+   * it never merges into feedback the hub already holds.
+   */
+  restoreAll(restaurantId, pulled) {
+    if (!this.isEmpty(restaurantId)) return 0;
+    const mine = pulled.filter(e => e.restaurant_id === restaurantId);
+    this.entries = [...this.entries, ...mine];
+    this.save();
+    return mine.length;
   }
 
   /**

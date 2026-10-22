@@ -6,6 +6,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { explainError, hubBase, hubGet, hubSend } from './api';
 import { cloudState } from './lib/cloudStatus';
+import { tabFromHash } from './lib/tabs';
 import { Notice } from './ui';
 import { MenuTab } from './MenuTab';
 import { TablesTab } from './TablesTab';
@@ -136,7 +137,7 @@ function CloudPill({ state, onRetry }) {
 export const AdminApp = () => {
   const catalog = useCatalog();
   const cloud = useCloudStatus();
-  const [tab, setTab] = useState('menu');
+  const [tab, setTab] = useState(() => tabFromHash(window.location.hash));
   const [toast, setToast] = useState(null);
   const [stale, setStale] = useState(null); // 'menu' | 'layout' | null: a write found the hub ahead of the page
   const [epoch, setEpoch] = useState(0); // bumping it remounts the tabs, discarding open editors and drafts

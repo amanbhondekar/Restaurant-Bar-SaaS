@@ -30,6 +30,8 @@ const { RESERVATION_STATUSES, WAITLIST_STATUSES } = await import('../lib/reserva
 const { paymentEvents } = await import('../lib/reconciliation.js');
 const { reconciliationStore } = await import('../lib/reconciliationStore.js');
 const { reconciliationFromCloud } = await import('../lib/reconciliationSync.js');
+const { feedbackRow, feedbackFromCloud } = await import('../lib/feedbackSync.js');
+const { feedbackStore, MAX_COMMENT } = await import('../lib/feedbackStore.js');
 
 import { after } from 'node:test';
 after(() => fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -58,8 +60,8 @@ const fits = (table, row) => assert.deepEqual(problems(table, row), [], `${table
 // --- the reader itself -------------------------------------------------------------------------------
 
 test('the schema reader understands the real migrations -- and would notice if it did not', () => {
-  assert.ok(migrationFiles.length >= 11, 'every migration was read');
-  for (const t of ['orders', 'order_items', 'menu_items', 'invoices', 'reconciliations', 'inventory_items', 'recipes', 'reservations', 'walkins', 'subscriptions']) {
+  assert.ok(migrationFiles.length >= 13, 'every migration was read');
+  for (const t of ['orders', 'order_items', 'menu_items', 'invoices', 'reconciliations', 'inventory_items', 'recipes', 'reservations', 'walkins', 'subscriptions', 'guest_feedback']) {
     assert.ok(SCHEMA[t]?.columns.size > 3, `${t} was read with its columns`);
   }
   // Columns added by ALTER TABLE across several migrations are all there.
@@ -227,10 +229,28 @@ test('booking and queue rows fit, in every status', () => {
   }
 });
 
+test('guest feedback fits the table -- built by the real store, with every rating and the longest comment', () => {
+  // The rows come from feedbackStore.add, not from hand-written objects: the store is the thing that decides
+  // what an entry is called, and the bills taught us what a hand-written sample hides.
+  for (const rating of [1, 2, 3, 4, 5]) {
+    const real = feedbackStore.add({ restaurantId: RID, table: 'T4', rating, comment: 'x'.repeat(MAX_COMMENT), invoice: { id: 'inv_1', invoice_number: 'INV-000001' } });
+    fits('guest_feedback', feedbackRow(RID, real));
+  }
+  const bare = feedbackStore.add({ restaurantId: RID, table: null, rating: 3, comment: null });   // about the place, no bill
+  fits('guest_feedback', feedbackRow(RID, bare));
+  assert.equal(feedbackRow(RID, bare).invoice_number, null);
+});
+
+test('guest feedback survives the trip: what the store wrote is what a restored hub reads', () => {
+  const real = feedbackStore.add({ restaurantId: RID, table: 'T9', rating: 2, comment: 'Cold', invoice: { id: 'inv_9', invoice_number: 'INV-000009' } });
+  const back = feedbackFromCloud({ ...feedbackRow(RID, real), id: 'uuid' });
+  for (const key of ['id', 'restaurant_id', 'table', 'rating', 'comment', 'invoice_number', 'invoice_id', 'created_at']) assert.equal(back[key], real[key], key);
+});
+
 test('every catalog the hub upserts on (restaurant_id, hub_ref) has a unique index to match', () => {
   // Without one the cloud answers "no unique or exclusion constraint matching the ON CONFLICT
   // specification" and the whole push fails -- on every attempt, for ever.
-  for (const t of ['menu_categories', 'menu_items', 'tables', 'inventory_items', 'recipes', 'reservations', 'walkins']) {
+  for (const t of ['menu_categories', 'menu_items', 'tables', 'inventory_items', 'recipes', 'reservations', 'walkins', 'guest_feedback']) {
     assert.ok(SCHEMA[t].unique.some(u => u.join() === 'restaurant_id,hub_ref'), `${t} has no unique index on (restaurant_id, hub_ref)`);
   }
 });
@@ -242,6 +262,7 @@ test('every column the hub names when reading the cloud exists', () => {
     ['inventory_items', 'hub_ref, name, unit, on_hand, low_at'],
     ['inventory_items', 'par, unit_cost'],
     ['recipes', 'hub_ref, menu_item_ref, variant_ref, lines'],
+    ['guest_feedback', 'hub_ref, restaurant_id, table_label, rating, comment, invoice_number, invoice_ref, created_at'],
     ['restaurants', 'plan, plan_status, trial_ends_at, current_period_end'],
     ['staff_users', 'id, restaurant_id, role']
   ];
