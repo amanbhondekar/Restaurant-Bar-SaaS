@@ -46,7 +46,10 @@ const STUBS = `
  * wants to apply the files itself (to run them twice, say).
  */
 export async function cloudDb({ apply = true } = {}) {
-  const pg = new PGlite({ extensions: { uuid_ossp, pgcrypto } });
+  // PostgREST hands back JSON: numbers as numbers (not the strings a driver gives for NUMERIC and BIGINT) and timestamps as
+  // ISO strings. Parse the same way, so code under test sees what it would see from a real project.
+  const parsers = { 1700: v => Number(v), 20: v => Number(v), 1184: v => new Date(v).toISOString() };
+  const pg = new PGlite({ extensions: { uuid_ossp, pgcrypto }, parsers });
   await pg.exec(STUBS);
 
   // `onlyMigrations`: skip the base schema, which seeds demo rows and is run once. The migrations are the files that

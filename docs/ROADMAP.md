@@ -58,7 +58,7 @@ project or Razorpay keys: migrations 004–015 have never run on a hosted projec
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1200 hub tests across 60 files** (pure rules plus live
+Automated coverage is **1208 hub tests across 61 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **748 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -244,7 +244,7 @@ Display and the waiter's QR scanner are still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1200 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1208 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -277,10 +277,11 @@ Display and the waiter's QR scanner are still verified by hand.
 - 🟡 **Inventory limits** (what is left): nothing in the code. Costing, stock-up-to
   levels, the shopping list (§4.2), order cancellation (§4.3) and an out-of-stock
   extra greyed out on the waiter's sheet and hidden from guests have all shipped.
-  Migrations 009 and 012 now apply on a real Postgres engine and the hub's stock
-  rows fit their constraints (§3, Billing replication); what is open is outside the
-  code: they have not run on a hosted project and their restore paths are untested
-  against one. Not plan-gated: whether stock is a paid feature is a pricing call.
+  Migrations 009 and 012 apply on a real Postgres engine, the hub's stock rows
+  fit their constraints, and the stock and recipe restore (par, costs, a recipe
+  per size, an extra's own line) is proven round-trip against it (§3, Billing
+  replication); what is open is outside the code: none of it has run on a hosted
+  project. Not plan-gated: whether stock is a paid feature is a pricing call.
 - ✅ **Station screens are role-scoped**: a station tablet enrols with a
   `kitchen` device token, which can read the board and mark tickets and stations
   done and is refused everything else -- placing orders, every bill route, staff,
@@ -306,7 +307,12 @@ Display and the waiter's QR scanner are still verified by hand.
   role only" table claims protected nothing under those defaults -- a tenant's own
   login could set its plan to enterprise, edit or delete its cash-ups and feedback,
   and rewrite its staff rows -- so migration 014 states each role's privileges
-  explicitly. **What is still open:** none of it has run on a *hosted* Supabase
+  explicitly. The hub's own push and restore code (the ledger, stock, bookings,
+  feedback, menu and layout) has also been run round-trip against that real
+  database, with the stores wiped as a new laptop would be: bills come back in
+  every state with the cash screen's figures identical, cash-ups with their
+  variances, a short ledger is found and repaired, and a push removes only its own
+  restaurant's stale rows. **What is still open:** none of it has run on a *hosted* Supabase
   project (PostgREST, the auth service and the project's real defaults are not in
   PGlite), and whether the hosted defaults are what the stub assumes is unchecked.
   Building it found and fixed two real bugs: status updates were keyed on the ticket number alone (so
