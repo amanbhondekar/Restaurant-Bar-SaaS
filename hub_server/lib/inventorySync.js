@@ -1,4 +1,5 @@
 import { upsertAll, deleteStale } from './catalogSync.js';
+import { cleanLine } from './inventory.js';
 
 // Pushes the hub's stock and recipes to the cloud (migration 009), and reads them back for a
 // replacement hub. Same arrangement as the menu and tables: the hub is the single writer, each push
@@ -25,7 +26,7 @@ export function recipeRow(restaurantId, recipe) {
     menu_item_ref: String(recipe.item_id),
     // Explicit null for the dish-wide recipe, not an omitted key: the upsert must be able to clear it.
     variant_ref: recipe.variant_id == null ? null : String(recipe.variant_id),
-    lines: (recipe.lines || []).map(l => ({ inventory_item_id: String(l.inventory_item_id), qty: Number(l.qty) }))
+    lines: (recipe.lines || []).map(cleanLine).filter(Boolean)
   };
 }
 
@@ -68,7 +69,7 @@ export async function pullInventory(client, restaurantId) {
         id: String(r.hub_ref),
         item_id: String(r.menu_item_ref),
         variant_id: r.variant_ref == null ? null : String(r.variant_ref),
-        lines: Array.isArray(r.lines) ? r.lines.map(l => ({ inventory_item_id: String(l.inventory_item_id), qty: Number(l.qty) })) : []
+        lines: Array.isArray(r.lines) ? r.lines.map(cleanLine).filter(Boolean) : []
       }))
   };
 }

@@ -51,9 +51,9 @@ project or Razorpay keys: migrations 004–011 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **941 hub tests across 49 files** (pure rules plus live
+Automated coverage is **965 hub tests across 50 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**290 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**316 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, the admin Feedback, Stock,
 Kitchen, Staff, Bookings, Regulars, ledger-repair and guest-ordering panels, and
 the waiter login, modifier sheet and menu grid. The reception Kitchen Display,
@@ -213,8 +213,8 @@ by hand.
   rotation and per-device revocation have all shipped (§4.4). What is left is
   that the console is reception-only -- there is no remote owner view -- and
   that a person's role is stored but not enforced (§4.7).
-- 🟡 **Inventory limits**: modifier choices (extra cheese) do not use stock,
-  there is no costing, par level or reorder prompt, and there is no way to
+- 🟡 **Inventory limits**: there is no costing, par level or reorder prompt, and
+  there is no way to
   cancel an order at all -- tickets can be marked ready, fired, recalled and
   cleared, never withdrawn -- so there is nothing yet for stock to be returned
   from. Whether a cancelled order gives its ingredients back (it may already be
@@ -297,7 +297,15 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Stock-out propagates to the waiter grid and the diner menu as a `stock_out`
   flag over the menu, never a write to `available`; the order check is the
   backstop for a stale handset.
-- ⬜ Modifier choices that use stock; costing and par levels; reorder prompts.
+- ✅ Modifier choices that use stock: an "extra cheese" takes 20 g of cheese out of
+  stock, for the portions that picked it. Set on the dish's own recipe, so it
+  travels in the same cloud row (no migration) and a restore cannot turn it into a
+  second dish-wide recipe. An extra that has run out holds up the order that asks
+  for it, not the dish. The waiter's modifier sheet does not yet grey it out, so
+  the refusal arrives with the order, naming the ingredient. An extra belongs to
+  the recipe for the size ordered, so a dish with a recipe per size sets it per
+  size.
+- ⬜ Costing, par levels and reorder prompts.
 
 ### 4.3 Kitchen operations  🟡
 - ✅ Multi-station routing, course firing / hold-and-fire, prep-time

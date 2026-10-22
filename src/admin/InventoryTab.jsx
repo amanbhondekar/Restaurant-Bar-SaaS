@@ -7,8 +7,8 @@ import { explainError, hubGet, hubSend } from './api';
 import { ConfirmDialog, EmptyState, Field, ListSkeleton, NativeSelect, Notice, TextInput } from './ui';
 import {
   ADJUSTMENTS, LEVELS, UNIT_NAMES, afterAdjustment, blankIngredient, blankLine, describeMovement, dishesOutOfStock,
-  formatQty, ingredientToForm, outOfStockLine, recipeSubjects, recipeSummary, recipeToLines, subjectKey, summaryLine,
-  validateAdjustment, validateIngredientForm, validateRecipeLines
+  formatQty, ingredientToForm, outOfStockLine, recipeSubjects, recipeSummary, recipeToExtras, recipeToLines, subjectKey, summaryLine,
+  validateAdjustment, validateIngredientForm, validateRecipe
 } from './lib/inventory';
 import { formatWhen } from './lib/plan';
 
@@ -166,22 +166,68 @@ function HistoryDialog({ ingredient, onClose }) {
   );
 }
 
+// One list of ingredient rows: the dish's own, or one extra's. The base list keeps its original labels
+// ("Ingredient 1") so a screen reader hears what it always did; an extra's say which extra they belong to.
+function RecipeLines({ lines, setLines, ingredients, errors, showErrors, label = '' }) {
+  const byId = new Map(ingredients.map(i => [i.id, i]));
+  const edit = (i, patch) => setLines(ls => ls.map((l, n) => (n === i ? { ...l, ...patch } : l)));
+  const suffix = label ? ` for ${label}` : '';
+  return (
+    <>
+      {lines.map((l, i) => {
+        const ing = byId.get(l.inventory_item_id);
+        const e = showErrors ? errors?.[i] : undefined;
+        return (
+          <div key={i} className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-start gap-2">
+            <Field error={e?.ingredient}>
+              <NativeSelect aria-label={`Ingredient ${i + 1}${suffix}`} value={l.inventory_item_id} onChange={ev => edit(i, { inventory_item_id: ev.target.value })} invalid={Boolean(e?.ingredient)}>
+                <option value="">Choose…</option>
+                {ingredients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </NativeSelect>
+            </Field>
+            <Field error={e?.qty}>
+              <div className="flex items-center gap-1.5">
+                <TextInput aria-label={`Quantity ${i + 1}${suffix}`} inputMode="decimal" value={l.qty} onChange={ev => edit(i, { qty: ev.target.value })} invalid={Boolean(e?.qty)} />
+                <span className="w-8 text-xs text-muted-foreground">{ing?.unit ?? ''}</span>
+              </div>
+            </Field>
+            <Button type="button" variant="outline" className="h-10" aria-label={`Remove ingredient ${i + 1}${suffix}`} onClick={() => setLines(ls => ls.filter((_, n) => n !== i))}>
+              <Trash2 className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        );
+      })}
+      <div>
+        <Button type="button" variant="outline" className="h-9" aria-label={label ? `Add ingredient${suffix}` : undefined} onClick={() => setLines(ls => [...ls, blankLine()])}>
+          <Plus className="size-4" aria-hidden="true" />Add ingredient
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function RecipeDialog({ subjects, ingredients, existing, preset, onSave, onCancel, busy, serverError }) {
   const [subjectId, setSubjectId] = useState(preset?.key ?? '');
   const recipeFor = key => existing.find(r => subjectKey(r.item_id, r.variant_id) === key);
   const [lines, setLines] = useState(() => (preset && recipeFor(preset.key) ? recipeToLines(recipeFor(preset.key)) : [blankLine()]));
+  // Each extra's own rows, { 'group|option': [rows] }. Only extras that already use stock start open.
+  const [extras, setExtras] = useState(() => (preset && recipeFor(preset.key) ? recipeToExtras(recipeFor(preset.key)) : {}));
   const [showErrors, setShowErrors] = useState(false);
   const subject = subjects.find(s => s.key === subjectId);
-  const { errors, payload } = validateRecipeLines(lines, ingredients);
-  const byId = new Map(ingredients.map(i => [i.id, i]));
+  const offered = subject?.extras ?? [];
+  const { errors, extraErrors, payload } = validateRecipe(lines, extras, offered, ingredients);
+  const anyError = Object.keys(errors).length > 0 || Object.keys(extraErrors).length > 0;
+  // Nothing listed anywhere: saving that removes the recipe, which is worth saying before it happens.
+  const noRows = lines.length === 0 && offered.every(x => (extras[x.key] ?? []).length === 0);
 
   const pick = key => {
     setSubjectId(key);
     const r = recipeFor(key);
     setLines(r ? recipeToLines(r) : [blankLine()]);
+    setExtras(r ? recipeToExtras(r) : {});
     setShowErrors(false);
   };
-  const edit = (i, patch) => setLines(ls => ls.map((l, n) => (n === i ? { ...l, ...patch } : l)));
+  const setExtraRows = (key, update) => setExtras(all => ({ ...all, [key]: typeof update === 'function' ? update(all[key] ?? []) : update }));
 
   return (
     <FormDialog
@@ -194,8 +240,7 @@ function RecipeDialog({ subjects, ingredients, existing, preset, onSave, onCance
       onCancel={onCancel}
       onConfirm={() => {
         setShowErrors(true);
-        const real = Object.keys(errors).length > 0;
-        if (!real) onSave({ item_id: subject.item_id, ...(subject.variant_id ? { variant_id: subject.variant_id } : {}), lines: payload });
+        if (!anyError) onSave({ item_id: subject.item_id, ...(subject.variant_id ? { variant_id: subject.variant_id } : {}), lines: payload });
       }}
     >
       <Field label="Dish" htmlFor="rec-subject" hint={subject ? undefined : 'Choose the dish, or one size of it.'}>
@@ -208,38 +253,41 @@ function RecipeDialog({ subjects, ingredients, existing, preset, onSave, onCance
       {subject && (
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium">Uses, per portion</legend>
-          {lines.map((l, i) => {
-            const ing = byId.get(l.inventory_item_id);
-            const e = showErrors ? errors[i] : undefined;
-            return (
-              <div key={i} className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-start gap-2">
-                <Field error={e?.ingredient}>
-                  <NativeSelect aria-label={`Ingredient ${i + 1}`} value={l.inventory_item_id} onChange={ev => edit(i, { inventory_item_id: ev.target.value })} invalid={Boolean(e?.ingredient)}>
-                    <option value="">Choose…</option>
-                    {ingredients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                  </NativeSelect>
-                </Field>
-                <Field error={e?.qty}>
-                  <div className="flex items-center gap-1.5">
-                    <TextInput aria-label={`Quantity ${i + 1}`} inputMode="decimal" value={l.qty} onChange={ev => edit(i, { qty: ev.target.value })} invalid={Boolean(e?.qty)} />
-                    <span className="w-8 text-xs text-muted-foreground">{ing?.unit ?? ''}</span>
-                  </div>
-                </Field>
-                <Button type="button" variant="outline" className="h-10" aria-label={`Remove ingredient ${i + 1}`} onClick={() => setLines(ls => ls.filter((_, n) => n !== i))}>
-                  <Trash2 className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            );
-          })}
+          <RecipeLines lines={lines} setLines={setLines} ingredients={ingredients} errors={errors} showErrors={showErrors} />
           {showErrors && errors.form && <p className="text-xs text-destructive">{errors.form}</p>}
-          <div>
-            <Button type="button" variant="outline" className="h-9" onClick={() => setLines(ls => [...ls, blankLine()])}>
-              <Plus className="size-4" aria-hidden="true" />Add ingredient
-            </Button>
-          </div>
-          {lines.length === 0 && recipeFor(subject.key) && (
+          {noRows && recipeFor(subject.key) && (
             <Notice tone="warning">Saving with no ingredients removes this recipe, and the dish stops being tracked.</Notice>
           )}
+        </fieldset>
+      )}
+
+      {offered.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-sm font-medium">Extras</legend>
+          <p className="text-xs text-muted-foreground">
+            What a choice adds, on top of the above, for each portion that picks it. Leave it empty and the choice uses no stock.
+          </p>
+          {offered.map(x => {
+            const rows = extras[x.key] ?? [];
+            return (
+              <details key={x.key} open={rows.length > 0} className="rounded-lg border border-border px-3 py-2">
+                <summary className="cursor-pointer text-sm font-medium">
+                  {x.label}
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">{x.group_label}</span>
+                </summary>
+                <div className="mt-2 flex flex-col gap-2">
+                  <RecipeLines
+                    lines={rows}
+                    setLines={update => setExtraRows(x.key, update)}
+                    ingredients={ingredients}
+                    errors={extraErrors[x.key]}
+                    showErrors={showErrors}
+                    label={x.label}
+                  />
+                </div>
+              </details>
+            );
+          })}
         </fieldset>
       )}
       {serverError && <Notice tone="error">{serverError}</Notice>}
@@ -382,7 +430,7 @@ export function InventoryTab({ menu, notify }) {
                         <span className="truncate font-semibold">{label}</span>
                         {!subject && <Badge variant="outline">Not on the menu</Badge>}
                       </div>
-                      <div className="text-sm text-muted-foreground">{recipeSummary(r, ingredients)}</div>
+                      <div className="text-sm text-muted-foreground">{recipeSummary(r, ingredients, subject?.extras)}</div>
                     </div>
                     {subject && <Button variant="outline" className="h-9" aria-label={`Edit the recipe for ${label}`} onClick={() => setDialog({ type: 'recipe', preset: subject })}><Pencil className="size-4" aria-hidden="true" />Edit</Button>}
                   </li>

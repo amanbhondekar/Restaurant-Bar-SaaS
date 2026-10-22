@@ -26,6 +26,34 @@ const isQty = n => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= 
 const isLevel = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= LIMITS.quantity && r3(n) === n;
 
 const norm = s => String(s ?? '').trim().toLowerCase();
+// A recipe line is an ingredient and a quantity. A line may also name a modifier choice on the dish
+// (`group_id` + `option_id`): it is then what ONE portion with that choice adds on top of the dish --
+// extra cheese uses 20 g of cheese -- and is counted only when the order line picked that choice.
+//
+// Kept inside the dish's own recipe rather than as a recipe of its own. The cloud table has no column
+// for an option, so a separate row would lose what it was for on a restore and come back as a second
+// dish-wide recipe, which would be worse than not tracking extras at all.
+export const isOptionLine = l => l.option_id != null;
+const optionKey = (groupId, optionId) => `${groupId}|${optionId}`;
+const lineKey = l => `${l.inventory_item_id}|${isOptionLine(l) ? optionKey(l.group_id, l.option_id) : ''}`;
+
+/**
+ * One recipe line as it is stored, synced and read back. Null for a line that cannot be trusted: a
+ * half-named option is DROPPED rather than read as a base line, because the alternative is quietly
+ * charging every portion of the dish for an extra that only some of them have.
+ */
+export function cleanLine(l) {
+  if (!l || l.inventory_item_id == null || !isQty(Number(l.qty))) return null;
+  const hasGroup = l.group_id != null && l.group_id !== '';
+  const hasOption = l.option_id != null && l.option_id !== '';
+  if (hasGroup !== hasOption) return null;
+  return {
+    inventory_item_id: String(l.inventory_item_id),
+    qty: Number(l.qty),
+    ...(hasOption ? { group_id: String(l.group_id), option_id: String(l.option_id) } : {})
+  };
+}
+
 export const newIngredientId = () => 'ing_' + crypto.randomBytes(4).toString('hex');
 export const newRecipeId = () => 'rec_' + crypto.randomBytes(4).toString('hex');
 const newMovementId = () => 'mv_' + crypto.randomBytes(5).toString('hex');
@@ -54,8 +82,9 @@ export function normalizeState(raw, restaurantId = null) {
     .map(r => ({
       id: String(r.id), item_id: String(r.item_id), variant_id: r.variant_id == null || r.variant_id === '' ? null : String(r.variant_id),
       lines: (Array.isArray(r.lines) ? r.lines : [])
-        .filter(l => l && known.has(String(l.inventory_item_id)) && isQty(Number(l.qty)))
-        .map(l => ({ inventory_item_id: String(l.inventory_item_id), qty: Number(l.qty) }))
+        .filter(l => l && known.has(String(l.inventory_item_id)))
+        .map(cleanLine)
+        .filter(Boolean)
     }))
     .filter(r => r.lines.length > 0);
   return {
@@ -219,15 +248,22 @@ export function setRecipe(state, input, menu) {
   if (input.lines.length > LIMITS.recipeLines) return invalid([{ field: 'lines', message: `a recipe can have at most ${LIMITS.recipeLines} ingredients` }], 'INVALID_RECIPE');
 
   const known = new Set(state.items.map(i => i.id));
+  // The choices this dish offers, so a line cannot name an extra it does not have.
+  const offered = new Set((menuItem.modifier_groups || []).flatMap(g => (g.options || []).map(o => optionKey(g.id, o.id))));
   const seen = new Set();
   const errors = [];
   const lines = [];
   input.lines.forEach((l, n) => {
     const id = typeof l?.inventory_item_id === 'string' ? l.inventory_item_id : '';
+    const hasGroup = l?.group_id != null && l.group_id !== '';
+    const hasOption = l?.option_id != null && l.option_id !== '';
+    const key = `${id}|${hasOption ? optionKey(l.group_id, l.option_id) : ''}`;
     if (!known.has(id)) errors.push({ field: `lines.${n}.inventory_item_id`, message: `line ${n + 1}: unknown ingredient` });
-    else if (seen.has(id)) errors.push({ field: `lines.${n}.inventory_item_id`, message: `line ${n + 1}: each ingredient can appear once` });
+    else if (hasGroup !== hasOption) errors.push({ field: `lines.${n}.option_id`, message: `line ${n + 1}: an extra needs both its group and its choice` });
+    else if (hasOption && !offered.has(optionKey(l.group_id, l.option_id))) errors.push({ field: `lines.${n}.option_id`, message: `line ${n + 1}: "${menuItem.name}" does not offer that choice` });
+    else if (seen.has(key)) errors.push({ field: `lines.${n}.inventory_item_id`, message: `line ${n + 1}: ${hasOption ? 'that ingredient is already listed for this extra' : 'each ingredient can appear once'}` });
     else if (!isQty(l.qty)) errors.push({ field: `lines.${n}.qty`, message: `line ${n + 1}: quantity must be more than zero, with at most 3 decimals` });
-    else { seen.add(id); lines.push({ inventory_item_id: id, qty: l.qty }); }
+    else { seen.add(key); lines.push(cleanLine({ ...l, inventory_item_id: id })); }
   });
   if (errors.length) return invalid(errors, 'INVALID_RECIPE');
 
@@ -259,10 +295,13 @@ export function needsFor(state, lines) {
     const recipe = recipeFor(state, line.id, line.variant_id);
     if (!recipe) return;
     const qty = Number(line.qty) || 0;
+    const picked = new Set((Array.isArray(line.modifiers) ? line.modifiers : []).map(m => optionKey(m?.group_id, m?.option_id)));
     for (const l of recipe.lines) {
+      // An extra counts only for the portions that chose it.
+      if (isOptionLine(l) && !picked.has(optionKey(l.group_id, l.option_id))) continue;
       const cur = needs.get(l.inventory_item_id) || { needed: 0, lines: [] };
       cur.needed = r3(cur.needed + l.qty * qty);
-      cur.lines.push(index);
+      if (!cur.lines.includes(index)) cur.lines.push(index);
       needs.set(l.inventory_item_id, cur);
     }
   });
@@ -309,8 +348,11 @@ export function levelOf(ing) {
   return 'ok';
 }
 
+// Only the dish's own ingredients decide whether the DISH is out. An extra that has run out holds up an
+// order that asks for it (shortagesFor), not the whole dish: nobody should lose the biryani because the
+// extra cheese is gone.
 const recipeShort = (state, byId, recipe) =>
-  recipe.lines.some(l => {
+  recipe.lines.filter(l => !isOptionLine(l)).some(l => {
     const ing = byId.get(l.inventory_item_id);
     return !ing || ing.on_hand < l.qty;
   });

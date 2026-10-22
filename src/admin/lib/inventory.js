@@ -108,36 +108,75 @@ export function describeMovement(m, unit) {
 
 export const subjectKey = (itemId, variantId) => `${itemId}|${variantId ?? ''}`;
 
+/** A choice on a dish (extra cheese), as a map key. Group AND option: option ids repeat across groups. */
+export const extraKey = (groupId, optionId) => `${groupId}|${optionId}`;
+
+/** The choices a dish offers, each of which can use stock: [{ key, group_id, option_id, label, group_label }]. */
+export function dishExtras(item) {
+  return (Array.isArray(item?.modifier_groups) ? item.modifier_groups : []).flatMap(g =>
+    (Array.isArray(g.options) ? g.options : []).map(o => ({
+      key: extraKey(g.id, o.id), group_id: String(g.id), option_id: String(o.id), label: o.label, group_label: g.label
+    })));
+}
+
 /**
  * Everything a recipe can be written for: each dish with no sizes, and for a dish with sizes each size
- * plus "every size" (a recipe that covers any size without its own).
+ * plus "every size" (a recipe that covers any size without its own). Each carries the extras the dish
+ * offers, because an extra's ingredients are part of that same recipe.
  */
 export function recipeSubjects(menuItems) {
   const out = [];
   for (const item of menuItems || []) {
     const sizes = Array.isArray(item.variants) ? item.variants : [];
+    const extras = dishExtras(item);
     if (sizes.length === 0) {
-      out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: item.name });
+      out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: item.name, extras });
       continue;
     }
-    out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: `${item.name} · every size` });
-    for (const v of sizes) out.push({ key: subjectKey(item.id, v.id), item_id: String(item.id), variant_id: String(v.id), label: `${item.name} · ${v.label}` });
+    out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: `${item.name} · every size`, extras });
+    for (const v of sizes) out.push({ key: subjectKey(item.id, v.id), item_id: String(item.id), variant_id: String(v.id), label: `${item.name} · ${v.label}`, extras });
   }
   return out;
 }
 
-/** "Paneer 150 g · Onion 0.1 kg". An ingredient that has since been removed is said so, not hidden. */
-export function recipeSummary(recipe, ingredients) {
+/**
+ * "Paneer 150 g · Onion 0.1 kg", then "With Extra cheese: Cheese 20 g" for each extra. An ingredient that
+ * has since been removed is said so, not hidden. `extras` (a subject's) turns an extra's ids into the
+ * name reception gave it; without it the option id is shown, which is ugly but not wrong.
+ */
+export function recipeSummary(recipe, ingredients, extras = []) {
   const byId = new Map((ingredients || []).map(i => [i.id, i]));
-  return recipe.lines.map(l => {
+  const named = new Map(extras.map(x => [x.key, x.label]));
+  const say = l => {
     const ing = byId.get(l.inventory_item_id);
     return ing ? `${ing.name} ${formatQty(l.qty, ing.unit)}` : '(removed ingredient)';
-  }).join(' · ');
+  };
+  const base = recipe.lines.filter(l => l.option_id == null).map(say);
+  const byExtra = new Map();
+  for (const l of recipe.lines.filter(x => x.option_id != null)) {
+    const key = extraKey(l.group_id, l.option_id);
+    byExtra.set(key, [...(byExtra.get(key) ?? []), say(l)]);
+  }
+  const extrasText = [...byExtra.entries()].map(([key, said]) => `With ${named.get(key) ?? key.split('|')[1]}: ${said.join(', ')}`);
+  return [...base, ...extrasText].join(' · ');
 }
 
 export const blankLine = () => ({ inventory_item_id: '', qty: '' });
 
-export const recipeToLines = recipe => recipe.lines.map(l => ({ inventory_item_id: l.inventory_item_id, qty: String(l.qty) }));
+/** The dish's own ingredients, as the editor's rows. */
+export const recipeToLines = recipe => recipe.lines
+  .filter(l => l.option_id == null)
+  .map(l => ({ inventory_item_id: l.inventory_item_id, qty: String(l.qty) }));
+
+/** The extras' ingredients, as editor rows keyed by extra: { 'g_extras|o_cheese': [row, ...] }. */
+export function recipeToExtras(recipe) {
+  const out = {};
+  for (const l of recipe.lines.filter(x => x.option_id != null)) {
+    const key = extraKey(l.group_id, l.option_id);
+    out[key] = [...(out[key] ?? []), { inventory_item_id: l.inventory_item_id, qty: String(l.qty) }];
+  }
+  return out;
+}
 
 /**
  * Check a recipe editor's lines. An empty list is allowed: it removes the recipe. Returns
@@ -162,6 +201,29 @@ export function validateRecipeLines(lines, ingredients) {
   });
   if (lines.length > 30) errors.form = 'A recipe can list at most 30 ingredients.';
   return { errors, payload };
+}
+
+/**
+ * Check the whole editor: the dish's own lines and each extra's. `extras` is { key: [rows] } and
+ * `offered` the dish's own extras (from its subject), so a row for an extra the dish no longer offers is
+ * left out rather than sent and refused. Returns { errors, extraErrors: { [key]: errors }, payload }, with
+ * payload = every line to send, the extras' carrying their group and option.
+ */
+export function validateRecipe(lines, extras, offered, ingredients) {
+  const base = validateRecipeLines(lines, ingredients);
+  const extraErrors = {};
+  const payload = [...base.payload];
+  for (const x of offered || []) {
+    const rows = (extras || {})[x.key] ?? [];
+    if (rows.length === 0) continue;
+    const checked = validateRecipeLines(rows, ingredients);
+    if (Object.keys(checked.errors).length) extraErrors[x.key] = checked.errors;
+    payload.push(...checked.payload.map(l => ({ ...l, group_id: x.group_id, option_id: x.option_id })));
+  }
+  const total = payload.length;
+  const errors = { ...base.errors };
+  if (total > 30 && !errors.form) errors.form = 'A recipe can list at most 30 ingredients.';
+  return { errors, extraErrors, payload };
 }
 
 // --- reading the menu for stock-outs ------------------------------------------------------------
