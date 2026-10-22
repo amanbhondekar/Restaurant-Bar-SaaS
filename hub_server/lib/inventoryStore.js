@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   emptyState, normalizeState, addIngredient, updateIngredient, deleteIngredient, adjustStock, setRecipe,
-  shortagesFor, consume, restock, recipeCost, reorderList, stockOutKeys, overlayMenuItems, summarize, levelOf
+  shortagesFor, consume, restock, recipeCost, reorderList, stockSignature, overlayMenuItems, summarize, levelOf
 } from './inventory.js';
 
 // The hub's stock and recipes on disk (hub_server/data/inventory.json), around the pure rules in
@@ -93,13 +93,13 @@ export class InventoryStore {
   /** Run a rule from lib/inventory.js, and on success persist it and tell the listeners. */
   commit(restaurantId, op) {
     this.ensureTenant(restaurantId);
-    const before = stockOutKeys(this.state, this.menuItems());
+    const before = stockSignature(this.state, this.menuItems());
     const result = op(this.state);
     if (!result.ok) return result;
 
     const changed = result.data !== this.state;
     this.state = result.data;
-    const availabilityChanged = !sameSet(before, stockOutKeys(this.state, this.menuItems()));
+    const availabilityChanged = !sameSet(before, stockSignature(this.state, this.menuItems()));
     if (changed) {
       this.save();
       for (const cb of this.listeners) {

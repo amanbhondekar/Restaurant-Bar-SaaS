@@ -444,24 +444,115 @@ export function stockOutKeys(state, menuItems) {
 }
 
 /**
- * The menu with `stock_out: true` on what cannot be made. Items that need no change are returned as
- * they are (same reference), and `available` is never touched: that is reception's own switch.
+ * Whether ONE portion with this extra cannot be made from what is on hand, at the size `recipe` is for.
+ * The dish's own use of an ingredient and the extra's are added together, so cheese in both the dish and the
+ * extra is checked against the total. A size with no recipe, or whose recipe has nothing for this extra, takes
+ * the extra without touching stock, so it is never short.
+ */
+function optionShortIn(byId, recipe, key) {
+  if (!recipe) return false;
+  const extra = new Map();
+  const base = new Map();
+  for (const l of recipe.lines) {
+    if (!isOptionLine(l)) base.set(l.inventory_item_id, r3((base.get(l.inventory_item_id) || 0) + l.qty));
+    else if (optionKey(l.group_id, l.option_id) === key) extra.set(l.inventory_item_id, r3((extra.get(l.inventory_item_id) || 0) + l.qty));
+  }
+  return [...extra].some(([id, qty]) => {
+    const ing = byId.get(id);
+    return !ing || ing.on_hand < r3((base.get(id) || 0) + qty);
+  });
+}
+
+/**
+ * The extras of one dish that cannot be had, as a Set of 'groupId|optionId'. An extra is out only when NO size
+ * that can be ordered could take it: a Half whose recipe does not use the cheese still offers the extra, and the
+ * order check (`shortagesFor`) refuses the Full with the ingredient named. A size reception has 86'd by hand
+ * cannot be ordered, so it does not keep an extra on offer.
+ */
+function optionStockOutKeys(state, item, byId) {
+  const groups = Array.isArray(item.modifier_groups) ? item.modifier_groups : [];
+  if (groups.length === 0) return new Set();
+  const variants = Array.isArray(item.variants) ? item.variants : [];
+  const sizes = variants.length > 0
+    ? variants.filter(v => v.available !== false).map(v => recipeFor(state, item.id, v.id))
+    : [recipeFor(state, item.id, null)];
+  if (sizes.length === 0) return new Set();   // nothing can be ordered: the dish's own state says so
+  const out = new Set();
+  for (const g of groups) {
+    for (const o of Array.isArray(g.options) ? g.options : []) {
+      const key = optionKey(g.id, o.id);
+      if (sizes.every(recipe => optionShortIn(byId, recipe, key))) out.add(key);
+    }
+  }
+  return out;
+}
+
+/**
+ * What stock says about one dish's extras: which are out, and whether a REQUIRED choice has been left with
+ * nothing stock allows (every option either 86'd by hand or out of stock, and at least one of them for stock).
+ * Such a dish cannot be completed on the waiter's sheet, so it is flagged as a whole; a dish with a required
+ * choice that is 86'd by hand alone is reception's own doing and is not claimed here.
+ */
+function optionStock(state, item, byId) {
+  const out = optionStockOutKeys(state, item, byId);
+  if (out.size === 0) return { out, blocked: false };
+  const blocked = (item.modifier_groups || []).some(g => {
+    const options = Array.isArray(g.options) ? g.options : [];
+    const gone = o => o.available === false || out.has(optionKey(g.id, o.id));
+    return Number(g.min) >= 1 && options.length > 0 && options.every(gone) && options.some(o => out.has(optionKey(g.id, o.id)));
+  });
+  return { out, blocked };
+}
+
+/**
+ * Everything the overlay would flag, as one Set of strings: the dish and size keys of `stockOutKeys`, plus
+ * `opt|item|group|option` for each extra that is out. The store compares two of these to know whether handsets
+ * need a fresh menu; `stockOutKeys` alone would miss an extra running out, because no dish moves when it does.
+ * (A dish held up by a required choice needs no entry of its own: it only becomes so when the last option goes
+ * out, which changes these.)
+ */
+export function stockSignature(state, items) {
+  const sig = new Set(stockOutKeys(state, items));
+  if (!state.recipes.length) return sig;
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  for (const item of items || []) {
+    for (const key of optionStockOutKeys(state, item, byId)) sig.add(`opt|${item.id}|${key}`);
+  }
+  return sig;
+}
+
+/**
+ * The menu with `stock_out: true` on what cannot be made: dishes, sizes, and extras (an option inside a dish's
+ * modifier groups). Items that need no change are returned as they are (same reference), and `available` is
+ * never touched: that is reception's own switch.
  */
 export function overlayMenuItems(state, items) {
   if (!Array.isArray(items) || !state.recipes.length) return items;
   const keys = stockOutKeys(state, items);
-  if (keys.size === 0) return items;
-  return items.map(item => {
-    const itemOut = keys.has(String(item.id));
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  let changed = false;
+  const next = items.map(item => {
+    const { out: optionsOut, blocked } = optionStock(state, item, byId);
+    const itemOut = keys.has(String(item.id)) || blocked;
     const variants = Array.isArray(item.variants) ? item.variants : [];
     const anyVariantOut = variants.some(v => keys.has(`${item.id}|${v.id}`));
-    if (!itemOut && !anyVariantOut) return item;
+    if (!itemOut && !anyVariantOut && optionsOut.size === 0) return item;
+    changed = true;
     return {
       ...item,
       ...(itemOut ? { stock_out: true } : {}),
-      ...(anyVariantOut ? { variants: variants.map(v => (keys.has(`${item.id}|${v.id}`) ? { ...v, stock_out: true } : v)) } : {})
+      ...(anyVariantOut ? { variants: variants.map(v => (keys.has(`${item.id}|${v.id}`) ? { ...v, stock_out: true } : v)) } : {}),
+      ...(optionsOut.size > 0
+        ? {
+          modifier_groups: item.modifier_groups.map(g => ({
+            ...g,
+            options: (Array.isArray(g.options) ? g.options : []).map(o => (optionsOut.has(optionKey(g.id, o.id)) ? { ...o, stock_out: true } : o))
+          }))
+        }
+        : {})
     };
   });
+  return changed ? next : items;
 }
 
 /**

@@ -58,9 +58,9 @@ project or Razorpay keys: migrations 004–013 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1126 hub tests across 57 files** (pure rules plus live
+Automated coverage is **1143 hub tests across 57 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**676 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**678 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
 Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
@@ -244,7 +244,7 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1126 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1143 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -259,12 +259,12 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
   rotation and per-device revocation have all shipped (§4.4). What is left is
   that the console is reception-only -- there is no remote owner view -- and
   that a person's role is stored but not enforced (§4.7).
-- 🟡 **Inventory limits** (what is left): the waiter's modifier sheet does not
-  grey out an extra whose ingredient has run out -- the order is refused with the
-  ingredient named. Costing, stock-up-to levels, the shopping list (§4.2) and
-  order cancellation (§4.3) have shipped. Migrations 009 and 012 are unrun and
-  their restore paths are untested against a real project. Not plan-gated:
-  whether stock is a paid feature is a pricing call.
+- 🟡 **Inventory limits** (what is left): nothing in the code. Costing, stock-up-to
+  levels, the shopping list (§4.2), order cancellation (§4.3) and an out-of-stock
+  extra greyed out on the waiter's sheet and hidden from guests have all shipped.
+  What is open is outside it: migrations 009 and 012 are unrun and their restore
+  paths are untested against a real project. Not plan-gated: whether stock is a
+  paid feature is a pricing call.
 - ✅ **Station screens are role-scoped**: a station tablet enrols with a
   `kitchen` device token, which can read the board and mark tickets and stations
   done and is refused everything else -- placing orders, every bill route, staff,
@@ -386,10 +386,17 @@ milestones (§5) when a theme is pulled into a release.
   stock, for the portions that picked it. Set on the dish's own recipe, so it
   travels in the same cloud row (no migration) and a restore cannot turn it into a
   second dish-wide recipe. An extra that has run out holds up the order that asks
-  for it, not the dish. The waiter's modifier sheet does not yet grey it out, so
-  the refusal arrives with the order, naming the ingredient. An extra belongs to
-  the recipe for the size ordered, so a dish with a recipe per size sets it per
-  size.
+  for it, not the dish, and the menu now says so before the order is taken: the
+  extra carries `stock_out`, the waiter's sheet greys it out as OUT OF STOCK (told
+  apart from a hand 86, which outranks it), and the diner menu does not offer it.
+  One portion is the test, counting what the dish itself uses of the same
+  ingredient. An extra is out only when no size that can be ordered could take it
+  (a Half whose recipe does not use the cheese still offers it; the Full is refused
+  with the ingredient named), and a dish whose REQUIRED choice has nothing left that
+  stock allows is flagged as a whole, since nobody could finish the sheet. Handsets
+  are told to refresh when an extra runs out, which needed its own check: no dish
+  moves when an extra does. An extra belongs to the recipe for the size ordered,
+  so a dish with a recipe per size sets it per size.
 - ✅ Costing, stock-up-to levels and a shopping list (migration 012, optional columns).
   An uncosted ingredient is an UNKNOWN cost, not a small one: a recipe's cost says
   "at least" and gives no percentage until every ingredient is costed. The list is
@@ -580,8 +587,8 @@ Enough menu modelling to onboard restaurants beyond a flat item list.
 - ✅ 4.3 multi-station KDS routing and course firing.
 - ✅ 4.2 stock-driven 86'd and inventory tables.
 - ✅ 4.2 modifier choices that use stock, order cancellation, costing, stock-up-to
-  levels and a shopping list (2026-10-22). Left: greying out an out-of-stock
-  extra on the waiter's modifier sheet.
+  levels, a shopping list, and an out-of-stock extra greyed out on the waiter's
+  sheet (2026-10-22).
 
 ### M3 — Self-serve tenant  🟡
 The product can onboard a new restaurant without engineering.

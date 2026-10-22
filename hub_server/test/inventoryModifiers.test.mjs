@@ -131,7 +131,9 @@ test('a dish is not out of stock because an extra is -- nobody should lose the b
   const { s } = withRecipe();
   const dry = ok(consume(s, [{ id: 'biryani', qty: 5, modifiers: [pick('g_extras', 'o_cheese')] }], ctx));
   assert.equal(stockOutKeys(dry, MENU.items).size, 0);
-  assert.equal(overlayMenuItems(dry, MENU.items), MENU.items, 'and the menu is returned untouched');
+  const shown = overlayMenuItems(dry, MENU.items).find(i => i.id === 'biryani');
+  assert.equal(shown.stock_out, undefined, 'the dish stays on the menu');
+  assert.deepEqual(shown.modifier_groups.find(g => g.id === 'g_extras').options.filter(o => o.stock_out).map(o => o.id), ['o_cheese'], 'and says which extra is gone');
 });
 
 test('but a dish IS out when its own ingredient is, whatever the extras', () => {
@@ -265,6 +267,160 @@ test('cloud: a recipe with no extras is the row it always was', () => {
   assert.equal(JSON.stringify(row).includes('option_id'), false, 'no new keys for a restaurant that does not use extras');
 });
 
+// --- an extra that has run out is flagged on the menu ----------------------------------------------------------
+
+// A kitchen with exactly this much of each thing, and a recipe per size if asked. The extras are the ones the
+// menu offers: cheese on the extras group, the same option id on the spice group (to prove identity is by group
+// AND option), and an egg.
+function shelf({ rice = 5, cheese = 100, egg = 6 } = {}, recipes = [{ lines: 'all' }]) {
+  let s = emptyState('rest-1');
+  const ids = {};
+  for (const [key, name, unit, on_hand] of [['rice', 'Rice', 'kg', rice], ['cheese', 'Cheese', 'g', cheese], ['egg', 'Egg', 'pcs', egg]]) {
+    const r = addIngredient(s, { name, unit, on_hand, low_at: 0 }, ctx);
+    s = ok(r);
+    ids[key] = r.meta.item.id;
+  }
+  const all = [
+    { inventory_item_id: ids.rice, qty: 0.3 },
+    { inventory_item_id: ids.cheese, qty: 20, ...pick('g_extras', 'o_cheese') },
+    { inventory_item_id: ids.egg, qty: 1, ...pick('g_extras', 'o_egg') }
+  ];
+  for (const r of recipes) s = ok(setRecipe(s, { item_id: 'biryani', ...(r.variant_id ? { variant_id: r.variant_id } : {}), lines: r.lines === 'all' ? all : r.lines(ids) }, MENU));
+  return { s, ids };
+}
+const optionsOf = (items, id = 'biryani', group = 'g_extras') => items.find(i => i.id === id).modifier_groups.find(g => g.id === group).options;
+const outOptions = (state, items = MENU.items) => optionsOf(overlayMenuItems(state, items)).filter(o => o.stock_out).map(o => o.id);
+const cheeseExtra = ids => ({ inventory_item_id: ids.cheese, qty: 20, ...pick('g_extras', 'o_cheese') });
+
+test('an extra whose ingredient has run out is flagged, and the others are not', () => {
+  const { s } = shelf({ cheese: 0 });
+  assert.deepEqual(outOptions(s), ['o_cheese']);
+  const flagged = optionsOf(overlayMenuItems(s, MENU.items));
+  assert.equal(flagged.find(o => o.id === 'o_egg').stock_out, undefined);
+  assert.equal(flagged.find(o => o.id === 'o_cheese').available, true, "reception's own switch is never touched");
+});
+
+test('one portion is the test: exactly enough is fine, a gram short is not', () => {
+  assert.deepEqual(outOptions(shelf({ cheese: 20 }).s), []);
+  assert.deepEqual(outOptions(shelf({ cheese: 19.9 }).s), ['o_cheese']);
+});
+
+test('where the dish and the extra share an ingredient, the portion needs both', () => {
+  // Cheese 10 g in the dish itself and 20 g more for the extra: a portion with the extra needs 30 g.
+  const both = ids => [{ inventory_item_id: ids.cheese, qty: 10 }, cheeseExtra(ids)];
+  assert.deepEqual(outOptions(shelf({ cheese: 25 }, [{ lines: both }]).s), ['o_cheese']);
+  assert.deepEqual(outOptions(shelf({ cheese: 30 }, [{ lines: both }]).s), []);
+});
+
+test("a choice is identified by its group AND its option: the spice group's o_cheese is not the extras'", () => {
+  const { s } = shelf({ cheese: 0 });
+  const out = overlayMenuItems(s, MENU.items);
+  assert.deepEqual(optionsOf(out, 'biryani', 'g_spice').filter(o => o.stock_out), []);
+});
+
+test('an ingredient deleted since the recipe was written counts as gone', () => {
+  const { s, ids } = shelf();
+  const without = { ...s, items: s.items.filter(i => i.id !== ids.cheese) };
+  assert.deepEqual(outOptions(without), ['o_cheese']);
+});
+
+test('an extra that nothing in stock backs is never flagged: no recipe, or no line for it', () => {
+  const onlyBase = shelf({ cheese: 0 }, [{ lines: ids => [{ inventory_item_id: ids.rice, qty: 0.3 }] }]);
+  assert.deepEqual(outOptions(onlyBase.s), []);
+  const noRecipes = ok(addIngredient(emptyState('rest-1'), { name: 'Cheese', unit: 'g', on_hand: 0, low_at: 0 }, ctx));
+  assert.deepEqual(outOptions(noRecipes), []);
+  assert.deepEqual(optionsOf(overlayMenuItems(shelf({ cheese: 0 }).s, MENU.items), 'toast').filter(o => o.stock_out), [], 'a dish with no recipe');
+});
+
+test('with sizes, an extra is out only when NO size can take it', () => {
+  const plain = ids => [{ inventory_item_id: ids.rice, qty: 0.3 }];
+  const withCheese = ids => [{ inventory_item_id: ids.rice, qty: 0.3 }, cheeseExtra(ids)];
+  // Only the Full size's recipe uses cheese for the extra: the Half takes the extra without it, so it stays on offer.
+  const oneSize = shelf({ cheese: 0 }, [{ variant_id: 'half', lines: plain }, { variant_id: 'full', lines: withCheese }]);
+  assert.deepEqual(outOptions(oneSize.s), []);
+  // Both sizes need cheese for it and there is none: out.
+  const bothSizes = shelf({ cheese: 0 }, [{ variant_id: 'half', lines: withCheese }, { variant_id: 'full', lines: withCheese }]);
+  assert.deepEqual(outOptions(bothSizes.s), ['o_cheese']);
+});
+
+test("a size reception has 86'd by hand cannot take an order, so it does not keep an extra on offer", () => {
+  const plain = ids => [{ inventory_item_id: ids.rice, qty: 0.3 }];
+  const withCheese = ids => [{ inventory_item_id: ids.rice, qty: 0.3 }, cheeseExtra(ids)];
+  const { s } = shelf({ cheese: 0 }, [{ variant_id: 'half', lines: plain }, { variant_id: 'full', lines: withCheese }]);
+  const items = MENU.items.map(i => (i.id === 'biryani' ? { ...i, variants: i.variants.map(v => (v.id === 'half' ? { ...v, available: false } : v)) } : i));
+  assert.deepEqual(outOptions(s, items), ['o_cheese'], 'only Full can be ordered, and Full cannot take it');
+});
+
+test('restocking clears the flag', () => {
+  const { s, ids } = shelf({ cheese: 0 });
+  assert.deepEqual(outOptions(s), ['o_cheese']);
+  const stocked = { ...s, items: s.items.map(i => (i.id === ids.cheese ? { ...i, on_hand: 50 } : i)) };
+  assert.deepEqual(outOptions(stocked), []);
+});
+
+test('the overlay changes nothing it does not need to, and never the menu it was given', () => {
+  assert.equal(overlayMenuItems(shelf({ cheese: 100 }).s, MENU.items), MENU.items, 'nothing out: the very same array');
+  const before = JSON.stringify(MENU.items);
+  const flagged = overlayMenuItems(shelf({ cheese: 0 }).s, MENU.items);
+  assert.equal(JSON.stringify(MENU.items), before, 'the stored menu is not written to');
+  assert.equal(flagged.find(i => i.id === 'plain'), MENU.items.find(i => i.id === 'plain'), 'untouched dishes keep their identity');
+});
+
+test('a dish that is itself out of stock keeps its own flag, and its extras are flagged in the same pass', () => {
+  const { s } = shelf({ rice: 0, cheese: 0 });
+  const out = overlayMenuItems(s, MENU.items).find(i => i.id === 'biryani');
+  assert.equal(out.stock_out, true);
+  assert.deepEqual(out.modifier_groups.find(g => g.id === 'g_extras').options.filter(o => o.stock_out).map(o => o.id), ['o_cheese']);
+});
+
+// A required choice whose every option is out leaves a dish nobody can complete the sheet for.
+const requiredSpice = options => ({ id: 'g_spice', label: 'Spice', min: 1, max: 1, options });
+const dishWith = groups => [{ id: 'curry', name: 'Curry', price: 200, available: true, modifier_groups: groups }];
+function curryShelf(cheeseOnHand, groups) {
+  let s = emptyState('rest-1');
+  const cheese = addIngredient(s, { name: 'Cheese', unit: 'g', on_hand: cheeseOnHand, low_at: 0 }, ctx);
+  s = ok(cheese);
+  const lines = groups.flatMap(g => g.options.filter(o => o.uses).map(o => ({ inventory_item_id: cheese.meta.item.id, qty: 20, ...pick(g.id, o.id) })));
+  const menu = { items: dishWith(groups) };
+  return { s: ok(setRecipe(s, { item_id: 'curry', lines }, menu)), items: menu.items };
+}
+
+test('a dish is out when a REQUIRED choice has no option left that stock allows', () => {
+  const groups = [requiredSpice([{ id: 'a', label: 'Cheesy mild', price_delta: 0, available: true, uses: true }, { id: 'b', label: 'Cheesy hot', price_delta: 0, available: true, uses: true }])];
+  const { s, items } = curryShelf(0, groups);
+  const out = overlayMenuItems(s, items)[0];
+  assert.equal(out.stock_out, true, 'nobody could finish the sheet, so the dish says so rather than offering it');
+  assert.deepEqual(out.modifier_groups[0].options.map(o => o.stock_out), [true, true]);
+});
+
+test('...but not while one option still works, not for an optional choice, and not for a hand 86 alone', () => {
+  const both = [{ id: 'a', label: 'Cheesy mild', price_delta: 0, available: true, uses: true }, { id: 'b', label: 'Plain', price_delta: 0, available: true }];
+  assert.equal(overlayMenuItems(...Object.values(curryShelf(0, [requiredSpice(both)])))[0].stock_out, undefined, 'Plain is still on');
+
+  const optional = [{ id: 'g_extra', label: 'Extra', min: 0, max: 1, options: [{ id: 'a', label: 'Cheesy', price_delta: 10, available: true, uses: true }] }];
+  assert.equal(overlayMenuItems(...Object.values(curryShelf(0, optional)))[0].stock_out, undefined, 'an optional choice never holds the dish up');
+
+  const handOnly = [requiredSpice([{ id: 'a', label: 'Mild', price_delta: 0, available: false }, { id: 'b', label: 'Hot', price_delta: 0, available: false }])];
+  assert.equal(overlayMenuItems(...Object.values(curryShelf(100, handOnly)))[0].stock_out, undefined, 'stock is not the reason, so stock does not claim it');
+});
+
+test("an unrelated extra running out does not make stock claim a dish whose required choice reception 86'd", () => {
+  const groups = [
+    requiredSpice([{ id: 'a', label: 'Mild', price_delta: 0, available: false }, { id: 'b', label: 'Hot', price_delta: 0, available: false }]),
+    { id: 'g_extra', label: 'Extra', min: 0, max: 1, options: [{ id: 'c', label: 'Cheesy', price_delta: 10, available: true, uses: true }] }
+  ];
+  const { s, items } = curryShelf(0, groups);
+  const out = overlayMenuItems(s, items)[0];
+  assert.equal(out.stock_out, undefined, 'the required choice is empty because of a hand 86, not stock');
+  assert.deepEqual(out.modifier_groups[1].options.map(o => o.stock_out), [true], 'though the extra itself is flagged');
+});
+
+test('a required choice with one hand-86d option and one out of stock is out, and the stock is the cause', () => {
+  const groups = [requiredSpice([{ id: 'a', label: 'Mild', price_delta: 0, available: false }, { id: 'b', label: 'Cheesy hot', price_delta: 0, available: true, uses: true }])];
+  const { s, items } = curryShelf(0, groups);
+  assert.equal(overlayMenuItems(s, items)[0].stock_out, true);
+});
+
 // --- a real hub ---------------------------------------------------------------------------------------------
 
 const HUB_MENU = {
@@ -329,4 +485,18 @@ test('hub: with the cheese gone, the extra is refused by name and the biryani it
   assert.equal((await orderOf(null)).status, 201, 'the dish is not held up by its extra');
   const menu = (await json(await api('/menu'))).items.find(i => i.id === 'biryani');
   assert.equal(menu.stock_out, undefined, 'and the menu still offers it');
+});
+
+test('hub: once the cheese is gone, the menu says the extra is out of stock, and a guest is not offered it', async () => {
+  const menu = (await json(await api('/menu'))).items.find(i => i.id === 'biryani');
+  const options = menu.modifier_groups.find(g => g.id === 'g_extras').options;
+  assert.equal(options.find(o => o.id === 'o_cheese').stock_out, true);
+  assert.equal(options.find(o => o.id === 'o_cheese').available, true, 'not a hand 86');
+  assert.equal(menu.stock_out, undefined, 'the biryani itself is still on');
+
+  const diner = await json(await fetch(`${hub.base}/public/menu`));
+  const text = JSON.stringify(diner);
+  assert.ok(text.includes('Biryani'), 'the dish is on the guest menu');
+  assert.ok(!text.includes('Extra cheese'), 'a guest cannot ask for what the kitchen will refuse');
+  assert.ok(text.includes('Egg'), 'while the extra that is in stock is');
 });

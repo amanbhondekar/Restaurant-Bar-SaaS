@@ -96,6 +96,34 @@ describe('waiter modifier sheet', () => {
     expect(onConfirm.mock.calls[0][0].modifiers.map(m => m.option_id)).not.toContain('butter');
   });
 
+  it('an extra the kitchen has run out of is shown, says so, and cannot be picked or priced in', async () => {
+    const row = { ...ROW, modifier_groups: ROW.modifier_groups.map(g => (g.id === 'extras' ? { ...g, options: g.options.map(o => (o.id === 'ghee' ? { ...o, stock_out: true } : o)) } : g)) };
+    const { onConfirm } = open(row);
+    const ghee = option('Extra ghee');
+    expect(ghee).toBeDisabled();
+    expect(ghee).toHaveTextContent('OUT OF STOCK');
+    expect(ghee).not.toHaveTextContent("86'D");          // told apart from a hand 86: restocking, not reception, clears it
+    expect(ghee).not.toHaveTextContent('₹30');
+    expect(screen.getByTitle(/the kitchen has run out of something this needs/i)).toBeInTheDocument();
+
+    await userEvent.click(ghee);
+    await userEvent.click(option('Mild'));
+    expect(perUnit()).toBe('₹220');
+    await userEvent.click(addButton());
+    expect(onConfirm.mock.calls[0][0].modifiers.map(m => m.option_id)).not.toContain('ghee');
+  });
+
+  it('the other extras stay pickable, and an 86 by hand still reads as 86 when the stock is also out', async () => {
+    const row = { ...ROW, modifier_groups: ROW.modifier_groups.map(g => (g.id === 'extras' ? { ...g, options: g.options.map(o => (o.id === 'ghee' ? { ...o, stock_out: true } : o.id === 'butter' ? { ...o, stock_out: true } : o)) } : g)) };
+    open(row);
+    expect(option('Jeera rice')).toBeEnabled();
+    expect(option('Jeera rice')).not.toHaveTextContent('OUT OF STOCK');
+    expect(option('Butter')).toHaveTextContent("86'D");          // the hand switch is the one that needs undoing
+    expect(option('Butter')).not.toHaveTextContent('OUT OF STOCK');
+    await userEvent.click(option('Jeera rice'));
+    expect(perUnit()).toMatch(/^₹300/);
+  });
+
   it('shows what each choice adds or takes off, and nothing for a free one', () => {
     open();
     expect(option('Extra ghee')).toHaveTextContent('+₹30');

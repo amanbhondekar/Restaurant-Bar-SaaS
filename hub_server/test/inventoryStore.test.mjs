@@ -189,6 +189,27 @@ test('listeners: a change that does not move any dish in or out of stock says so
   cleanup(dir);
 });
 
+test('listeners: told when an EXTRA runs out, though no dish moved -- handsets must refresh their sheet', async () => {
+  const { dir, store } = fresh();
+  const EXTRAS = { id: 'g_extras', label: 'Extras', min: 0, max: 1, options: [{ id: 'o_cheese', label: 'Extra cheese', price_delta: 30, available: true }] };
+  const menu = [{ id: 'toast', name: 'Toast', available: true, modifier_groups: [EXTRAS] }];
+  store.setMenuProvider(() => menu);
+  const cheese = ok(store.addIngredient(RID, { name: 'Cheese', unit: 'g', on_hand: 50, low_at: 0 }, {})).meta.item;
+  ok(store.setRecipe(RID, { item_id: 'toast', lines: [{ inventory_item_id: cheese.id, qty: 20, group_id: 'g_extras', option_id: 'o_cheese' }] }, { items: menu }));
+
+  const heard = [];
+  store.onChange(e => heard.push(e));
+  ok(store.consume(RID, [{ id: 'toast', qty: 2, modifiers: [{ group_id: 'g_extras', option_id: 'o_cheese' }] }], {}));   // 50 -> 10: an extra needs 20
+  assert.deepEqual(heard.map(e => e.availability_changed), [true], 'the extra just went out of stock');
+
+  ok(store.adjust(RID, cheese.id, { kind: 'receive', qty: 100 }));
+  assert.deepEqual(heard.map(e => e.availability_changed), [true, true], 'and now it is back');
+  ok(store.adjust(RID, cheese.id, { kind: 'receive', qty: 5 }));
+  assert.deepEqual(heard.map(e => e.availability_changed), [true, true, false], 'a delivery that changes nothing says so');
+  await store.flush();
+  cleanup(dir);
+});
+
 test('listeners: a refused change tells nobody and saves nothing', async () => {
   const { dir, store, ing } = withPaneer();
   await store.flush();
