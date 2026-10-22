@@ -38,6 +38,12 @@ understand. The test then holds **every row the hub builds** against it:
 
 **Result on the code as it stood: every row matched.** That is a real answer, and the one hoped for.
 
+> **Correction, same day:** this was true of the states the test was given and **not** of the cloud. Its sample bills were
+> hand-written from the SQL, which hid that the hub writes `voided` where the table's CHECK allows `void`: every voided
+> bill's push would have been refused. Found and fixed in
+> [`report_2026-10-22_185500_voided_bills_never_reached_the_cloud.md`](./report_2026-10-22_185500_voided_bills_never_reached_the_cloud.md);
+> the test now builds bills with the real invoice store.
+
 ### 2. A real bug it led to: status updates keyed on the ticket number
 
 Listing the cloud writes turned up that an order's status change was `UPDATE orders … WHERE ticket_number = n`

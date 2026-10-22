@@ -21,6 +21,13 @@ const when = value => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
+// The hub says "voided"; the cloud's CHECK (migration 005) says "void". Sent as the hub wrote it, every voided
+// bill would be refused by the constraint on every attempt -- and a bill the cloud already held as pending or
+// paid would stay there, counted as revenue. The cloud keeps the vocabulary its migration defined, and the
+// translation lives here, at the boundary, so no migration has to be run for it.
+export const toCloudStatus = status => (status === 'voided' ? 'void' : status);
+export const fromCloudStatus = status => (status === 'void' ? 'voided' : status);
+
 /** JSONB columns: keep arrays whole, and send null rather than an empty placeholder. */
 const json = value => (Array.isArray(value) && value.length ? value : Array.isArray(value) ? [] : null);
 
@@ -49,7 +56,7 @@ export function invoiceRow(restaurantId, invoice) {
     tax_total: money(invoice.tax_total),
     grand_total: money(invoice.grand_total),
 
-    payment_status: invoice.payment_status || 'pending',
+    payment_status: toCloudStatus(invoice.payment_status || 'pending'),
     payment_method: invoice.payment_method || null,
     payment_ref: invoice.payment_ref || null,
     paid_at: when(invoice.paid_at),
@@ -96,7 +103,7 @@ export function invoiceFromCloud(row) {
     tax_total: Number(row.tax_total) || 0,
     grand_total: Number(row.grand_total) || 0,
 
-    payment_status: row.payment_status || 'pending',
+    payment_status: fromCloudStatus(row.payment_status || 'pending'),
     ...(row.payment_method ? { payment_method: row.payment_method } : {}),
     ...(row.payment_ref ? { payment_ref: row.payment_ref } : {}),
     ...(row.paid_at ? { paid_at: row.paid_at } : {}),

@@ -18,13 +18,15 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloud-contract-'));
 process.env.HUB_DATA_DIR = dataDir;
 process.env.SUPABASE_URL = 'https://example.supabase.co';
 
-const { invoiceRow } = await import('../lib/invoiceSync.js');
+const { invoiceRow, invoiceFromCloud, toCloudStatus, fromCloudStatus } = await import('../lib/invoiceSync.js');
+const { invoiceStore } = await import('../lib/invoiceStore.js');
 const { reconciliationRow } = await import('../lib/reconciliationSync.js');
 const { inventoryItemRow, recipeRow } = await import('../lib/inventorySync.js');
 const { reservationRow, walkInRow } = await import('../lib/reservationSync.js');
 const { categoryRow, menuItemRow, tableRow } = await import('../lib/catalogSync.js');
 const { syncQueue } = await import('../lib/syncQueue.js');
 const { initCourseState } = await import('../lib/courses.js');
+const { RESERVATION_STATUSES, WAITLIST_STATUSES } = await import('../lib/reservations.js');
 
 import { after } from 'node:test';
 after(() => fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -75,7 +77,50 @@ const INVOICE = {
   tickets: [{ id: 't1' }], ticket_ids: ['t1'], items: [{ name: 'Dal', qty: 2 }], tax_rows: [{ rate: 5 }], discount_rows: [{ kind: 'flat' }], splits: [], issued_at: T
 };
 
-test('an invoice row fits the invoices table, in every state a bill can be in', () => {
+/**
+ * Bills in every state the hub REALLY produces, made by driving the real invoice store -- not states picked
+ * from the SQL. That difference is exactly how this once missed a bug: the table's CHECK says "void" and the
+ * hub writes "voided", and a test fed the SQL's word would never have noticed.
+ */
+function realBills() {
+  const make = id => invoiceStore.issueInvoice({
+    tickets: [{ id, ticket_number: 1, restaurant_id: RID, table_id: 1, table_name: 'T1', items: [{ id: 'd', name: 'Dal', qty: 2, price: 100 }], total_amount: 200 }],
+    tableId: 1, tableName: 'T1', restaurantId: RID, currency: '₹', taxConfig: {}, adjustments: {}
+  }).invoice;
+  const get = inv => invoiceStore.getInvoice(inv.id, RID);
+  const pending = make('t_pending');
+  const paid = make('t_paid'); invoiceStore.markPaid(paid.id, RID, { method: 'cash' });
+  const refunded = make('t_refunded'); invoiceStore.markPaid(refunded.id, RID, { method: 'upi' }); invoiceStore.refund(refunded.id, RID, { reason: 'x' });
+  const voided = make('t_voided'); invoiceStore.voidInvoice(voided.id, RID, { reason: 'wrong table' });
+  const split = make('t_split'); invoiceStore.splitBySeats(split.id, RID, { count: 2 });
+  invoiceStore.markSplitPaid(split.id, RID, { splitIndex: 0, method: 'cash' });
+  invoiceStore.markSplitPaid(split.id, RID, { splitIndex: 1, method: 'upi' });
+  return { pending: get(pending), paid: get(paid), refunded: get(refunded), voided: get(voided), split: get(split) };
+}
+
+test('every bill the hub really produces fits the invoices table -- pending, paid, refunded, voided and split', () => {
+  const bills = realBills();
+  assert.deepEqual(Object.values(bills).map(b => b.payment_status).sort(), ['paid', 'paid', 'pending', 'refunded', 'voided'],
+    'the real store\'s words, including "voided" and a split that settles as "paid"');
+  for (const [name, bill] of Object.entries(bills)) assert.deepEqual(problems('invoices', invoiceRow(RID, bill)), [], name);
+});
+
+test('a voided bill goes to the cloud as the word the cloud\'s CHECK allows, and comes back as the hub\'s own', () => {
+  const { voided } = realBills();
+  assert.equal(voided.payment_status, 'voided');
+  assert.equal(invoiceRow(RID, voided).payment_status, 'void');
+  assert.equal(invoiceFromCloud({ ...invoiceRow(RID, voided), id: 'x' }).payment_status, 'voided');
+  assert.deepEqual([toCloudStatus('paid'), toCloudStatus('pending'), toCloudStatus('refunded')], ['paid', 'pending', 'refunded'], 'nothing else is translated');
+  assert.deepEqual([fromCloudStatus('paid'), fromCloudStatus('void')], ['paid', 'voided']);
+});
+
+test('every real state survives the trip to the cloud and back with its status intact', () => {
+  for (const [name, bill] of Object.entries(realBills())) {
+    assert.equal(invoiceFromCloud({ ...invoiceRow(RID, bill), id: 'x' }).payment_status, bill.payment_status, name);
+  }
+});
+
+test('an invoice row fits the invoices table in each state the CHECK names too, so a hand-written row is also safe', () => {
   for (const payment_status of ['pending', 'paid', 'void', 'refunded', 'split']) {
     fits('invoices', invoiceRow(RID, { ...INVOICE, payment_status }));
   }
@@ -115,10 +160,10 @@ test('stock and recipe rows fit, including a recipe that carries an extra', () =
 });
 
 test('booking and queue rows fit, in every status', () => {
-  for (const status of ['booked', 'seated', 'no_show', 'cancelled']) {
+  for (const status of RESERVATION_STATUSES) {   // the hub's own list, not one copied from the SQL
     fits('reservations', reservationRow(RID, { id: 'r1', guest_name: 'Asha', phone: '919876543210', phone_key: 'k', party_size: 4, at: T, duration_mins: 90, status, overbooked: false, note: 'n', created_at: T }));
   }
-  for (const status of ['waiting', 'notified', 'seated', 'left']) {
+  for (const status of WAITLIST_STATUSES) {
     fits('walkins', walkInRow(RID, { id: 'w1', guest_name: 'Dev', phone: null, phone_key: null, party_size: 2, quoted_wait_mins: 15, status, created_at: T }));
   }
 });

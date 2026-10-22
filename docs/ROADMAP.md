@@ -52,7 +52,7 @@ project or Razorpay keys: migrations 004–012 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1043 hub tests across 54 files** (pure rules plus live
+Automated coverage is **1046 hub tests across 54 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **515 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -266,14 +266,19 @@ still verified by hand.
   or repairs it (§4.1). A contract test reads the schema out of the migrations
   and holds every row the hub builds against it: columns, required columns,
   CHECK values, the unique index behind every upsert, every column read back --
-  and found them all consistent. `npm run cloud:check` (read-only; `--probe
+  for bills made by the REAL invoice store, not states copied from the SQL.
+  `npm run cloud:check` (read-only; `--probe
   <restaurant>` writes one voided probe bill, reads it back and deletes it) is
   how it gets proven against a real project, and names the migration to run for
   anything missing. **What is still open:** it has not been run against a real
-  project, and row-level security is proven by nothing. Writing it also found
-  and fixed a real bug: status updates were keyed on the ticket number alone, so
-  after a hub reinstall (numbers restart at 101) they rewrote every older order
-  with that number.
+  project, and row-level security is proven by nothing. Building it found and
+  fixed two real bugs: status updates were keyed on the ticket number alone (so
+  after a hub reinstall, numbers restarting at 101, they rewrote every older
+  order with that number), and **a voided bill could never reach the cloud** --
+  the hub writes `voided`, the table's CHECK allows `void`, so a bill the cloud
+  held as paid would have stayed there counted as revenue. The first version of
+  the contract test missed that because its sample bills were hand-written from
+  the SQL; they now come from the real invoice store.
 - ✅ **Waitlist**: moved out of this section. The walk-in queue is on the hub,
   with "your table is ready" by WhatsApp click-to-chat, and time-slot
   reservations are checked against the real layout (§4.6). A public booking page
