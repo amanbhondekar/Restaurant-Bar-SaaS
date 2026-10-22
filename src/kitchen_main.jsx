@@ -7,6 +7,9 @@ import { installCrashReporter } from './services/crashReporter';
 import './index.css';
 import { ThemeToggle } from './components/ThemeToggle';
 import { STATIONS, STATION_LABEL, visibleLines, heldGroups, stationStates, onStationBoard, stationCounts, initialStation } from './lib/ticketView';
+import {
+  amountSplitPayload, buildAdjustmentBody, equalSplitRows, initialItemAssignments, itemSplitPayload, mergeTicketInto, ticketKey
+} from './lib/kitchenBill';
 
 installCrashReporter({ source: 'kds' });
 
@@ -248,13 +251,10 @@ const KitchenHubApp = () => {
     };
   }, []);
 
-  // Replace a ticket with the hub's current copy of it, matched by id.
+  // Replace a ticket with the hub's current copy of it, matched by id (src/lib/kitchenBill.js).
   const mergeTicket = (next) => {
     if (!next) return;
-    setTickets(prev => {
-      const exists = prev.some(t => t.id === next.id);
-      return exists ? prev.map(t => (t.id === next.id ? { ...t, ...next } : t)) : prev;
-    });
+    setTickets(prev => mergeTicketInto(prev, next));
   };
 
   // Mark ticket ready
@@ -297,32 +297,12 @@ const KitchenHubApp = () => {
     }
   };
 
-  const ticketKey = ticket => encodeURIComponent(ticket.id || ticket.ticket_number);
   // One station reports its part done; the ticket turns ready on its own when every station has.
   const handleStationReady = (ticket, station) => kitchenAction(`/orders/${ticketKey(ticket)}/stations/${station}/ready`);
   // Send the next held course to the kitchen.
   const handleFire = (ticket) => kitchenAction(`/orders/${ticketKey(ticket)}/fire`);
   // Put a ticket that was marked ready back on the board.
   const handleRecall = (ticket) => kitchenAction(`/orders/${ticketKey(ticket)}/recall`);
-
-  // Turn the modal's adjustment form into the body the hub understands.
-  // Empty inputs mean "no adjustment on this axis" rather than 0.
-  const buildAdjustmentBody = (adj) => {
-    const body = {};
-    const value = Number(adj.discount_value);
-    if (adj.discount_value !== '' && Number.isFinite(value) && value > 0) {
-      body.discounts = [{
-        type: adj.discount_type,
-        value,
-        reason: adj.discount_reason?.trim() || undefined
-      }];
-    }
-    if (adj.service_charge_percent !== '') {
-      const sc = Number(adj.service_charge_percent);
-      if (Number.isFinite(sc) && sc >= 0) body.service_charge_percent = sc;
-    }
-    return body;
-  };
 
   // Fetch a preview for the current adjustments. Both the initial open and
   // any recalculation from the modal route through here.
@@ -530,30 +510,16 @@ const KitchenHubApp = () => {
   // Kick off the "custom amounts" sub-panel with N empty rows, seeded with
   // an equal-split hint so reception can edit from a sensible starting point.
   const openAmountSplit = (count = 2) => {
-    if (!billInvoice?.grand_total) return;
-    const grand = billInvoice.grand_total;
-    const base = Math.floor(grand / count);
-    const remainder = grand - base * count;
-    setAmountSplitDraft({
-      rows: Array.from({ length: count }, (_, i) => ({
-        label: '',
-        share_amount: String(i < remainder ? base + 1 : base)
-      }))
-    });
+    const rows = equalSplitRows(billInvoice?.grand_total, count);
+    if (rows.length === 0) return;
+    setAmountSplitDraft({ rows });
   };
 
   const closeAmountSplit = () => setAmountSplitDraft(null);
 
   const submitAmountSplit = async () => {
     if (!billInvoice?.id || !amountSplitDraft) return;
-    const payload = {
-      splits: amountSplitDraft.rows
-        .filter(r => r.share_amount !== '')
-        .map(r => ({
-          label: r.label ? r.label.trim() : undefined,
-          share_amount: Number(r.share_amount)
-        }))
-    };
+    const payload = amountSplitPayload(amountSplitDraft.rows);
     setBillLoading(true);
     try {
       const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/split-by-amounts`, {
@@ -582,7 +548,7 @@ const KitchenHubApp = () => {
     if (!billInvoice?.items?.length) return;
     setItemSplitDraft({
       count,
-      assignments: new Array(billInvoice.items.length).fill(0)
+      assignments: initialItemAssignments(billInvoice.items.length)
     });
   };
 
@@ -590,17 +556,7 @@ const KitchenHubApp = () => {
 
   const submitItemSplit = async () => {
     if (!billInvoice?.id || !itemSplitDraft) return;
-    // Group item indices by the split they're assigned to.
-    const buckets = Array.from({ length: itemSplitDraft.count }, () => []);
-    itemSplitDraft.assignments.forEach((s, i) => {
-      if (s >= 0 && s < buckets.length) buckets[s].push(i);
-    });
-    const payload = {
-      splits: buckets.map((item_indices, i) => ({
-        label: `Split ${i + 1}`,
-        item_indices
-      }))
-    };
+    const payload = itemSplitPayload(itemSplitDraft.count, itemSplitDraft.assignments);
     setBillLoading(true);
     try {
       const res = await fetch(`${hubHost}/invoices/${billInvoice.id}/split-by-items`, {
