@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initCourseState, markAllReady, markStationReady, fireCourse, recallTicket, withCourseState } from './courses.js';
+import { initCourseState, markAllReady, markStationReady, fireCourse, recallTicket, cancelTicket, withCourseState } from './courses.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,6 +203,11 @@ class TicketStore {
   /** Send the next held course (or a given one) to the kitchen. */
   fireCourse(ticketId, restaurantId, course) {
     return this.transition(ticketId, restaurantId, (t, now) => fireCourse(t, course, now));
+  }
+
+  /** Withdraw a ticket. `{ ok, ticket, cooked }`, or a refusal; nothing is persisted on a refusal. */
+  cancel(ticketId, restaurantId, ctx) {
+    return this.transition(ticketId, restaurantId, (t, now) => cancelTicket(t, now, ctx));
   }
 
   /** Put a ticket marked ready back on the board. */

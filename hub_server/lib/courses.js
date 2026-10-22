@@ -225,6 +225,42 @@ export function recallTicket(input, nowIso) {
 }
 
 /**
+ * Has any of this ticket been cooked? A station that reported its part ready, a ticket marked ready, or a
+ * ticket that was ready once and recalled (the food was made; it is being made again). Once it has, the
+ * ingredients are gone whatever happens to the order.
+ */
+export function anyCooked(input) {
+  const t = withCourseState(input);
+  if (t.status === 'ready') return true;
+  return Object.values(t.course_log || {}).some(e => e.ready_at || e.recall_count > 0 || Object.keys(e.stations_ready || {}).length > 0);
+}
+
+/**
+ * Withdraw an order. Allowed while it is still on the board (in progress or ready); a billed order is
+ * reversed by voiding the bill, not by cancelling its tickets. `cooked` says whether any of it had been
+ * made, which is what decides whether its ingredients can go back on the shelf.
+ */
+export function cancelTicket(input, nowIso, { reason = '', by = null } = {}) {
+  const ticket = withCourseState(input);
+  if (ticket.status === 'cancelled') return fail('ALREADY_CANCELLED', 'This order has already been cancelled.');
+  if (ticket.status === 'completed') return fail('TICKET_CLOSED', 'This order has already been billed. Void the bill instead.');
+  const cooked = anyCooked(ticket);
+  return {
+    ok: true,
+    cooked,
+    ticket: {
+      ...ticket,
+      status: 'cancelled',
+      cancelled_at: nowIso,
+      cancel_reason: String(reason || '').slice(0, 140),
+      cancelled_by: by ? String(by).slice(0, 60) : null,
+      cancel_cooked: cooked,
+      updated_at: nowIso
+    }
+  };
+}
+
+/**
  * Lines a station should see on its screen: fired lines for that station, with where the ticket
  * stands for that station. Used by the KDS so a bar tablet shows only drinks.
  */

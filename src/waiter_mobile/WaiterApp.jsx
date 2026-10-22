@@ -14,6 +14,8 @@ import { authFetch, authWsUrl, captureTokenFromUrl, consumePendingEnrollmentCode
 import { heldGroups } from '../lib/ticketView';
 import { QrScannerModal } from './QrScannerModal';
 import { WaiterLogin } from './WaiterLogin';
+import { SentOrders } from './SentOrders';
+import { cancelledMessage } from '../admin/lib/openOrders';
 
 const WAITER_SESSION_KEY = 'kullina_waiter_session';
 
@@ -243,6 +245,11 @@ export const WaiterApp = () => {
           return o;
         }));
       }
+    } else if (type === 'TICKET_CANCELLED') {
+      // The order is gone; which tables are still busy is the hub's to say, so read them again.
+      const gone = payload.ticket_id || payload.ticket?.id;
+      if (gone) setActiveOrders(prev => prev.filter(o => o.id !== gone));
+      fetchLiveState(cleanUrl);
     } else if (type === 'CLEAR_TABLE' || type === 'bill_cleared' || type === 'order_cleared') {
       const tableId = payload.table_id;
       if (tableId) {
@@ -327,6 +334,25 @@ export const WaiterApp = () => {
       setFireError(`Hub unreachable at ${cleanUrl}. Check WiFi network.`);
     } finally {
       setFiringId(null);
+    }
+  };
+
+  // The selected table's orders that are still on the board, for the cancel block under the floor grid.
+  const sentForTable = selectedTableId ? activeOrders.filter(t => String(t.table_id) === String(selectedTableId)) : [];
+
+  const cancelOrder = async (ticket, reason) => {
+    const cleanUrl = hubUrl.replace(/\/+$/, '');
+    try {
+      const res = await authFetch(`${cleanUrl}/orders/${encodeURIComponent(ticket.id)}/cancel`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, by: waiterSession?.name })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data.error || 'Could not cancel that order.' };
+      setActiveOrders(prev => prev.filter(o => o.id !== ticket.id));
+      fetchLiveState(cleanUrl);
+      return { ok: true, message: cancelledMessage(ticket, data) };
+    } catch {
+      return { ok: false, error: `Hub unreachable at ${cleanUrl}. Check WiFi network.` };
     }
   };
 
@@ -802,6 +828,7 @@ export const WaiterApp = () => {
                   {fireError && <span className="text-xs" style={{ color: 'var(--color-error-text)' }}>{fireError}</span>}
                 </div>
               )}
+              <SentOrders tickets={sentForTable} onCancel={cancelOrder} />
               <OrderDraftDrawer
                 selectedTableId={selectedTableId} draftItems={currentDraftItems}
                 onRemoveItem={removeItem} onClearDraft={clearDraft}

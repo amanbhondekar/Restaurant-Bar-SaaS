@@ -195,6 +195,10 @@ const KitchenHubApp = () => {
             } else if (type === 'TICKET_UPDATED' && payload.ticket) {
               // Station ready, course fired, ticket recalled: the hub sends the ticket as it now stands.
               mergeTicket(payload.ticket);
+            } else if (type === 'TICKET_CANCELLED') {
+              const gone = payload.ticket_id || payload.ticket?.id;
+              if (gone) setTickets(prev => prev.filter(t => t.id !== gone));
+              fetchActiveTickets();
             } else if (type === 'CLEAR_TABLE' || type === 'bill_cleared' || type === 'order_cleared') {
               fetchActiveTickets();
             } else if (type === 'SYNC_STATUS_CHANGE') {

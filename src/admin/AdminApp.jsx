@@ -266,7 +266,7 @@ export const AdminApp = () => {
             <InventoryTab menu={menu} notify={notify} />
           </TabsContent>
           <TabsContent value="kitchen" className="pt-2">
-            <KitchenTab />
+            <KitchenTab notify={notify} />
           </TabsContent>
           <TabsContent value="printers" className="pt-2">
             <PrintersTab notify={notify} />

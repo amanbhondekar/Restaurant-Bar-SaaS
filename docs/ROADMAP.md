@@ -52,9 +52,9 @@ project or Razorpay keys: migrations 004–011 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **994 hub tests across 52 files** (pure rules plus live
+Automated coverage is **1016 hub tests across 53 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**452 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**477 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except Printers, Plan and the Kitchen Display (Menu and its item editor, Tables,
 Bookings, Cash, Stock, Kitchen, Staff, Feedback, ledger repair, guest ordering),
@@ -247,11 +247,9 @@ still verified by hand.
   rotation and per-device revocation have all shipped (§4.4). What is left is
   that the console is reception-only -- there is no remote owner view -- and
   that a person's role is stored but not enforced (§4.7).
-- 🟡 **Inventory limits**: there is no costing, par level or reorder prompt, and
-  there is no way to cancel an order at all -- tickets can be marked ready,
-  fired, recalled and cleared, never withdrawn -- so there is nothing yet for
-  stock to be returned from. Whether a cancelled order gives its ingredients back
-  (it may already be cooking) is a policy for whoever adds cancellation. The
+- 🟡 **Inventory limits**: there is no costing, par level or reorder prompt.
+  Orders can now be cancelled (§4.3): before anything is cooked the ingredients
+  return to stock, exactly as that order took them; after, they stay used. The
   waiter's modifier sheet does not grey out an extra whose ingredient has run
   out; the order is refused with the ingredient named. Migration 009 is unrun and
   its restore path is untested against a real project. Not plan-gated: whether
@@ -356,6 +354,13 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Multi-station routing, course firing / hold-and-fire, prep-time
   telemetry, ticket recall.
 - ✅ Reprint on recall, banner-marked so a reprint cannot be mistaken for a new order.
+- ✅ Cancelling an order (`POST /orders/:id/cancel`, from reception's Kitchen tab or
+  a handset). Policy: before anything has been cooked its ingredients go back on
+  the shelf -- exactly what THAT order took, recorded on the ticket, not today's
+  recipe -- and once any of it is made they stay used and the ticket says it was
+  cancelled after cooking. A billed order is voided, not cancelled. The kitchen
+  screens, the handset and the cloud are all told, and it leaves the bill. Not
+  done: cancelling one line of an order, and recording post-cooking waste.
 - ✅ Per-station KDS instances: `/station/<station>`, its own authenticated page
   rather than a filter on the reception display (which could not run on any
   other device: it sent no token). The hub knows which stations have a screen

@@ -68,6 +68,11 @@ export function applyMessage(tickets, message) {
       const id = payload?.ticket_id || payload?.order_id;
       return { tickets: id ? tickets.map(x => (x.id === id ? { ...x, status: 'ready' } : x)) : tickets, refetch: false };
     }
+    case 'TICKET_CANCELLED': {
+      // Off the board at once, and re-read in case the message did not say which ticket.
+      const id = payload?.ticket_id || payload?.ticket?.id;
+      return { tickets: id ? tickets.filter(x => x.id !== id) : tickets, refetch: true };
+    }
     case 'CLEAR_TABLE':
     case 'bill_cleared':
     case 'order_cleared':

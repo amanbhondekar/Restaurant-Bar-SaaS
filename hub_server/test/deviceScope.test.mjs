@@ -217,6 +217,7 @@ const OUT_OF_SCOPE = [
   ['POST', '/invoices/inv_1/splits/0/mark-paid', {}],
   ['POST', '/orders/t_1/clear', {}],
   ['POST', '/orders/t_1/print-kot', {}],
+  ['POST', '/orders/t_1/cancel', { reason: 'x' }],
   ['GET', '/waiters'],
   ['POST', '/waiters/login', {}],
   ['POST', '/waiters/redeem-invite', {}],

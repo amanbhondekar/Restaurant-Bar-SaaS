@@ -89,7 +89,7 @@ export function afterAdjustment(kind, qty, ingredient) {
   return qty;
 }
 
-const REASON = { opening: 'Opening stock', receive: 'Delivery', waste: 'Waste', count: 'Count correction', sale: 'Used in orders' };
+const REASON = { opening: 'Opening stock', receive: 'Delivery', waste: 'Waste', count: 'Count correction', sale: 'Used in orders', return: 'Returned (order cancelled)' };
 
 /** One line of an ingredient's history. */
 export function describeMovement(m, unit) {

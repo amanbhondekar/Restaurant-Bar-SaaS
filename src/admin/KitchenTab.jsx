@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { explainError, hubGet } from './api';
 import { Field, ListSkeleton, NativeSelect, Notice } from './ui';
 import { StationScreensPanel } from './StationScreensPanel';
+import { OpenOrdersPanel } from './OpenOrdersPanel';
 
 // Kitchen performance: how long dishes take, measured from the moment a course is sent to the kitchen
 // until the station says it is ready. The hub keeps these timestamps on every ticket already; this page
@@ -156,10 +157,11 @@ function PerformanceReport() {
 
 // The station screens come first and stand on their own: they must show even while the report below
 // is loading or has failed, since "nobody is looking at the bar" is the more urgent of the two.
-export function KitchenTab() {
+export function KitchenTab({ notify = () => {} }) {
   return (
     <div className="flex flex-col gap-4 pt-2">
       <StationScreensPanel />
+      <OpenOrdersPanel notify={notify} />
       <PerformanceReport />
     </div>
   );

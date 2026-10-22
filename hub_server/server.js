@@ -373,6 +373,13 @@ app.post('/pair', requireDevice, async (req, res) => {
 // In-memory idempotency cache for order_request_id (60s TTL)
 const recentRequests = new Map();
 
+// What an order took out of stock, written onto the ticket. A cancellation puts back exactly this -- not a
+// fresh calculation from today's recipes, which may differ from the ones the order was taken under.
+function recordStockUse(ticket, result) {
+  const uses = (result?.meta?.movements ?? []).map(m => ({ inventory_item_id: m.inventory_item_id, qty: Math.abs(m.delta) }));
+  if (uses.length > 0) ticketStore.replaceTicket({ ...ticket, stock_used: uses });
+}
+
 // 3. POST /orders — Waiter submits order over local WiFi
 app.post('/orders', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
@@ -439,7 +446,7 @@ app.post('/orders', requireDevice, (req, res) => {
   // The kitchen is going to cook this, so it comes out of stock now. Never allowed to fail the
   // order: a bad write here must not lose a table's food.
   try {
-    inventoryStore.consume(pairing.restaurant_id, priced.items, { ref: `#${newTicket.ticket_number}`, by: orderData.created_by_waiter });
+    recordStockUse(newTicket, inventoryStore.consume(pairing.restaurant_id, priced.items, { ref: `#${newTicket.ticket_number}`, by: orderData.created_by_waiter }));
   } catch (err) {
     console.error('📦 Could not record stock use for ticket', newTicket.ticket_number, err);
   }
@@ -547,6 +554,37 @@ app.get('/orders/active', requireKitchenDevice, (req, res) => {
     count: activeTickets.length,
     tickets: activeTickets
   });
+});
+
+// POST /orders/:id/cancel — withdraw an order that is still on the board.
+//
+// Policy, in one place. Before anything has been cooked the ingredients go back on the shelf; once any of it
+// has been made they stay consumed (the food exists), and the ticket says it was cancelled after cooking.
+// A billed order is reversed by voiding the bill. Full-scope devices and reception only: a screen at the
+// pass marks tickets done, it does not withdraw them.
+app.post('/orders/:id/cancel', requireDevice, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = ticketStore.cancel(req.params.id, pairing.restaurant_id, { reason: body.reason, by: body.by });
+  if (!result.ok) {
+    return res.status(result.code === 'NOT_FOUND' ? 404 : 409).json({ success: false, error: result.error, code: result.code });
+  }
+
+  const ticket = result.ticket;
+  let stockReturned = false;
+  if (!result.cooked && Array.isArray(ticket.stock_used) && ticket.stock_used.length > 0) {
+    try {
+      const back = inventoryStore.restock(pairing.restaurant_id, ticket.stock_used, { ref: `#${ticket.ticket_number}`, note: 'order cancelled', by: ticket.cancelled_by });
+      stockReturned = (back.meta?.movements?.length ?? 0) > 0;
+    } catch (err) {
+      // Never lets a stock write undo a cancellation the kitchen has already been told about.
+      console.error('📦 Could not return stock for cancelled ticket', ticket.ticket_number, err);
+    }
+  }
+
+  syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'cancelled', pairing.restaurant_id, ticket);
+  broadcast('TICKET_CANCELLED', { ticket, ticket_id: ticket.id, table_id: ticket.table_id, table_name: ticket.table_name });
+  res.json({ success: true, ticket, cooked: result.cooked, stock_returned: stockReturned });
 });
 
 // 5. POST /orders/:id/ready — Kitchen marks ticket ready
@@ -809,7 +847,7 @@ app.post('/public/order', (req, res) => {
 
   lastGuestOrderByTable.set(tableKey, new Date().toISOString());
   try {
-    inventoryStore.consume(pairing.restaurant_id, priced.items, { ref: `#${ticket.ticket_number}`, by: 'Guest (QR)' });
+    recordStockUse(ticket, inventoryStore.consume(pairing.restaurant_id, priced.items, { ref: `#${ticket.ticket_number}`, by: 'Guest (QR)' }));
   } catch (err) {
     console.error('📦 Could not record stock use for guest ticket', ticket.ticket_number, err);
   }

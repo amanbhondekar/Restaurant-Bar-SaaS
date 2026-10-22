@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   emptyState, normalizeState, addIngredient, updateIngredient, deleteIngredient, adjustStock, setRecipe,
-  shortagesFor, consume, stockOutKeys, overlayMenuItems, summarize, levelOf
+  shortagesFor, consume, restock, stockOutKeys, overlayMenuItems, summarize, levelOf
 } from './inventory.js';
 
 // The hub's stock and recipes on disk (hub_server/data/inventory.json), around the pure rules in
@@ -121,6 +121,9 @@ export class InventoryStore {
 
   /** Take an order's ingredients out of stock. Call it only after `check` came back empty. */
   consume(rid, lines, ctx) { return this.commit(rid, s => consume(s, lines, ctx)); }
+
+  /** Put back what a cancelled, uncooked order took out. See lib/inventory.js. */
+  restock(rid, uses, ctx) { return this.commit(rid, s => restock(s, uses, ctx)); }
 
   /** The menu with `stock_out` flags on what cannot be made. Identity when nothing is tracked. */
   overlay(rid, items) { return overlayMenuItems(this.stateFor(rid), items); }

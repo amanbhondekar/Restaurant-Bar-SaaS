@@ -339,6 +339,31 @@ export function consume(state, lines, ctx = {}) {
   return { ok: true, data: bump(state, { items, movements: appendMovements(state, moves) }), meta: { movements: moves } };
 }
 
+/**
+ * Put back exactly what an order took out, for an order cancelled before anything was cooked. `uses` is
+ * what THAT ticket consumed ([{ inventory_item_id, qty }], recorded on it when it was taken), not a fresh
+ * calculation: the recipe may have changed since, and returning a different amount than was taken would
+ * quietly corrupt the count. An ingredient deleted in the meantime is skipped.
+ */
+export function restock(state, uses, ctx = {}) {
+  const back = new Map();
+  for (const u of Array.isArray(uses) ? uses : []) {
+    const qty = Number(u?.qty);
+    if (u?.inventory_item_id && Number.isFinite(qty) && qty > 0) back.set(u.inventory_item_id, r3((back.get(u.inventory_item_id) || 0) + qty));
+  }
+  if (back.size === 0) return { ok: true, data: state, meta: { movements: [] } };
+  const moves = [];
+  const items = state.items.map(ing => {
+    const n = back.get(ing.id);
+    if (!n) return ing;
+    const next = { ...ing, on_hand: r3(ing.on_hand + n) };
+    moves.push(movement(next, n, 'return', ctx, { ref: ctx.ref, note: ctx.note }));
+    return next;
+  });
+  if (moves.length === 0) return { ok: true, data: state, meta: { movements: [] } };
+  return { ok: true, data: bump(state, { items, movements: appendMovements(state, moves) }), meta: { movements: moves } };
+}
+
 // --- levels and the menu overlay ----------------------------------------------------------------
 
 /** 'out' at nothing, 'low' at or below the level reception set (when they set one), else 'ok'. */
