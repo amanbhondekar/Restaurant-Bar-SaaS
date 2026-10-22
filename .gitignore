@@ -64,3 +64,8 @@ hub_server/data/sync_queue.wal
 # Tonight's bookings and who is at the door. Local to each hub; a re-paired hub keeps the
 # previous restaurant's diary aside as reservations.<id>.json.
 hub_server/data/reservations*.json
+
+# The restaurant's money: every bill it has raised, and the daily and weekly summaries (which also hold the
+# owner's phone number). Local to each hub; never something to commit.
+hub_server/data/invoices.json
+hub_server/data/reports.json
