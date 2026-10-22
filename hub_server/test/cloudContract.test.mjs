@@ -27,6 +27,9 @@ const { categoryRow, menuItemRow, tableRow } = await import('../lib/catalogSync.
 const { syncQueue } = await import('../lib/syncQueue.js');
 const { initCourseState } = await import('../lib/courses.js');
 const { RESERVATION_STATUSES, WAITLIST_STATUSES } = await import('../lib/reservations.js');
+const { paymentEvents } = await import('../lib/reconciliation.js');
+const { reconciliationStore } = await import('../lib/reconciliationStore.js');
+const { reconciliationFromCloud } = await import('../lib/reconciliationSync.js');
 
 import { after } from 'node:test';
 after(() => fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -89,7 +92,7 @@ function realBills() {
   }).invoice;
   const get = inv => invoiceStore.getInvoice(inv.id, RID);
   const pending = make('t_pending');
-  const paid = make('t_paid'); invoiceStore.markPaid(paid.id, RID, { method: 'cash' });
+  const paid = make('t_paid'); invoiceStore.markPaid(paid.id, RID, { method: 'cash', payment_ref: 'REF-42' });
   const refunded = make('t_refunded'); invoiceStore.markPaid(refunded.id, RID, { method: 'upi' }); invoiceStore.refund(refunded.id, RID, { reason: 'x' });
   const voided = make('t_voided'); invoiceStore.voidInvoice(voided.id, RID, { reason: 'wrong table' });
   const split = make('t_split'); invoiceStore.splitBySeats(split.id, RID, { count: 2 });
@@ -120,6 +123,48 @@ test('every real state survives the trip to the cloud and back with its status i
   }
 });
 
+// The fields the invoice store writes about payment, voiding and refunding, and the cloud column each goes to.
+// Every such field the store produces must be either here or in NOT_REPLICATED: a field in neither is the next
+// "refund_at is written but refunded_at is read" -- a fact that silently never reaches the cloud.
+const FIELD_TO_COLUMN = {
+  payment_status: 'payment_status', payment_method: 'payment_method', payment_ref: 'payment_ref', paid_at: 'paid_at',
+  voided_at: 'voided_at', voided_reason: 'void_reason', refund_at: 'refunded_at', refund_reason: 'refund_reason'
+};
+const NOT_REPLICATED = ['paid_by', 'voided_by', 'refund_by'];   // who did it: not a column; the hub keeps it
+
+test('every payment, void and refund fact the store writes reaches a cloud column, or is deliberately left out', () => {
+  for (const [state, bill] of Object.entries(realBills())) {
+    const row = invoiceRow(RID, bill);
+    for (const key of Object.keys(bill).filter(k => /^(paid|void|refund|payment)/.test(k))) {
+      if (NOT_REPLICATED.includes(key)) continue;
+      const column = FIELD_TO_COLUMN[key];
+      assert.ok(column, `${state}: the store writes "${key}" and nothing says where it goes in the cloud`);
+      if (bill[key] !== null && bill[key] !== undefined) assert.ok(row[column] !== null && row[column] !== undefined, `${state}: ${key} is set on the bill but ${column} is empty in the cloud row`);
+    }
+  }
+});
+
+test('a refund keeps its time, and a void keeps its reason, on the way to the cloud', () => {
+  const { refunded, voided } = realBills();
+  assert.ok(refunded.refund_at, 'the store dated the refund');
+  assert.equal(invoiceRow(RID, refunded).refunded_at, refunded.refund_at);
+  assert.equal(invoiceRow(RID, voided).void_reason, 'wrong table');
+});
+
+test('a hub restored from the cloud sees exactly the same money: the ledger\'s events are unchanged by the trip', () => {
+  // The point of the cloud copy. A restored bill that lost its refund time would drop the refund out of the
+  // cash reconciliation, and the drawer would be expected to hold money that was handed back.
+  for (const [state, bill] of Object.entries(realBills())) {
+    const restored = invoiceFromCloud({ ...invoiceRow(RID, bill), id: 'x' });
+    assert.deepEqual(paymentEvents([restored], RID), paymentEvents([bill], RID), state);
+    for (const key of ['payment_status', 'payment_method', 'payment_ref', 'paid_at', 'voided_reason', 'refund_reason']) {
+      assert.equal(restored[key] ?? null, bill[key] ?? null, `${state}.${key}`);
+    }
+  }
+  const { refunded } = realBills();
+  assert.equal(paymentEvents([invoiceFromCloud({ ...invoiceRow(RID, refunded), id: 'x' })], RID).filter(e => e.kind === 'refund').length, 1, 'the refund is still there');
+});
+
 test('an invoice row fits the invoices table in each state the CHECK names too, so a hand-written row is also safe', () => {
   for (const payment_status of ['pending', 'paid', 'void', 'refunded', 'split']) {
     fits('invoices', invoiceRow(RID, { ...INVOICE, payment_status }));
@@ -135,6 +180,20 @@ const RECORD = {
   closing_float: 1800, expected_cash: 5800, cash_variance: 0, status: 'balanced', has_variance: false,
   methods: { cash: {} }, totals: {}, voided: {}, unpaid_at_close: {}, notes: 'n', closed_by: 'Asha'
 };
+
+test('a cash-up made by the real store survives the trip to the cloud and back, every field of it', () => {
+  const sale = invoiceStore.issueInvoice({
+    tickets: [{ id: 't_cashup', ticket_number: 9, restaurant_id: RID, table_id: 3, table_name: 'T3', items: [{ id: 'd', name: 'Dal', qty: 1, price: 100 }], total_amount: 100 }],
+    tableId: 3, tableName: 'T3', restaurantId: RID, currency: '₹', taxConfig: {}, adjustments: {}
+  }).invoice;
+  invoiceStore.markPaid(sale.id, RID, { method: 'cash' });
+  const closed = reconciliationStore.close(invoiceStore.listInvoices(RID), RID, { opening_float: 1000, counted_cash: 1050, cash_removed: 100, reported: {}, notes: 'short', closed_by: 'Asha' });
+  assert.equal(closed.ok, true, JSON.stringify(closed));
+  assert.deepEqual(problems('reconciliations', reconciliationRow(RID, closed.record)), []);
+  const back = reconciliationFromCloud({ ...reconciliationRow(RID, closed.record), id: 'x' });
+  const changed = Object.keys(closed.record).filter(k => JSON.stringify(closed.record[k]) !== JSON.stringify(back[k]));
+  assert.deepEqual(changed, ['synced_to_cloud'], 'the only difference is the flag that says the cloud has it');
+});
 
 test('a cash-up row fits the reconciliations table, balanced or with a variance', () => {
   fits('reconciliations', reconciliationRow(RID, RECORD));

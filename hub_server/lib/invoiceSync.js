@@ -61,8 +61,11 @@ export function invoiceRow(restaurantId, invoice) {
     payment_ref: invoice.payment_ref || null,
     paid_at: when(invoice.paid_at),
     voided_at: when(invoice.voided_at),
-    void_reason: invoice.void_reason || null,
-    refunded_at: when(invoice.refunded_at),
+    // The store writes voided_reason and refund_at; the cloud's columns are void_reason and refunded_at. Reading the
+    // cloud's names off a hub invoice found nothing, so a refund's time and a void's reason never left the hub --
+    // and a hub restored from the cloud lost its refunds from the cash reconciliation.
+    void_reason: invoice.voided_reason || invoice.void_reason || null,
+    refunded_at: when(invoice.refund_at ?? invoice.refunded_at),
     refund_reason: invoice.refund_reason || null,
 
     tickets: json(invoice.tickets),
@@ -108,8 +111,10 @@ export function invoiceFromCloud(row) {
     ...(row.payment_ref ? { payment_ref: row.payment_ref } : {}),
     ...(row.paid_at ? { paid_at: row.paid_at } : {}),
     ...(row.voided_at ? { voided_at: row.voided_at } : {}),
-    ...(row.void_reason ? { void_reason: row.void_reason } : {}),
-    ...(row.refunded_at ? { refunded_at: row.refunded_at } : {}),
+    // Back under the hub's own names (see invoiceRow): the reconciliation reads refund_at, the Kitchen Display
+    // shows voided_reason.
+    ...(row.void_reason ? { voided_reason: row.void_reason } : {}),
+    ...(row.refunded_at ? { refund_at: row.refunded_at } : {}),
     ...(row.refund_reason ? { refund_reason: row.refund_reason } : {}),
 
     tickets: row.tickets || [],

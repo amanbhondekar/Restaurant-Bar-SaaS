@@ -65,7 +65,7 @@ const PROBE_REF = 'cloud_check_probe';
 const PROBE_BILL = {
   id: PROBE_REF, invoice_number: 'CLOUD-CHECK', table_id: 0, table_name: 'cloud:check', currency: '₹',
   subtotal: 1, discount_total: 0, subtotal_after_discount: 1, service_charge_percent: 0, service_charge_amount: 0,
-  taxable_base: 1, tax_total: 0, grand_total: 1, payment_status: 'voided', void_reason: 'cloud:check probe, safe to delete',
+  taxable_base: 1, tax_total: 0, grand_total: 1, payment_status: 'voided', voided_reason: 'cloud:check probe, safe to delete',
   tickets: [], ticket_ids: [], items: [{ name: 'probe', qty: 1 }], tax_rows: [], discount_rows: [], splits: [],
   issued_at: '2026-01-01T00:00:00.000Z', voided_at: '2026-01-01T00:00:00.000Z'
 };
@@ -89,7 +89,7 @@ export async function roundTrip(client, restaurantId) {
   const wrote = await step('write the probe bill with the hub\'s own push', () => pushInvoice(client, restaurantId, PROBE_BILL));
   if (wrote) {
     await step('write it again: the upsert updates in place rather than duplicating', async () => {
-      await pushInvoice(client, restaurantId, { ...PROBE_BILL, void_reason: 'cloud:check probe, second write' });
+      await pushInvoice(client, restaurantId, { ...PROBE_BILL, voided_reason: 'cloud:check probe, second write' });
       const { data, error } = await client.from('invoices').select('hub_ref').eq('restaurant_id', restaurantId).eq('hub_ref', PROBE_REF);
       if (error) throw new Error(error.message);
       if (data.length !== 1) throw new Error(`expected one row, found ${data.length}`);

@@ -278,7 +278,10 @@ still verified by hand.
   the hub writes `voided`, the table's CHECK allows `void`, so a bill the cloud
   held as paid would have stayed there counted as revenue. The first version of
   the contract test missed that because its sample bills were hand-written from
-  the SQL; they now come from the real invoice store.
+  the SQL; they now come from the real invoice store. Round-tripping those bills
+  then found two more: a refund's time and a void's reason were read under the
+  cloud's column names, so they never replicated, and a restored hub would have
+  lost its refunds from the cash reconciliation. Fixed.
 - ✅ **Waitlist**: moved out of this section. The walk-in queue is on the hub,
   with "your table is ready" by WhatsApp click-to-chat, and time-slot
   reservations are checked against the real layout (§4.6). A public booking page
