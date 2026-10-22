@@ -137,9 +137,11 @@ export function ImportDialog({ menu, onClose, onImported }) {
       const data = await hubSend('POST', '/admin/menu/import/preview', { rows, mode: nextMode });
       setPreview(data);
       setPhase('review');
+      return true;
     } catch (error) {
       setProblem(describeProblem(error));
       setPhase(preview ? 'review' : 'choose');
+      return false;
     }
   };
 
@@ -194,11 +196,16 @@ export function ImportDialog({ menu, onClose, onImported }) {
     await runPreview(table.rows, 'merge');
   };
 
-  const changeMode = next => {
+  const changeMode = async next => {
     if (next === mode || phase === 'working') return;
+    const before = mode;
     setMode(next);
     setConfirmText('');
-    if (parsed) runPreview(parsed.rows, next);
+    if (!parsed) return;
+    // The review on screen belongs to the mode it was worked out for. If the hub cannot answer for the new one,
+    // go back to the old mode rather than leave Replace selected over a merge's counts ("0 items will be
+    // removed") with a box that would accept REPLACE.
+    if (!(await runPreview(parsed.rows, next))) setMode(before);
   };
 
   const commit = async () => {

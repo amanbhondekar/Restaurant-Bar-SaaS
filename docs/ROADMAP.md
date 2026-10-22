@@ -55,13 +55,13 @@ guest ordering, repeat-visit recognition and reservations.
 
 Automated coverage is **1103 hub tests across 56 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**604 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**637 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
-except the Kitchen Display (Menu and its item editor, Tables, Bookings, Cash,
-Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest
-ordering), and the waiter login, modifier sheet and menu grid. The reception
-Kitchen Display, the menu importer and the rest of the waiter PWA are still
-verified by hand.
+except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
+Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
+repair, guest ordering), and the waiter login, modifier sheet and menu grid. The
+reception Kitchen Display and the rest of the waiter PWA are still verified by
+hand.
 
 ---
 
@@ -317,12 +317,14 @@ verified by hand.
   diner page and its basket, the station screens, device enrolment, every
   reception admin tab except the Kitchen Display (including the Menu tab and its
   item editor, Tables, Cash and Sales, which handle prices, the floor, the till
-  and the owner's figures, and Printers and Plan), and the waiter login, modifier
-  sheet and menu grid. The reception Kitchen Display, the menu importer, and the
+  and the owner's figures, Printers, Plan and the menu importer), and the waiter
+  login, modifier sheet and menu grid. The reception Kitchen Display and the
   waiter app's order entry and connection handling are still verified by hand,
-  and nothing drives a real browser in CI. Two things were found only by looking
-  past a passing build: a cross-page flow (the device-scope report) and a
-  screen-reader bug in the 86 switches (the admin-tab report).
+  and nothing drives a real browser in CI. Things found only by looking past a
+  passing build or by checking the tests themselves: a cross-page flow (the
+  device-scope report), a screen-reader bug in the 86 switches (the admin-tab
+  report), and, in the importer, a Replace mode that stayed selected over a
+  merge's numbers ("0 items will be removed") when the hub failed to answer.
 
 ---
 
@@ -510,8 +512,8 @@ milestones (§5) when a theme is pulled into a release.
   First surfaces are the diner page, the admin Feedback tab and the waiter
   modifier sheet, including a contract test that feeds the sheet's output to
   the hub's real `priceOrder`. Since extended to every reception admin tab
-  (Printers and Plan included). Still to do: the reception KDS, order entry, the
-  menu importer, and a Playwright smoke run in a real browser.
+  (Printers, Plan and the menu importer included). Still to do: the reception
+  KDS, order entry, and a Playwright smoke run in a real browser.
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
   there is no window between choosing a port and holding it. Runner
