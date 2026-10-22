@@ -140,7 +140,7 @@ had to enrol): the station page enrolled by typed code and loaded its board over
 
 - **The live feed still carries table totals to a kitchen token.** It is read-only and the same feed the
   board needs, but a kitchen screen can in principle see a total it has no reason to.
-- **A full handset can still add or deactivate staff.** `POST /waiters` and `DELETE /waiters/:id` are
+- **A full handset can still add or deactivate staff.** *(Closed afterwards: see `report_2026-10-22_163000_staff_routes_reception_only.md`.)* `POST /waiters` and `DELETE /waiters/:id` are
   commented "reception / admin flow" but are guarded only by a device token, so any enrolled phone can
   create a waiter with a PIN or lock another waiter out. Reception's own Staff tab uses the `/admin/staff`
   routes, which are reception-only, and nothing in the app calls the old ones. They were left alone here

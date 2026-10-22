@@ -243,22 +243,36 @@ test('hub: GET /plan requires a device token', async () => {
 });
 
 test('hub: waiter limit — adding is refused once the plan limit is reached', async () => {
-  const plan = await (await api('/plan', { token: tokens[0] })).json();
-  const limit = plan.limits.waiters;
-  let created = plan.usage.waiters;
-  let n = 0;
-  while (created < limit) {
-    const r = await api('/waiters', { token: tokens[0], method: 'POST', body: JSON.stringify({ name: `Waiter ${++n}`, pin: '1234' }) });
-    assert.equal(r.status, 201);
-    created++;
+  // Adding staff is reception-only, so this runs against a hub that trusts its loopback (the reception
+  // laptop), on the same degraded plan as the hub above.
+  const reception = await startHub({
+    trustLoopback: true,
+    menu: MENU,
+    tables: { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }] },
+    enrollmentCode: CODE,
+    config: { pairing_code: 'PLN-0002', plan: 'pro', plan_status: 'cancelled' }
+  });
+  try {
+    const asReception = (p, opts = {}) => fetch(`${reception.base}${p}`, { ...opts, headers: { 'Content-Type': 'application/json' } });
+    const plan = await (await asReception('/plan')).json();
+    const limit = plan.limits.waiters;
+    let created = plan.usage.waiters;
+    let n = 0;
+    while (created < limit) {
+      const r = await asReception('/waiters', { method: 'POST', body: JSON.stringify({ name: `Waiter ${++n}`, pin: '1234' }) });
+      assert.equal(r.status, 201);
+      created++;
+    }
+    const over = await asReception('/waiters', { method: 'POST', body: JSON.stringify({ name: 'One Too Many', pin: '1234' }) });
+    assert.equal(over.status, 403);
+    const body = await over.json();
+    assert.equal(body.code, 'PLAN_LIMIT_REACHED');
+    assert.equal(body.limit_key, 'waiters');
+    assert.equal(body.limit, limit);
+    assert.equal(body.success, false);
+  } finally {
+    reception.stop();
   }
-  const over = await api('/waiters', { token: tokens[0], method: 'POST', body: JSON.stringify({ name: 'One Too Many', pin: '1234' }) });
-  assert.equal(over.status, 403);
-  const body = await over.json();
-  assert.equal(body.code, 'PLAN_LIMIT_REACHED');
-  assert.equal(body.limit_key, 'waiters');
-  assert.equal(body.limit, limit);
-  assert.equal(body.success, false);
 });
 
 test('hub: GET /menu strips gated fields but keeps variants', async () => {

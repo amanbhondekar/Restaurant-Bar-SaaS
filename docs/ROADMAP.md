@@ -51,7 +51,7 @@ project or Razorpay keys: migrations 004–011 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **939 hub tests across 49 files** (pure rules plus live
+Automated coverage is **941 hub tests across 49 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **290 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, the admin Feedback, Stock,
@@ -399,11 +399,11 @@ milestones (§5) when a theme is pulled into a release.
   has the enrolment code.
 - ⬜ The live feed still carries table totals to a kitchen token: read-only, but
   more than a screen at the pass needs.
-- ⬜ `POST /waiters` and `DELETE /waiters/:id` are commented "reception / admin"
-  but need only a device token, so any enrolled handset can add a waiter with a
-  PIN or deactivate another. Nothing in the app calls them (reception's Staff tab
-  uses the reception-only `/admin/staff`); closing them means rewriting the four
-  tests that drive them with a device token.
+- ✅ `POST /waiters` and `DELETE /waiters/:id` are reception-only. They were
+  commented "reception / admin" but needed only a device token, so any enrolled
+  handset could add a waiter with a PIN of its own or lock another waiter out
+  mid-shift. Nothing in the app called them (reception's Staff tab uses
+  `/admin/staff`), so nothing needed changing but the four tests that drove them.
 - ⬜ Password reset + optional SSO for owner accounts.
 
 ### 4.8 Reliability & observability  🟡

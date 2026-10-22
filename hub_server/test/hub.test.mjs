@@ -24,6 +24,9 @@ const ENROLLMENT_CODE = 'TESTCODE';
 
 let hub;
 let token;
+// A second hub that trusts its loopback, i.e. acts as the reception laptop. Adding and removing staff
+// is reception-only, so those tests cannot be made from the remote-handset hub above.
+let reception;
 
 const MENU = {
   restaurant_id: RESTAURANT_ID,
@@ -60,9 +63,13 @@ before(async () => {
     tables: TABLES,
     enrollmentCode: ENROLLMENT_CODE
   });
+  reception = await startHub({ trustLoopback: true, menu: MENU, tables: TABLES, enrollmentCode: ENROLLMENT_CODE });
 });
 
-after(() => hub?.stop());
+after(() => { hub?.stop(); reception?.stop(); });
+
+const asReception = (pathname, opts = {}) =>
+  fetch(`${reception.base}${pathname}`, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
 
 // ---------------------------------------------------------------------------
 // C2 — device authentication
@@ -1427,16 +1434,16 @@ test('M1: unknown waiter_id also fails with the same generic 401 (no leak)', asy
 });
 
 test('M1: POST /waiters adds a new waiter; duplicate name refused', async () => {
-  const created = await api('/waiters', {
-    auth: true, method: 'POST',
+  const created = await asReception('/waiters', {
+    method: 'POST',
     body: JSON.stringify({ name: 'Aarti', pin: '4444' })
   });
   assert.equal(created.status, 201);
   const body = await created.json();
   assert.equal(body.waiter.name, 'Aarti');
 
-  const dup = await api('/waiters', {
-    auth: true, method: 'POST',
+  const dup = await asReception('/waiters', {
+    method: 'POST',
     body: JSON.stringify({ name: 'Aarti', pin: '5555' })
   });
   assert.equal(dup.status, 400);
@@ -1445,8 +1452,8 @@ test('M1: POST /waiters adds a new waiter; duplicate name refused', async () => 
 
 test('M1: POST /waiters rejects a non-4-digit PIN', async () => {
   for (const pin of ['abc', '123', '12345', '', null]) {
-    const res = await api('/waiters', {
-      auth: true, method: 'POST',
+    const res = await asReception('/waiters', {
+      method: 'POST',
       body: JSON.stringify({ name: `bad-${Math.random()}`, pin })
     });
     assert.equal(res.status, 400, `pin ${JSON.stringify(pin)} must be rejected`);
@@ -1454,14 +1461,35 @@ test('M1: POST /waiters rejects a non-4-digit PIN', async () => {
 });
 
 test('M1: DELETE /waiters/:id deactivates and removes them from /waiters listing', async () => {
-  const created = await (await api('/waiters', {
-    auth: true, method: 'POST',
+  const created = await (await asReception('/waiters', {
+    method: 'POST',
     body: JSON.stringify({ name: 'Temp-' + Date.now(), pin: '9999' })
   })).json();
-  const del = await api(`/waiters/${created.waiter.id}`, { auth: true, method: 'DELETE' });
+  const del = await asReception(`/waiters/${created.waiter.id}`, { method: 'DELETE' });
   assert.equal(del.status, 200);
-  const listAfter = await (await api('/waiters', { auth: true })).json();
+  const listAfter = await (await asReception('/waiters')).json();
   assert.ok(!listAfter.waiters.some(w => w.id === created.waiter.id));
+});
+
+test('M1: an enrolled handset can neither add nor remove staff -- that is reception\'s', async () => {
+  // The routes are commented "reception / admin" and used to need only a device token, so any phone on
+  // the wifi could create a waiter with a PIN of its own or lock another waiter out mid-shift.
+  const before = await (await api('/waiters', { auth: true })).json();
+  const victim = before.waiters[0];
+  const asHandset = (p, opts = {}) => api(p, { ...opts, auth: true });
+
+  const add = await asHandset('/waiters', { method: 'POST', body: JSON.stringify({ name: 'Intruder', pin: '4821' }) });
+  assert.equal(add.status, 403);
+  assert.equal((await add.json()).code, 'RECEPTION_ONLY');
+
+  const remove = await asHandset(`/waiters/${victim.id}`, { method: 'DELETE' });
+  assert.equal(remove.status, 403);
+  assert.equal((await remove.json()).code, 'RECEPTION_ONLY');
+
+  // And nothing changed on the hub the handset was talking to.
+  const list = await (await api('/waiters', { auth: true })).json();
+  assert.ok(list.waiters.some(w => w.id === victim.id), 'the waiter is still there');
+  assert.ok(!list.waiters.some(w => w.name === 'Intruder'), 'and nobody was added');
 });
 
 test('M1: POST /orders with valid waiter_id stamps the waiter name on the ticket', async () => {

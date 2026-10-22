@@ -218,10 +218,8 @@ const OUT_OF_SCOPE = [
   ['POST', '/orders/t_1/clear', {}],
   ['POST', '/orders/t_1/print-kot', {}],
   ['GET', '/waiters'],
-  ['POST', '/waiters', { name: 'Intruder', pin: '4821' }],
   ['POST', '/waiters/login', {}],
   ['POST', '/waiters/redeem-invite', {}],
-  ['DELETE', '/waiters/w_1'],
   ['GET', '/printers'],
   ['GET', '/plan'],
   ['GET', '/sync-status'],
@@ -234,6 +232,16 @@ test('hub: a kitchen screen is refused everything else -- bills, orders, staff, 
     const res = await call(remote, p, { method, body, token: screen });
     assert.equal(res.status, 403, `${method} ${p} -> ${res.status}`);
     assert.equal((await json(res)).code, 'DEVICE_SCOPE', `${method} ${p}`);
+  }
+});
+
+test('hub: adding and removing staff is refused to a kitchen screen too -- it is reception\'s, not any device\'s', async () => {
+  // Reception-only, so a refusal to every token and not a matter of scope: a kitchen screen gets the same
+  // 403 a full handset does (hub.test.mjs covers the handset).
+  for (const [method, p, body] of [['POST', '/waiters', { name: 'Intruder', pin: '4821' }], ['DELETE', '/waiters/w_1']]) {
+    const res = await call(remote, p, { method, body, token: screen });
+    assert.equal(res.status, 403, `${method} ${p}`);
+    assert.equal((await json(res)).code, 'RECEPTION_ONLY', `${method} ${p}`);
   }
 });
 

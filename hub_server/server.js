@@ -1596,7 +1596,11 @@ app.post('/waiters/login', requireDevice, (req, res) => {
 });
 
 // 7c-4. POST /waiters — Add a new waiter (reception / admin flow)
-app.post('/waiters', requireDevice, (req, res) => {
+//
+// Reception only. It used to need nothing but a device token, so any enrolled phone could create a
+// waiter with a PIN of its own choosing; the comment above said reception and the guard did not.
+// Reception's own Staff tab goes through /admin/staff, which sends an invite rather than a typed PIN.
+app.post('/waiters', requireReceptionFor('Adding staff'), (req, res) => {
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
   const limit = checkLimit(hubConfig.getEffectivePlan().plan, 'waiters', waiterStore.listActive().length);
   if (!limit.ok) {
@@ -1614,7 +1618,8 @@ app.post('/waiters', requireDevice, (req, res) => {
 });
 
 // 7c-5. DELETE /waiters/:id — Deactivate (soft delete preserves ticket history)
-app.delete('/waiters/:id', requireDevice, (req, res) => {
+// Reception only, for the same reason: a handset could lock another waiter out in the middle of a shift.
+app.delete('/waiters/:id', requireReceptionFor('Removing staff'), (req, res) => {
   const result = waiterStore.deactivate(req.params.id);
   if (!result.ok) {
     const status = result.code === 'NOT_FOUND' ? 404 : 400;
