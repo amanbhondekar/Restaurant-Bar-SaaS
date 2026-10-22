@@ -7,10 +7,11 @@ this roadmap is scoped to any single tenant.
 
 Legend: ✅ shipped · 🟡 partial · ⬜ not started
 
-**Last reconciled against the code:** 2026-10-13 (M1 and M2 complete, M3 in
-progress). Between 2026-09-19 and this revision the file lived on an unmerged
-`docs/roadmap` branch, so §6's maintenance rule could not be followed and the
-document fell a full two milestones behind. It is now on the working line.
+**Last reconciled against the code:** 2026-10-22 (M1 and M2 complete, M3 mostly
+built, M4 mostly built). Between 2026-09-19 and 2026-10-13 the file lived on an
+unmerged `docs/roadmap` branch, so §6's maintenance rule could not be followed and
+the document fell a full two milestones behind. It is on the working line now, and
+every change since has updated it in the same commit.
 
 ---
 
@@ -83,14 +84,20 @@ still verified by hand.
 ### Data & multi-tenancy (Supabase)
 - ✅ Schema: `restaurants`, `staff_users`, `tables`, `menu_categories`,
   `menu_items`, `orders`, `order_items`, `waitlist_entries`,
-  `device_pairings`, `invoices` (005), `reconciliations` (006).
+  `device_pairings`, `invoices` (005), `reconciliations` (006),
+  `inventory_items` and `recipes` (009), `subscriptions` and
+  `subscription_events` (010, service role only), `reservations` and `walkins`
+  (011).
 - ✅ Row Level Security on every tenant-scoped table; `current_restaurant_id()`
   resolved from `auth.uid()` via `staff_users`.
 - ✅ `provision_kitchen_staff` `SECURITY DEFINER` RPC, `pin_hash` via
   `pgcrypto`, per-tenant bcrypt provisioning secret.
-- ✅ Migrations `001`–`007`: secure hub provisioning, online RLS and order
+- ✅ Migrations `001`–`011` written: secure hub provisioning, online RLS and order
   items, hub-authoritative menu and tables, subscription plan status, invoice and
-  cash-up cloud replication, tenant provisioning.
+  cash-up cloud replication, tenant provisioning, order course state, inventory,
+  subscriptions, reservations. **`004`–`011` have never been run against a real
+  Supabase project** (no credentials on the build machine); the cloud round trips
+  are proven against fakes that keep their rows.
 - ✅ `plan` on `restaurants` (`starter` / `pro` / `enterprise`) **enforced in
   product**, not just modelled — see §2 Tenant lifecycle.
 
@@ -110,7 +117,19 @@ still verified by hand.
 - ✅ CORS locked to LAN / loopback; `/qr` and `/toggle-outage` restricted
   to the reception laptop.
 - ✅ WebSocket `/live` authorised (token in query string).
-- ✅ Server-side pricing — waiter clients no longer submit totals.
+- ✅ Server-side pricing — waiter clients no longer submit totals. The same
+  pricing runs for orders a guest sends from a table code.
+- ✅ Device scope: a station tablet holds a `kitchen` token that can mark
+  tickets done and nothing else; default-deny, with the open routes pinned by a
+  test (§4.7). Adding or removing staff is reception-only.
+- ✅ New staff are invited rather than given a PIN: reception sends a one-time
+  invite code and the person chooses their own. PINs and invite codes are hashed,
+  and a single device can be revoked without re-enrolling the rest.
+- ✅ Guest data: a phone number is stored hashed per tenant for matching, so two
+  restaurants on one cloud cannot tell they share a guest, and in plain only where
+  staff must ring it back. Guest ordering is off until reception turns it on.
+- ✅ The operator service verifies Razorpay's signatures over the raw request body
+  and refuses every signup if no token is configured.
 
 ### Billing & payments (M1)
 - ✅ Invoice generator with itemised tax breakdown, persistent ledger with
@@ -128,6 +147,8 @@ still verified by hand.
   hardware.
 - ✅ Payment reconciliation: period close, immutable numbered records, CSV
   ledger export.
+- ✅ Cloud replication, restore and repair of the ledger (§4.1); the sync queue is
+  written crash-safely, with a test at each crash point.
 
 ### Menu depth (M2)
 - ✅ First-class item variants (half / full, bone-in) with distinct
@@ -145,6 +166,8 @@ still verified by hand.
   cannot be made is flagged `stock_out` on the waiter grid and hidden from the
   diner menu, and returns by itself on a delivery. The flag is separate from
   the hand 86, so the two never undo each other. Cloud copy: migration 009.
+  A modifier choice (extra cheese) can use stock too, counted only for the
+  portions that chose it.
 - ✅ Menu edits start from the stored menu, not the plan- or stock-overlaid
   one. Before, a tenant whose plan hides modifiers lost them for good the first
   time they edited any dish.
@@ -161,7 +184,7 @@ still verified by hand.
   when a station has work and nobody looking at it. Dead connections are
   dropped by a heartbeat, so a tablet that fell off the wifi stops counting.
 
-### Tenant lifecycle (M3, in progress)
+### Tenant lifecycle (M3, mostly built)
 - ✅ Plan entitlements as one authoritative answer to "what may this tenant
   do right now?" (`hub_server/lib/plans.js`): limits on devices, waiters,
   tables and printers; feature flags for split-bill, refunds, modifiers,
@@ -173,15 +196,24 @@ still verified by hand.
   plan sync at boot and every 15 minutes, fail-soft when offline.
 - ✅ Owner console Plan tab: degradation banner naming the reason, limits
   vs live usage, per-feature entitlements, cloud-staleness line.
+- ✅ Owner console Staff & devices tab: invites, roles, PIN reset, removal, and
+  per-device revocation (§4.4).
+- ✅ Operator service (`signup_server/`): creates tenants and applies Razorpay
+  subscription events to `plan_status`; a payment problem is `past_due`, never
+  `suspended` (§4.4).
 
 ### Frontend surfaces
 - ✅ Kitchen KDS (`src/server_laptop/KitchenKdsView.jsx`): live ticket rail,
   pairing QR + enrollment code, connection badge grace states, Framer
   Motion ticket-printer moment, kitchen summary counters, station chips,
   bill preview and settlement.
-- ✅ Admin console (`src/admin/`): menu, tables, cash & payments, kitchen
-  performance, printers, plan.
-- ✅ Reception: `SalesAnalyticsView`, `WaitlistView`, `ServerLaptopApp` shell.
+- ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
+  cash & payments, stock and recipes, kitchen performance and station screens,
+  printers, staff and devices, guest feedback, plan.
+- ✅ Reception: `SalesAnalyticsView` and the `ServerLaptopApp` shell. Its older
+  `WaitlistView` is still there too: see §4.6 for why that is a problem.
+- ✅ Station screens (`src/station/`) and the diner page with its optional basket
+  (`src/diner/`).
 - ✅ Waiter PWA (`src/waiter_mobile/`): floor grid with live table state,
   category-filtered menu grid, order draft drawer, rapid order builder,
   LAN dispatcher, in-app camera QR scanner, PIN sign-in, connection badge,
@@ -200,8 +232,9 @@ still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite: 527 tests, fixtures on hub-chosen ports with a
-  stale-hub guard, 10 consecutive clean runs.
+- ✅ Hub regression suite (965 tests at the last count, §1): fixtures on
+  hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
+  each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
   every push and PR.
 - ✅ Crash reporting from the hub and both PWAs into a rolling log.
@@ -215,14 +248,14 @@ still verified by hand.
   that the console is reception-only -- there is no remote owner view -- and
   that a person's role is stored but not enforced (§4.7).
 - 🟡 **Inventory limits**: there is no costing, par level or reorder prompt, and
-  there is no way to
-  cancel an order at all -- tickets can be marked ready, fired, recalled and
-  cleared, never withdrawn -- so there is nothing yet for stock to be returned
-  from. Whether a cancelled order gives its ingredients back (it may already be
-  cooking) is a policy for whoever adds cancellation. Migration 009 is unrun and
-  its restore path is untested
-  against a real project. Not plan-gated: whether stock is a paid feature is
-  a pricing call.
+  there is no way to cancel an order at all -- tickets can be marked ready,
+  fired, recalled and cleared, never withdrawn -- so there is nothing yet for
+  stock to be returned from. Whether a cancelled order gives its ingredients back
+  (it may already be cooking) is a policy for whoever adds cancellation. The
+  waiter's modifier sheet does not grey out an extra whose ingredient has run
+  out; the order is refused with the ingredient named. Migration 009 is unrun and
+  its restore path is untested against a real project. Not plan-gated: whether
+  stock is a paid feature is a pricing call.
 - ✅ **Station screens are role-scoped**: a station tablet enrols with a
   `kitchen` device token, which can read the board and mark tickets and stations
   done and is refused everything else -- placing orders, every bill route, staff,
@@ -382,9 +415,14 @@ milestones (§5) when a theme is pulled into a release.
   table at least its own size and competes for those tables with every overlapping
   booking for a party at least as big. Walk-ins already seated are counted. A
   restaurant can overbook anyway, and the booking records that it did.
-- ✅ A walk-in queue on the hub, replacing the browser-localStorage one. A number
-  is optional there and required for a booking, because a booking is a promise you
-  may have to chase.
+- ✅ A walk-in queue on the hub, in the admin Bookings tab. A number is optional
+  there and required for a booking, because a booking is a promise you may have to
+  chase.
+- ⬜ **The old Waitlist tab is still in the reception app.** The server-laptop app
+  keeps its original `WaitlistView`, a browser-`localStorage` list seeded with demo
+  rows (`PosContext`). It shares nothing with the hub queue, so a restaurant that
+  opens the wrong tab sees an unrelated, empty-looking list. Retire it, or point
+  it at the hub's queue.
 - ✅ "Your table is ready" by WhatsApp click-to-chat: the hub writes the message and
   staff tap to send from their own phone. No Meta approval, no provider, no
   per-message fee, and it works with the line down.
@@ -469,11 +507,14 @@ Enough menu modelling to onboard restaurants beyond a flat item list.
 - ✅ 4.2 modifiers, variants, per-variant 86'd, day-part pricing.
 - ✅ 4.3 multi-station KDS routing and course firing.
 - ✅ 4.2 stock-driven 86'd and inventory tables.
+- ✅ 4.2 modifier choices that use stock (2026-10-22).
 
 ### M3 — Self-serve tenant  🟡
 The product can onboard a new restaurant without engineering.
 - ✅ PR 16 — plan model + enforcement in the hub.
 - ✅ PR 18 — owner console plan view.
+- ✅ 4.4 staff invites, role management, PIN rotation and per-device
+  revocation.
 - 🟡 PR 17 — provisioning (007) and the operator service that calls it are built
   and tested; there is no public signup page in front of it, and none of it has
   run against a real project.
@@ -485,8 +526,9 @@ The product can onboard a new restaurant without engineering.
 ### M4 — Customer surfaces  🟡
 - 🟡 4.5 diner QR menu, guest ordering (opt-in) and repeat-visit recognition
   shipped; paying from the phone is open and needs Razorpay keys.
-- ✅ 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; a public
-  booking page is still open and needs hosting.
+- 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; a public
+  booking page is still open and needs hosting, and the old browser-local
+  Waitlist tab has not been retired.
 
 ---
 
