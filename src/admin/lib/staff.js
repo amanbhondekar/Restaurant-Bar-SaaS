@@ -61,6 +61,15 @@ export function deviceStatus(device) {
   return { tone: 'green', label: 'Enrolled', detail: device?.expires_at ? `Until ${shortDate(device.expires_at)}` : '' };
 }
 
+/**
+ * What a device is for, as reception reads it. A handset is the ordinary case and is not labelled; a
+ * kitchen screen is, because it is the one that cannot do what the others can.
+ */
+export function deviceKind(device) {
+  if (device?.scope === 'kitchen') return { label: 'Kitchen screen', note: 'Shows tickets and marks them done. Cannot take orders or touch bills.' };
+  return { label: null, note: '' };
+}
+
 /** The header line: "4 staff · 1 invited · 2 devices". */
 export function staffSummary(staff = [], devices = []) {
   const live = staff.filter(s => s.active !== false);

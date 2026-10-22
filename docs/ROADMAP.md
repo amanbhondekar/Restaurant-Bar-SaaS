@@ -33,23 +33,32 @@ early pilots:
   printers, staff and devices, guest feedback, subscription plan.
 - **Station screens** (`/station/hot`, `/cold`, `/bar`) — a tablet at one
   kitchen station: that station's tickets only, a Ready button, a chime for new
-  work. Enrolled once by scanning a code from the admin Kitchen tab.
-- **Diner menu** (`/diner`) — read-only, no sign-in, opened from a table code.
+  work. Enrolled once by scanning a code from the admin Kitchen tab, as a
+  kitchen device: it can mark tickets done and nothing else.
+- **Diner menu** (`/diner`) — no sign-in, opened from a table code. Read-only
+  unless reception switches guest ordering on, which lets a guest send an order
+  to the kitchen (§4.5).
 - **Reception / server-laptop app** — sales analytics, waitlist.
 - **Operator service** (`signup_server/`) — not part of a restaurant's
   installation. Holds the Supabase service key and the Razorpay webhook
   secret: creates tenants, and keeps `plan_status` honest.
 
-M1 (payments-ready) and M2 (menu depth) are complete. The current focus is
-M3 — self-serve tenant — of which plan enforcement and the owner console's
-plan view have shipped.
+M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant —
+is mostly built: plan enforcement, the owner console, staff and device
+management, and an operator service for signup and Razorpay webhooks. What is
+left is creating a subscription, and everything that needs a real Supabase
+project or Razorpay keys: migrations 004–011 are all unrun, because there are
+no credentials on the machine this was built on. M4 — customer surfaces — has
+guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **892 hub tests across 46 files** (pure rules plus live
+Automated coverage is **939 hub tests across 49 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**252 frontend tests** (Vitest + Testing Library in jsdom) on the diner page,
-the station screens, the admin Feedback, Stock and Kitchen-panel tabs, and the
-waiter modifier sheet and menu grid. The reception Kitchen Display, the rest of
-the admin console and the rest of the waiter PWA are still verified by hand.
+**290 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+its basket, the station screens, device enrolment, the admin Feedback, Stock,
+Kitchen, Staff, Bookings, Regulars, ledger-repair and guest-ordering panels, and
+the waiter login, modifier sheet and menu grid. The reception Kitchen Display,
+the Menu, Tables and Cash tabs and the rest of the waiter PWA are still verified
+by hand.
 
 ---
 
@@ -200,27 +209,34 @@ the admin console and the rest of the waiter PWA are still verified by hand.
 
 ## 3. In-flight / partial
 
-- 🟡 **Owner console**: plan and usage have shipped; staff invites, role
-  management, PIN rotation and hub device revocation have not. The console
-  is reception-only — there is no remote owner view.
+- 🟡 **Owner console**: plan and usage, staff invites, role management, PIN
+  rotation and per-device revocation have all shipped (§4.4). What is left is
+  that the console is reception-only -- there is no remote owner view -- and
+  that a person's role is stored but not enforced (§4.7).
 - 🟡 **Inventory limits**: modifier choices (extra cheese) do not use stock,
-  there is no costing, par level or reorder prompt, and a cancelled order does
-  not return stock. Migration 009 is unrun and its restore path is untested
+  there is no costing, par level or reorder prompt, and there is no way to
+  cancel an order at all -- tickets can be marked ready, fired, recalled and
+  cleared, never withdrawn -- so there is nothing yet for stock to be returned
+  from. Whether a cancelled order gives its ingredients back (it may already be
+  cooking) is a policy for whoever adds cancellation. Migration 009 is unrun and
+  its restore path is untested
   against a real project. Not plan-gated: whether stock is a paid feature is
   a pricing call.
-- 🟡 **Station screens are not role-scoped**: a station tablet carries the same
-  device token as a waiter's handset, which can do anything an enrolled device
-  can, bills and voids included. The reception Kitchen Display still sends no
-  token, so it only works on the reception laptop itself (its station filter
-  remains, and it does not show which station screens are up).
-- 🟡 **Billing replication is one-way and unproven**: bills and cash-ups now
-  push to the cloud (005, 006) and a boot backfill carries up anything the
-  cloud has not confirmed, but nothing has run against a real Supabase
-  project and the hub never reads either back, so a reinstalled hub still
-  starts with an empty ledger.
-- 🟡 **Waitlist**: `waitlist_entries` table + `WaitlistView` exist; no
-  guest notification (SMS / WhatsApp), no configurable time-slot
-  reservations.
+- ✅ **Station screens are role-scoped**: a station tablet enrols with a
+  `kitchen` device token, which can read the board and mark tickets and stations
+  done and is refused everything else -- placing orders, every bill route, staff,
+  the plan. Default-deny: a route is closed to it until someone opens it, and the
+  five that are open are pinned by a test. Devices enrolled before this keep full
+  authority. What remains is in §4.7. The reception Kitchen Display still sends no
+  token, so it only works on the reception laptop itself.
+- 🟡 **Billing replication is unproven**: bills and cash-ups push to the cloud
+  (005, 006), a boot backfill carries up anything the cloud has not confirmed,
+  and a hub with an empty or partial ledger restores or repairs it from the
+  cloud (§4.1) -- but none of it has run against a real Supabase project.
+- ✅ **Waitlist**: moved out of this section. The walk-in queue is on the hub,
+  with "your table is ready" by WhatsApp click-to-chat, and time-slot
+  reservations are checked against the real layout (§4.6). A public booking page
+  is the part still open, and it needs hosting.
 - 🟡 **Analytics**: real-time revenue + orders panel is live and cash
   reconciliation exports a CSV ledger; no period comparison, cohorting or
   scheduled reports.
@@ -228,11 +244,15 @@ the admin console and the rest of the waiter PWA are still verified by hand.
   this file flagged flaky hydration. Re-checked on 2026-10-13 against a
   running hub — sales, floor grid, active KOTs and billed orders all render
   with no console errors. Moved out of this section.
-- 🟡 **Test coverage**: the hub is well covered. A frontend runner now exists
-  and covers the diner page, the station screens, the admin Feedback, Stock and
-  Kitchen panels and the waiter modifier sheet and menu grid; the reception
-  Kitchen Display, the other admin tabs, order entry and login are still
-  verified by hand, and nothing yet drives a real browser.
+- 🟡 **Test coverage**: the hub is well covered. A frontend runner covers the
+  diner page and its basket, the station screens, device enrolment, the admin
+  Feedback, Stock, Kitchen, Staff, Bookings, Regulars, ledger-repair and
+  guest-ordering panels, and the waiter login, modifier sheet and menu grid. The
+  reception Kitchen Display, the Menu, Tables and Cash tabs, and the waiter
+  app's order entry and connection handling are still verified by hand, and
+  nothing drives a real browser in CI. (A cross-page flow in this area was
+  caught only by checking it against a scratch hub in a browser: see the
+  device-scope report.)
 
 ---
 
@@ -286,7 +306,8 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Per-station KDS instances: `/station/<station>`, its own authenticated page
   rather than a filter on the reception display (which could not run on any
   other device: it sent no token). The hub knows which stations have a screen
-  up; reception sees what is waiting at one that has none.
+  up; reception sees what is waiting at one that has none. A station tablet
+  enrols as a kitchen device, which can mark tickets done and nothing else (§4.7).
 - ✅ Course state replicated to the cloud (migration 008): `staged` and a
   per-course log of when each was fired and each station finished, plus each
   line's course and station. A cloud without 008 still gets the order and its
@@ -368,8 +389,21 @@ milestones (§5) when a theme is pulled into a release.
 - ⬜ Role UIs for owner / manager / waiter / kitchen. Roles are now STORED per
   staff member and shown to reception, but nothing enforces them: anyone signed
   in can still void a bill.
-- ⬜ Role-scoped device tokens: a kitchen tablet should be able to mark tickets
-  ready and not void a bill.
+- ✅ Role-scoped device tokens: a station tablet enrols with a `kitchen` token
+  that can read the board and mark tickets and stations done, and is refused
+  everything else with 403 `DEVICE_SCOPE`. Default-deny -- `requireDevice` refuses
+  it everywhere and five routes are opened on purpose, pinned by a test. Grants
+  from before this keep full authority, and an unrecognised stored scope reads as
+  the narrower one. It limits what a mishandled tablet can do; the scope is the
+  device's own choice at enrolment, so it is not a barrier against anyone who
+  has the enrolment code.
+- ⬜ The live feed still carries table totals to a kitchen token: read-only, but
+  more than a screen at the pass needs.
+- ⬜ `POST /waiters` and `DELETE /waiters/:id` are commented "reception / admin"
+  but need only a device token, so any enrolled handset can add a waiter with a
+  PIN or deactivate another. Nothing in the app calls them (reception's Staff tab
+  uses the reception-only `/admin/staff`); closing them means rewriting the four
+  tests that drive them with a device token.
 - ⬜ Password reset + optional SSO for owner accounts.
 
 ### 4.8 Reliability & observability  🟡
@@ -378,8 +412,8 @@ milestones (§5) when a theme is pulled into a release.
 - 🟡 Frontend test suite: Vitest + Testing Library runs in CI as its own step.
   First surfaces are the diner page, the admin Feedback tab and the waiter
   modifier sheet, including a contract test that feeds the sheet's output to
-  the hub's real `priceOrder`. Still to do: the KDS, order entry, login, the
-  other admin tabs, and a Playwright smoke run in a real browser.
+  the hub's real `priceOrder`. Still to do: the reception KDS, order entry, the
+  Menu / Tables / Cash tabs, and a Playwright smoke run in a real browser.
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
   there is no window between choosing a port and holding it. Runner
@@ -429,8 +463,11 @@ Enough menu modelling to onboard restaurants beyond a flat item list.
 The product can onboard a new restaurant without engineering.
 - ✅ PR 16 — plan model + enforcement in the hub.
 - ✅ PR 18 — owner console plan view.
-- 🟡 PR 17 — provisioning done (007); the signup surface is not.
-- ⬜ PR 19 — subscription billing (blocked on a payment-provider decision).
+- 🟡 PR 17 — provisioning (007) and the operator service that calls it are built
+  and tested; there is no public signup page in front of it, and none of it has
+  run against a real project.
+- 🟡 PR 19 — Razorpay chosen; the webhooks and plan status are built and tested.
+  Nothing creates a subscription yet, and there are no keys.
 - ⬜ PR 20 — Windows installer + fleet view.
 - ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
 

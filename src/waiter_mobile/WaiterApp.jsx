@@ -94,8 +94,12 @@ export const WaiterApp = () => {
         authFetch(`${cleanUrl}/menu`).catch(() => null)
       ]);
 
-      if (tablesRes?.status === 401 || ordersRes?.status === 401 || menuRes?.status === 401) {
-        console.warn('Hub rejected request with 401 Unauthorized: handset requires enrollment');
+      // 403 as well as 401: a tablet that was set up as a kitchen screen shares this browser's storage, so
+      // it arrives here holding a token the hub refuses for the till. /tables and /menu answer 403 only for
+      // that, and the cure is the same as for no token -- enrol as a handset, which replaces it.
+      const turnedAway = r => r?.status === 401 || r?.status === 403;
+      if (turnedAway(tablesRes) || turnedAway(menuRes) || ordersRes?.status === 401) {
+        console.warn('Hub refused this device: handset requires enrollment');
         setIsEnrolled(false);
         setConnStatus('unauthorized');
         return;
@@ -139,6 +143,17 @@ export const WaiterApp = () => {
         setHubInfo(data);
         pingFailuresRef.current = 0; // Reset fail counter on success
         
+        // A tablet that was set up as a kitchen screen holds a token the hub honours for tickets and
+        // nothing else, and shares this browser's storage. It is not an enrolled handset: say so, and let
+        // the code entry below replace the token, rather than carrying on to a sign-in the hub refuses.
+        if (data.device_scope === 'kitchen') {
+          setIsEnrolled(false);
+          setConnStatus('unauthorized');
+          wasConnectedRef.current = false;
+          setIsTestingConn(false);
+          return false;
+        }
+
         // If data.authorised is false (hub requires enrollment from this handset)
         if (data.authorised === false && !hasToken()) {
           setIsEnrolled(false);

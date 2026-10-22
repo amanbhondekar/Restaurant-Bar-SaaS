@@ -4,7 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { StaffTab } from '@/admin/StaffTab';
-import { checkName, checkPin, staffStatus, deviceStatus, staffSummary } from '@/admin/lib/staff';
+import { checkName, checkPin, staffStatus, deviceStatus, deviceKind, staffSummary } from '@/admin/lib/staff';
 import { fakeHub } from '../helpers/fakeHub';
 
 // Who may take money in this restaurant, and which devices may reach the hub. The wording rules
@@ -37,6 +37,13 @@ describe('staff wording and checks', () => {
   it('a device says whether it still counts', () => {
     expect(deviceStatus({ expired: false, expires_at: '2026-11-19T10:00:00Z' })).toMatchObject({ tone: 'green', label: 'Enrolled' });
     expect(deviceStatus({ expired: true })).toMatchObject({ tone: 'muted', label: 'Expired' });
+  });
+
+  it('a kitchen screen is named as one, and says what it cannot do; an ordinary handset is left unlabelled', () => {
+    expect(deviceKind({ scope: 'kitchen' })).toEqual({ label: 'Kitchen screen', note: expect.stringMatching(/Cannot take orders or touch bills/) });
+    expect(deviceKind({ scope: 'full' })).toEqual({ label: null, note: '' });
+    // Grants from before scopes existed carry none, and were handsets.
+    expect(deviceKind({})).toEqual({ label: null, note: '' });
   });
 
   it('the header counts people and devices, and names what still needs doing', () => {
@@ -171,6 +178,18 @@ describe('staff tab — devices', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Remove Asha handset' }));
     expect(hub.calls('DELETE /admin/devices/dev_1')).toHaveLength(1);
     expect(notify).toHaveBeenCalledWith('Asha handset can no longer reach the hub.');
+  });
+
+  it('tells a kitchen screen apart from a handset, so a tablet at the pass is not mistaken for a phone', async () => {
+    const barScreen = { ...DEVICE, id: 'dev_2', label: 'Bar screen', scope: 'kitchen' };
+    setup({ 'GET /admin/staff': answer({ devices: [DEVICE, barScreen] }) });
+
+    const bar = within(await screen.findByRole('listitem', { name: 'Bar screen' }));
+    expect(bar.getByText('Kitchen screen')).toBeInTheDocument();
+    expect(bar.getByText(/Cannot take orders or touch bills/)).toBeInTheDocument();
+
+    const handset = within(screen.getByRole('listitem', { name: 'Asha handset' }));
+    expect(handset.queryByText('Kitchen screen')).not.toBeInTheDocument();
   });
 
   it('rotating the code is confirmed, and warns that every device has to join again', async () => {

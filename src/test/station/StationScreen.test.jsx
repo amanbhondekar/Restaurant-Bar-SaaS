@@ -353,7 +353,7 @@ describe('station screen — connecting a tablet', () => {
     await userEvent.type(await screen.findByLabelText('Enrollment code'), 'kit123');
     await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
-    expect(hub.calls('POST /auth/device')[0].body).toEqual({ enrollment_code: 'KIT123', device_label: 'Bar screen' });
+    expect(hub.calls('POST /auth/device')[0].body).toEqual({ enrollment_code: 'KIT123', device_label: 'Bar screen', scope: 'kitchen' });
     expect(await screen.findByRole('article', { name: /Ticket 142/ })).toBeInTheDocument();
     expect(getToken()).toBe('d'.repeat(64));
   });
@@ -379,7 +379,7 @@ describe('station screen — connecting a tablet', () => {
     });
     render(<StationScreen station="bar" />);
     await screen.findByRole('heading', { level: 1, name: 'Bar' });
-    expect(hub.calls('POST /auth/device')[0].body.enrollment_code).toBe('SCAN1234');
+    expect(hub.calls('POST /auth/device')[0].body).toMatchObject({ enrollment_code: 'SCAN1234', scope: 'kitchen' });
     expect(window.location.hash).toBe('', 'the code is taken out of the address bar so it is not left in history');
   });
 

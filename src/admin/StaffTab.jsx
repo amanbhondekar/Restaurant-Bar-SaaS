@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { explainError, hubGet, hubSend } from './api';
 import { ConfirmDialog, EmptyState, Field, ListSkeleton, NativeSelect, Notice, TextInput } from './ui';
-import { ROLE_HINT, ROLE_LABEL, checkName, checkPin, deviceStatus, staffStatus, staffSummary } from './lib/staff';
+import { ROLE_HINT, ROLE_LABEL, checkName, checkPin, deviceKind, deviceStatus, staffStatus, staffSummary } from './lib/staff';
 
 // Who may take money in this restaurant, and which devices may talk to the hub (§4.4).
 //
@@ -269,14 +269,16 @@ export function StaffTab({ notify }) {
           <ul className="flex flex-col divide-y divide-border">
             {devices.map(device => {
               const status = deviceStatus(device);
+              const kind = deviceKind(device);
               return (
                 <li key={device.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5" aria-label={device.label}>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate font-semibold">{device.label}</span>
                       <Badge variant="outline" style={toneStyle(status.tone)}>{status.label}</Badge>
+                      {kind.label && <Badge variant="outline">{kind.label}</Badge>}
                     </div>
-                    <div className="text-sm text-muted-foreground">{status.detail}</div>
+                    <div className="text-sm text-muted-foreground">{[status.detail, kind.note].filter(Boolean).join(' · ')}</div>
                   </div>
                   <Button
                     variant="outline"

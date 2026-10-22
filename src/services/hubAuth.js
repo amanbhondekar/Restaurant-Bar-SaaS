@@ -94,13 +94,18 @@ export function hasToken() {
   return Boolean(getToken());
 }
 
-/** Exchange the code shown on the Kitchen Display for a device token. */
-export async function enrollWithCode(hubUrl, enrollmentCode, deviceLabel = 'Waiter handset') {
+/**
+ * Exchange the code shown on the Kitchen Display for a device token.
+ *
+ * `scope: 'kitchen'` is for a screen at the pass: the token it gets can show tickets and mark them
+ * done, and nothing else. Left out, the device is a full handset, as it always was.
+ */
+export async function enrollWithCode(hubUrl, enrollmentCode, deviceLabel = 'Waiter handset', { scope } = {}) {
   const base = (hubUrl || '').replace(/\/+$/, '');
   const res = await fetch(`${base}/auth/device`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enrollment_code: enrollmentCode, device_label: deviceLabel })
+    body: JSON.stringify({ enrollment_code: enrollmentCode, device_label: deviceLabel, ...(scope ? { scope } : {}) })
   });
 
   const body = await res.json().catch(() => ({}));

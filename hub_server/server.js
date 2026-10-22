@@ -42,7 +42,7 @@ import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
 attachHubProcessHandlers();
-import { deviceAuth, requireDevice, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
+import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -304,12 +304,20 @@ function requireFeature(feature) {
 // 0. POST /auth/device — exchange the KDS-displayed enrollment code for a token
 app.post('/auth/device', (req, res) => {
   const ip = req.socket.remoteAddress || 'unknown';
+  // A screen at the pass asks for 'kitchen'. Refused for anything unrecognised rather than quietly
+  // read as 'full': a typo should not hand a tablet more than it asked for. This check says nothing
+  // about the code, so it can come first without telling a guesser anything.
+  const scope = req.body?.scope ?? 'full';
+  if (!DEVICE_SCOPES.includes(scope)) {
+    return res.status(400).json({ error: 'Unknown device type.', code: 'INVALID_SCOPE' });
+  }
   const result = deviceAuth.enroll(
     req.body?.enrollment_code,
     req.body?.device_label || 'Handset',
     ip,
     // Evaluated only after the enrollment code checks out (see deviceAuth.enroll).
-    () => checkLimit(hubConfig.getEffectivePlan().plan, 'devices', deviceAuth.activeDeviceCount())
+    () => checkLimit(hubConfig.getEffectivePlan().plan, 'devices', deviceAuth.activeDeviceCount()),
+    scope
   );
 
   if (!result.ok) {
@@ -341,6 +349,10 @@ app.get('/pairing-info', (req, res) => {
     server_url: SERVER_URL,
     ws_url: `ws://${LAN_IP}:${PORT}/live`,
     authorised,
+    // The caller's OWN authority, so a tablet can tell it was enrolled as a kitchen screen: `authorised`
+    // is true for any live token, and a waiter app that took that for "I am a handset" would go on to
+    // a sign-in screen the hub then refuses. 'full' for the reception laptop; null with no live token.
+    device_scope: isLoopback(req) ? 'full' : deviceAuth.scopeFor(extractToken(req)),
     // Shown on the KDS screen itself so staff can read the code off the display.
     ...(isLoopback(req) ? { enrollment_code: deviceAuth.getEnrollmentCode(), pairing_code: info.pairing_code } : {})
   });
@@ -527,7 +539,7 @@ async function autoPrintKot(ticketIn, pairing, opts = {}) {
 }
 
 // 4. GET /orders/active — Kitchen display restores open tickets on connect/reload
-app.get('/orders/active', requireDevice, (req, res) => {
+app.get('/orders/active', requireKitchenDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const activeTickets = ticketStore.getActiveTickets(pairing.restaurant_id);
   res.json({
@@ -538,7 +550,7 @@ app.get('/orders/active', requireDevice, (req, res) => {
 });
 
 // 5. POST /orders/:id/ready — Kitchen marks ticket ready
-app.post('/orders/:id/ready', requireDevice, (req, res) => {
+app.post('/orders/:id/ready', requireKitchenDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const ticketId = req.params.id;
 
@@ -589,7 +601,7 @@ const ticketRefusalStatus = code => (code === 'NOT_FOUND' ? 404 : 409);
 
 // 5a. POST /orders/:id/stations/:station/ready — one station (hot / cold / bar) reports its part done.
 // The ticket becomes ready, and the waiter is told, only when every station that has lines on it has.
-app.post('/orders/:id/stations/:station/ready', requireDevice, (req, res) => {
+app.post('/orders/:id/stations/:station/ready', requireKitchenDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const station = String(req.params.station).toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(STATION_LABELS, station)) {
@@ -620,7 +632,7 @@ app.post('/orders/:id/stations/:station/ready', requireDevice, (req, res) => {
 // Course firing is M2 menu-depth, gated like the rest of it. Recall is deliberately NOT gated:
 // it undoes a mistake on a ticket that is already on the pass, and refusing that would leave a
 // kitchen stuck mid-service -- which is the one thing plan enforcement must never do.
-app.post('/orders/:id/fire', requireDevice, requireFeature(FEATURES.COURSE_FIRING), (req, res) => {
+app.post('/orders/:id/fire', requireKitchenDevice, requireFeature(FEATURES.COURSE_FIRING), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
   const result = ticketStore.fireCourse(req.params.id, pairing.restaurant_id, body.course);
@@ -637,7 +649,7 @@ app.post('/orders/:id/fire', requireDevice, requireFeature(FEATURES.COURSE_FIRIN
 });
 
 // 5d. POST /orders/:id/recall — a ticket marked ready goes back on the board (marked by mistake, or remake).
-app.post('/orders/:id/recall', requireDevice, (req, res) => {
+app.post('/orders/:id/recall', requireKitchenDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const result = ticketStore.recall(req.params.id, pairing.restaurant_id);
   if (!result.ok) {

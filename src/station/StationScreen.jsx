@@ -190,7 +190,7 @@ export function StationScreen({ station }) {
     const code = consumePendingEnrollmentCode();
     (async () => {
       if (code) {
-        const r = await enrollWithCode(base, code, `${STATION_LABEL[station]} screen`);
+        const r = await enrollWithCode(base, code, `${STATION_LABEL[station]} screen`, { scope: 'kitchen' });
         if (!r.ok) setEnrollError(r.error);
       }
       await load();
@@ -242,7 +242,7 @@ export function StationScreen({ station }) {
   const enroll = async code => {
     setEnrollBusy(true);
     setEnrollError('');
-    const r = await enrollWithCode(base, code, `${STATION_LABEL[station]} screen`);
+    const r = await enrollWithCode(base, code, `${STATION_LABEL[station]} screen`, { scope: 'kitchen' });
     setEnrollBusy(false);
     if (!r.ok) { setEnrollError(r.error); return; }
     setAuth('checking');
