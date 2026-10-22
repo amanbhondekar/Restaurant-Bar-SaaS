@@ -234,6 +234,30 @@ class HubConfig {
     return { ok: true };
   }
 
+  /**
+   * Finds a restaurant by the pairing code on its screen: `{ data, error }`, `data` being one row or null.
+   *
+   * A hub that has not yet bound itself to a restaurant has no restaurant of its own, and row-level security shows a
+   * login only its own, so reading the restaurants table finds nothing and a freshly provisioned restaurant could
+   * never be paired. The cloud answers through restaurant_for_pairing_code() (migration 015), which returns the few
+   * non-secret columns pairing needs. A cloud that has not run that migration is read the old way.
+   */
+  async lookupByPairingCode(cleanCode) {
+    const viaFunction = await this.cloud.rpc('restaurant_for_pairing_code', { p_code: cleanCode });
+    if (!viaFunction.error) {
+      const rows = Array.isArray(viaFunction.data) ? viaFunction.data : (viaFunction.data ? [viaFunction.data] : []);
+      return { data: rows[0] ?? null, error: null };
+    }
+    // PGRST202: PostgREST cannot find the function. 42883: Postgres says it does not exist.
+    if (viaFunction.error.code !== 'PGRST202' && viaFunction.error.code !== '42883') return { data: null, error: viaFunction.error };
+
+    return this.cloud
+      .from('restaurants')
+      .select('id, name, slug, city, pairing_code, plan, plan_status, trial_ends_at, current_period_end')
+      .ilike('pairing_code', cleanCode)
+      .maybeSingle();
+  }
+
   async pairWithCode(code) {
     if (!code || typeof code !== 'string') {
       return { success: false, error: 'Pairing code is required' };
@@ -246,11 +270,7 @@ class HubConfig {
 
     // 1. Try querying Supabase restaurants table first
     try {
-      const { data, error } = await this.cloud
-        .from('restaurants')
-        .select('*')
-        .ilike('pairing_code', cleanCode)
-        .maybeSingle();
+      const { data, error } = await this.lookupByPairingCode(cleanCode);
 
       cloudAnswered = !error;
 

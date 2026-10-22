@@ -25,12 +25,33 @@ const TENANT = {
   current_period_end: null
 };
 
-/** A cloud that holds `rows`, or refuses, or throws -- the three ways a lookup can end. */
-function fakeCloud({ rows = [], error = null, throws = false } = {}) {
+const MISSING_FUNCTION = { message: 'Could not find the function public.restaurant_for_pairing_code(p_code) in the schema cache', code: 'PGRST202' };
+
+/**
+ * A cloud that holds `rows`, or refuses, or throws -- the three ways a lookup can end.
+ *
+ * It answers the way a REAL cloud does, which is the point: a hub that has not yet bound itself to a restaurant
+ * cannot read the restaurants table (row-level security shows a login only its own restaurant), so it asks through
+ * restaurant_for_pairing_code() (migration 015). `noFunction` is a cloud that has not run that migration yet,
+ * where the function is missing and only a direct table read exists.
+ */
+function fakeCloud({ rows = [], error = null, rpcError = null, throws = false, noFunction = false } = {}) {
+  const asked = [];
+  const selected = [];
   return {
+    asked,
+    selected,
+    async rpc(name, args) {
+      asked.push({ name, args });
+      if (noFunction) return { data: null, error: MISSING_FUNCTION };
+      if (throws) throw new Error('getaddrinfo ENOTFOUND');
+      if (rpcError || error) return { data: null, error: rpcError || error };
+      const hit = rows.find(r => r.pairing_code.toUpperCase() === String(args.p_code).toUpperCase());
+      return { data: hit ? [hit] : [], error: null };   // a table-returning function answers with an array
+    },
     from() {
       return {
-        select: () => ({
+        select: cols => (selected.push(cols), {
           ilike: (_col, value) => ({
             maybeSingle: async () => {
               if (throws) throw new Error('getaddrinfo ENOTFOUND');
@@ -68,6 +89,43 @@ test('pairing: a code the cloud knows binds the hub to that tenant', async () =>
   assert.equal(result.restaurant.restaurant_id, TENANT.id);
   assert.equal(result.restaurant.name, 'Spice Garden Bistro');
   assert.equal(result.restaurant.paired, true);
+});
+
+test('pairing: it asks through the lookup function, with the code cleaned up, because an unbound hub cannot read the table', async () => {
+  configured(true);
+  const cloud = fakeCloud({ rows: [TENANT] });
+  reset(cloud);
+  const result = await hubConfig.pairWithCode('  spg-4821 ');
+  assert.equal(result.success, true);
+  assert.deepEqual(cloud.asked, [{ name: 'restaurant_for_pairing_code', args: { p_code: 'SPG-4821' } }]);
+});
+
+test('pairing: a cloud that has not run migration 015 yet is read the old way, so nothing that worked stops working', async () => {
+  configured(true);
+  const cloud = fakeCloud({ rows: [TENANT], noFunction: true });
+  reset(cloud);
+  const result = await hubConfig.pairWithCode('SPG-4821');
+  assert.equal(result.success, true);
+  assert.equal(cloud.asked.length, 1, 'it tried the function first');
+  // And the old read names its columns: the hash of the hub's secret is not for any login to read (migration 015).
+  assert.equal(cloud.selected.length, 1);
+  assert.doesNotMatch(cloud.selected[0], /[*]|hub_provisioning_secret_hash/);
+});
+
+test('pairing: a cloud with no function that also knows no such code still says so', async () => {
+  configured(true);
+  reset(fakeCloud({ rows: [TENANT], noFunction: true }));
+  const result = await hubConfig.pairWithCode('ZZZ-0000');
+  assert.equal(result.code, 'UNKNOWN_PAIRING_CODE');
+});
+
+test('pairing: any other failure of the lookup function is a cloud problem, not "no such code"', async () => {
+  configured(true);
+  // The table itself would answer, so a wrong fallback would PAIR; the right answer is to refuse.
+  reset(fakeCloud({ rows: [TENANT], rpcError: { message: 'permission denied for function restaurant_for_pairing_code', code: '42501' } }));
+  const result = await hubConfig.pairWithCode('SPG-4821');
+  assert.equal(result.success, false);
+  assert.equal(result.code, 'CLOUD_UNREACHABLE');
 });
 
 test('pairing: the code is matched however the operator types it', async () => {
