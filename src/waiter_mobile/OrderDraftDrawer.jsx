@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { usePos } from '../context/PosContext';
 import { Send, Trash2, Edit3, Wifi, Armchair, Zap, AlertTriangle, Loader } from 'lucide-react';
 import { VegBadge } from '../components/VegBadge';
@@ -15,6 +15,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
   const [sentTicket, setSentTicket] = useState(null);
   const [sendError, setSendError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const lastAttempt = useRef(null); // { key, id } of the order last sent and not yet answered
 
   const currency = currentRestaurant?.currency || '₹';
   const table = tables.find(t => t.id === selectedTableId);
@@ -41,10 +42,8 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
     setIsSubmitting(true);
 
     const targetHub = (hubUrl || 'http://localhost:4000').replace(/\/+$/, '');
-    const orderRequestId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
-    const orderPayload = {
-      order_request_id: orderRequestId,
+    const orderBody = {
       table_id: selectedTableId,
       table_name: table ? table.name : `Table ${selectedTableId}`,
       items: draftMenu.map(i => ({
@@ -69,6 +68,17 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
       waiter_id: waiter?.id || undefined
     };
 
+    // The hub remembers a request id for a minute and answers a repeat with the ticket it already made, so a
+    // waiter whose reply was lost on the WiFi cannot double-order by tapping again -- but only if the retry
+    // carries the SAME id. So an order keeps its id until it is answered; a draft that has changed since is a
+    // different order and gets a new one.
+    const key = JSON.stringify(orderBody);
+    const orderRequestId = lastAttempt.current?.key === key
+      ? lastAttempt.current.id
+      : 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    lastAttempt.current = { key, id: orderRequestId };
+    const orderPayload = { order_request_id: orderRequestId, ...orderBody };
+
     try {
       const res = await authFetch(`${targetHub}/orders`, {
         method: 'POST',
@@ -78,6 +88,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
 
       if (res.ok) {
         const data = await res.json();
+        lastAttempt.current = null;   // answered: the next order is a new one
         setSentTicket(data.ticket);
         setSent(true);
         onClearDraft();
