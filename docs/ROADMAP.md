@@ -7,7 +7,7 @@ this roadmap is scoped to any single tenant.
 
 Legend: ✅ shipped · 🟡 partial · ⬜ not started
 
-**Last reconciled against the code:** 2026-10-22 (M1 and M2 complete, M3 mostly
+**Last reconciled against the code:** 2026-10-23 (M1 and M2 complete, M3 mostly
 built, M4 mostly built). Between 2026-09-19 and 2026-10-13 the file lived on an
 unmerged `docs/roadmap` branch, so §6's maintenance rule could not be followed and
 the document fell a full two milestones behind. It is on the working line now, and
