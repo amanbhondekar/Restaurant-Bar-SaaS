@@ -99,7 +99,7 @@ describe('inventory tab — adding and editing', () => {
     await userEvent.type(within(dialog).getByLabelText('Warn me when it gets low'), '0.5');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add ingredient' }));
 
-    expect(hub.calls('POST /admin/inventory/items')[0].body).toEqual({ item: { name: 'Cashew', unit: 'kg', on_hand: 2.5, low_at: 0.5 } });
+    expect(hub.calls('POST /admin/inventory/items')[0].body).toEqual({ item: { name: 'Cashew', unit: 'kg', on_hand: 2.5, low_at: 0.5, par: 0, unit_cost: null } });
     expect(notify).toHaveBeenCalledWith('Cashew added.');
     expect(hub.calls('GET /admin/inventory').length).toBeGreaterThanOrEqual(2);
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -152,7 +152,7 @@ describe('inventory tab — adding and editing', () => {
     await userEvent.clear(low);
     await userEvent.type(low, '300');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    expect(hub.calls('PUT /admin/inventory/items/ing_p')[0].body).toEqual({ item: { name: 'Paneer', unit: 'g', low_at: 300 } });
+    expect(hub.calls('PUT /admin/inventory/items/ing_p')[0].body).toEqual({ item: { name: 'Paneer', unit: 'g', low_at: 300, par: 0, unit_cost: null } });
   });
 });
 

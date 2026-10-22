@@ -15,9 +15,21 @@ export function inventoryItemRow(restaurantId, item) {
     name: item.name,
     unit: item.unit,
     on_hand: Number(item.on_hand) || 0,
-    low_at: Number(item.low_at) || 0
+    low_at: Number(item.low_at) || 0,
+    // Migration 012. Explicit null for "not costed"/"not set", not an omitted key: the upsert must be able to
+    // clear a figure reception removed.
+    par: Number(item.par) > 0 ? Number(item.par) : null,
+    unit_cost: item.unit_cost === null || item.unit_cost === undefined ? null : Number(item.unit_cost)
   };
 }
+
+// A project that has not run migration 012 does not have these two columns. Stock must keep replicating
+// without them -- a cost is not worth stopping a delivery from reaching the cloud -- so the two are
+// dropped and the push retried, and a pull falls back to the older column list.
+const PRICING = ['par', 'unit_cost'];
+const withoutPricing = row => Object.fromEntries(Object.entries(row).filter(([k]) => !PRICING.includes(k)));
+export const isMissingPricingColumn = error =>
+  ['PGRST204', '42703'].includes(error?.code) && PRICING.some(c => new RegExp(`\\b${c}\\b`).test(error?.message ?? ''));
 
 export function recipeRow(restaurantId, recipe) {
   return {
@@ -37,7 +49,12 @@ export async function pushInventory(client, restaurantId, snapshot) {
 
   // Upserts before deletes, so an interrupted push never loses a row. Ingredients go first: a recipe
   // refers to them by id, so the cloud never holds a recipe whose ingredients it has not got yet.
-  await upsertAll(client, 'inventory_items', items);
+  try {
+    await upsertAll(client, 'inventory_items', items);
+  } catch (error) {
+    if (!isMissingPricingColumn(error)) throw error;
+    await upsertAll(client, 'inventory_items', items.map(withoutPricing));
+  }
   await upsertAll(client, 'recipes', recipes);
   const removedRecipes = await deleteStale(client, 'recipes', restaurantId, new Set(recipes.map(r => r.hub_ref)));
   const removedItems = await deleteStale(client, 'inventory_items', restaurantId, new Set(items.map(r => r.hub_ref)));
@@ -55,13 +72,21 @@ const check = ({ data, error }) => {
  * skipped: the hub has no id to give it, and inventing one would orphan any recipe that names it.
  */
 export async function pullInventory(client, restaurantId) {
-  const itemRows = check(await client.from('inventory_items').select('hub_ref, name, unit, on_hand, low_at').eq('restaurant_id', restaurantId));
+  let itemResult = await client.from('inventory_items').select('hub_ref, name, unit, on_hand, low_at, par, unit_cost').eq('restaurant_id', restaurantId);
+  if (isMissingPricingColumn(itemResult.error)) {
+    itemResult = await client.from('inventory_items').select('hub_ref, name, unit, on_hand, low_at').eq('restaurant_id', restaurantId);
+  }
+  const itemRows = check(itemResult);
   const recipeRows = check(await client.from('recipes').select('hub_ref, menu_item_ref, variant_ref, lines').eq('restaurant_id', restaurantId));
 
   return {
     items: itemRows
       .filter(r => r.hub_ref)
-      .map(r => ({ id: String(r.hub_ref), name: r.name, unit: r.unit, on_hand: Number(r.on_hand) || 0, low_at: Number(r.low_at) || 0 }))
+      .map(r => ({
+        id: String(r.hub_ref), name: r.name, unit: r.unit, on_hand: Number(r.on_hand) || 0, low_at: Number(r.low_at) || 0,
+        par: Number(r.par) > 0 ? Number(r.par) : 0,
+        unit_cost: r.unit_cost === null || r.unit_cost === undefined ? null : Number(r.unit_cost)
+      }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     recipes: recipeRows
       .filter(r => r.hub_ref)

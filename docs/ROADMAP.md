@@ -48,13 +48,13 @@ M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant �
 is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–011 are all unrun, because there are
+project or Razorpay keys: migrations 004–012 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1016 hub tests across 53 files** (pure rules plus live
+Automated coverage is **1043 hub tests across 54 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**477 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**515 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except Printers, Plan and the Kitchen Display (Menu and its item editor, Tables,
 Bookings, Cash, Stock, Kitchen, Staff, Feedback, ledger repair, guest ordering),
@@ -92,10 +92,10 @@ still verified by hand.
   resolved from `auth.uid()` via `staff_users`.
 - ✅ `provision_kitchen_staff` `SECURITY DEFINER` RPC, `pin_hash` via
   `pgcrypto`, per-tenant bcrypt provisioning secret.
-- ✅ Migrations `001`–`011` written: secure hub provisioning, online RLS and order
+- ✅ Migrations `001`–`012` written: secure hub provisioning, online RLS and order
   items, hub-authoritative menu and tables, subscription plan status, invoice and
   cash-up cloud replication, tenant provisioning, order course state, inventory,
-  subscriptions, reservations. **`004`–`011` have never been run against a real
+  subscriptions, reservations, ingredient costing. **`004`–`012` have never been run against a real
   Supabase project** (no credentials on the build machine); the cloud round trips
   are proven against fakes that keep their rows.
 - ✅ `plan` on `restaurants` (`starter` / `pro` / `enterprise`) **enforced in
@@ -247,13 +247,12 @@ still verified by hand.
   rotation and per-device revocation have all shipped (§4.4). What is left is
   that the console is reception-only -- there is no remote owner view -- and
   that a person's role is stored but not enforced (§4.7).
-- 🟡 **Inventory limits**: there is no costing, par level or reorder prompt.
-  Orders can now be cancelled (§4.3): before anything is cooked the ingredients
-  return to stock, exactly as that order took them; after, they stay used. The
-  waiter's modifier sheet does not grey out an extra whose ingredient has run
-  out; the order is refused with the ingredient named. Migration 009 is unrun and
-  its restore path is untested against a real project. Not plan-gated: whether
-  stock is a paid feature is a pricing call.
+- 🟡 **Inventory limits** (what is left): the waiter's modifier sheet does not
+  grey out an extra whose ingredient has run out -- the order is refused with the
+  ingredient named. Costing, stock-up-to levels, the shopping list (§4.2) and
+  order cancellation (§4.3) have shipped. Migrations 009 and 012 are unrun and
+  their restore paths are untested against a real project. Not plan-gated:
+  whether stock is a paid feature is a pricing call.
 - ✅ **Station screens are role-scoped**: a station tablet enrols with a
   `kitchen` device token, which can read the board and mark tickets and stations
   done and is refused everything else -- placing orders, every bill route, staff,
@@ -348,7 +347,14 @@ milestones (§5) when a theme is pulled into a release.
   the refusal arrives with the order, naming the ingredient. An extra belongs to
   the recipe for the size ordered, so a dish with a recipe per size sets it per
   size.
-- ⬜ Costing, par levels and reorder prompts.
+- ✅ Costing, stock-up-to levels and a shopping list (migration 012, optional columns).
+  An uncosted ingredient is an UNKNOWN cost, not a small one: a recipe's cost says
+  "at least" and gives no percentage until every ingredient is costed. The list is
+  everything at or below its warning level, furthest below first, suggesting how
+  much brings it back to its stock-up-to level (and inventing no quantity where none
+  is set); it is sent as a WhatsApp message to whichever supplier reception picks.
+  A project that has not run 012 keeps replicating stock without the two figures.
+  Not done: day-part prices in the food-cost share, and purchase-order records.
 
 ### 4.3 Kitchen operations  🟡
 - ✅ Multi-station routing, course firing / hold-and-fire, prep-time

@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { History, Loader2, Package, Pencil, Plus, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Copy, History, Loader2, MessageCircle, Package, Pencil, Plus, Trash2 } from 'lucide-react';
+import { cn } from 'cn';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { explainError, hubGet, hubSend } from './api';
 import { ConfirmDialog, EmptyState, Field, ListSkeleton, NativeSelect, Notice, TextInput } from './ui';
 import {
-  ADJUSTMENTS, LEVELS, UNIT_NAMES, afterAdjustment, blankIngredient, blankLine, describeMovement, dishesOutOfStock,
-  formatQty, ingredientToForm, outOfStockLine, recipeSubjects, recipeSummary, recipeToExtras, recipeToLines, subjectKey, summaryLine,
+  ADJUSTMENTS, LEVELS, UNIT_NAMES, afterAdjustment, blankIngredient, blankLine, costLine, describeMovement, dishesOutOfStock,
+  formatQty, ingredientToForm, outOfStockLine, pricingNote, reorderText, reorderTotalLine, rupees, recipeSubjects, recipeSummary, recipeToExtras, recipeToLines, subjectKey, summaryLine,
   validateAdjustment, validateIngredientForm, validateRecipe
 } from './lib/inventory';
 import { formatWhen } from './lib/plan';
@@ -88,6 +89,14 @@ function IngredientDialog({ editing, ingredients, onSave, onCancel, busy, server
       <Field label="Warn me when it gets low" htmlFor="ing-low" error={err('low_at')} hint="Optional. Leave empty for no warning.">
         <TextInput id="ing-low" inputMode="decimal" value={form.low_at} onChange={set('low_at')} invalid={Boolean(err('low_at'))} />
       </Field>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={`Stock up to (${form.unit})`} htmlFor="ing-par" error={err('par')} hint="Optional. What a delivery should bring it back to; the shopping list uses it.">
+          <TextInput id="ing-par" inputMode="decimal" value={form.par} onChange={set('par')} invalid={Boolean(err('par'))} />
+        </Field>
+        <Field label={`Cost per ${form.unit} (₹)`} htmlFor="ing-cost" error={err('unit_cost')} hint="Optional. Lets a recipe show what a portion costs.">
+          <TextInput id="ing-cost" inputMode="decimal" value={form.unit_cost} onChange={set('unit_cost')} invalid={Boolean(err('unit_cost'))} />
+        </Field>
+      </div>
       {serverError && <Notice tone="error">{serverError}</Notice>}
     </FormDialog>
   );
@@ -343,6 +352,16 @@ export function InventoryTab({ menu, notify }) {
     }
   };
 
+  // The list as plain text, for pasting into a message to a supplier.
+  const copyList = async reorder => {
+    try {
+      await navigator.clipboard.writeText(reorderText(reorder, new Date().toLocaleDateString('en-IN')));
+      notify('Shopping list copied.');
+    } catch {
+      notify('Could not copy. Use Send on WhatsApp instead.');
+    }
+  };
+
   if (error && !data) {
     return <Notice tone="error" title="Could not load stock" action={<Button className="h-10" onClick={load}>Try again</Button>}>{explainError(error)}</Notice>;
   }
@@ -358,7 +377,7 @@ export function InventoryTab({ menu, notify }) {
           <div className="mt-1 text-sm" aria-live="polite">{summaryLine(data.summary)}</div>
         </div>
         <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
-          {[['stock', 'Stock'], ['recipes', 'Recipes']].map(([id, label]) => (
+          {[['stock', 'Stock'], ['recipes', 'Recipes'], ['reorder', data.summary?.reorder ? `Reorder (${data.summary.reorder})` : 'Reorder']].map(([id, label]) => (
             <Button key={id} type="button" variant={view === id ? 'default' : 'outline'} className="h-10" aria-pressed={view === id} onClick={() => setView(id)}>{label}</Button>
           ))}
         </div>
@@ -392,6 +411,7 @@ export function InventoryTab({ menu, notify }) {
                     <div className="text-sm tabular-nums text-muted-foreground">
                       {formatQty(i.on_hand, i.unit)} on hand{i.low_at > 0 ? ` · warns at ${formatQty(i.low_at, i.unit)}` : ''}
                     </div>
+                    {pricingNote(i) && <div className="text-xs tabular-nums text-muted-foreground">{pricingNote(i)}</div>}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" className="h-9" onClick={() => setDialog({ type: 'adjust', kind: 'receive', ingredient: i })}>Delivery</Button>
@@ -404,6 +424,48 @@ export function InventoryTab({ menu, notify }) {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+      )}
+
+      {view === 'reorder' && (
+        <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-labelledby="reorder-h">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 id="reorder-h" className="typography-title-md">Shopping list</h2>
+              <p className="text-xs text-muted-foreground">Everything at or below its warning level, the emptiest first.</p>
+            </div>
+            {data.reorder?.items?.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" className="h-10" onClick={() => copyList(data.reorder)}><Copy className="size-4" aria-hidden="true" />Copy list</Button>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(reorderText(data.reorder, new Date().toLocaleDateString('en-IN')))}`}
+                  target="_blank" rel="noreferrer"
+                  className={cn(buttonVariants({ variant: 'outline' }), 'h-10')}
+                ><MessageCircle className="size-4" aria-hidden="true" />Send on WhatsApp</a>
+              </div>
+            )}
+          </div>
+          {(data.reorder?.items ?? []).length === 0 ? (
+            <EmptyState icon={Package} title="Nothing to buy">Everything is above its warning level. Set a warning level on an ingredient and it appears here when it runs low.</EmptyState>
+          ) : (
+            <>
+              <ul className="flex flex-col divide-y divide-border">
+                {data.reorder.items.map(i => (
+                  <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5" aria-label={i.name}>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2"><span className="truncate font-semibold">{i.name}</span>{levelBadge(i.level)}</div>
+                      <div className="text-sm tabular-nums text-muted-foreground">{formatQty(i.on_hand, i.unit)} on hand · warns at {formatQty(i.low_at, i.unit)}</div>
+                    </div>
+                    <div className="text-right text-sm tabular-nums">
+                      {i.suggested === null ? <span className="text-muted-foreground">Set a stock-up-to level</span> : <strong>Buy {formatQty(i.suggested, i.unit)}</strong>}
+                      {i.estimated_cost !== null && <div className="text-xs text-muted-foreground">about {rupees(i.estimated_cost)}</div>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm text-muted-foreground" aria-live="polite">{reorderTotalLine(data.reorder)}</p>
+            </>
           )}
         </section>
       )}
@@ -431,6 +493,7 @@ export function InventoryTab({ menu, notify }) {
                         {!subject && <Badge variant="outline">Not on the menu</Badge>}
                       </div>
                       <div className="text-sm text-muted-foreground">{recipeSummary(r, ingredients, subject?.extras)}</div>
+                      {costLine(r, subject) && <div className="text-xs text-muted-foreground">{costLine(r, subject)}</div>}
                     </div>
                     {subject && <Button variant="outline" className="h-9" aria-label={`Edit the recipe for ${label}`} onClick={() => setDialog({ type: 'recipe', preset: subject })}><Pencil className="size-4" aria-hidden="true" />Edit</Button>}
                   </li>

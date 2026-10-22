@@ -60,7 +60,7 @@ test('store: a burst of changes leaves the file holding the last one, not an old
 test('store: no file yet is an empty inventory, not an error', async () => {
   const { dir, store } = fresh();
   assert.equal(store.isEmpty(), true);
-  assert.deepEqual(store.snapshot(RID).summary, { ingredients: 0, out: 0, low: 0, recipes: 0 });
+  assert.deepEqual(store.snapshot(RID).summary, { ingredients: 0, out: 0, low: 0, reorder: 0, recipes: 0 });
   await store.flush();
   cleanup(dir);
 });
@@ -234,7 +234,7 @@ test('snapshot: ingredients carry their level, with counts for the header', asyn
   ok(store.adjust(RID, ing.id, { kind: 'count', qty: 150 }));
   const snap = store.snapshot(RID);
   assert.equal(snap.items[0].level, 'low', '150 is at or under the 200 level');
-  assert.deepEqual(snap.summary, { ingredients: 1, out: 0, low: 1, recipes: 1 });
+  assert.deepEqual(snap.summary, { ingredients: 1, out: 0, low: 1, reorder: 1, recipes: 1 });
   ok(store.adjust(RID, ing.id, { kind: 'count', qty: 0 }));
   assert.equal(store.snapshot(RID).items[0].level, 'out');
   await store.flush();

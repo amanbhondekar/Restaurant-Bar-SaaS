@@ -25,6 +25,14 @@ const isQty = n => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= 
 /** The same, but zero is allowed (a stock count of nothing; a "low at" that never warns). */
 const isLevel = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= LIMITS.quantity && r3(n) === n;
 
+// What one unit of an ingredient costs, in rupees: up to four decimals (a gram of saffron is not a whole
+// rupee), never negative. `null` is "not costed", which is NOT the same as free: a dish with an uncosted
+// ingredient has an unknown cost, not a smaller one.
+const r4 = n => Math.round(n * 10000) / 10000;
+export const MAX_UNIT_COST = 1e6;
+const isCost = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= MAX_UNIT_COST && r4(n) === n;
+const costOrNull = n => (isCost(Number(n)) && n !== null && n !== '' ? Number(n) : null);
+
 const norm = s => String(s ?? '').trim().toLowerCase();
 // A recipe line is an ingredient and a quantity. A line may also name a modifier choice on the dish
 // (`group_id` + `option_id`): it is then what ONE portion with that choice adds on top of the dish --
@@ -74,7 +82,9 @@ export function normalizeState(raw, restaurantId = null) {
     .map(i => ({
       id: String(i.id), name: String(i.name).trim(), unit: i.unit,
       on_hand: isLevel(Number(i.on_hand)) ? Number(i.on_hand) : Math.max(0, r3(Number(i.on_hand) || 0)),
-      low_at: isLevel(Number(i.low_at)) ? Number(i.low_at) : 0
+      low_at: isLevel(Number(i.low_at)) ? Number(i.low_at) : 0,
+      par: isLevel(Number(i.par)) ? Number(i.par) : 0,
+      unit_cost: costOrNull(i.unit_cost)
     }));
   const known = new Set(items.map(i => i.id));
   const recipes = (Array.isArray(s.recipes) ? s.recipes : [])
@@ -119,6 +129,16 @@ export function validateIngredientInput(input, { partial = false } = {}) {
     if (!isLevel(input.low_at)) errors.push({ field: 'low_at', message: 'low-stock level must be zero or more, with at most 3 decimals' });
     else out.low_at = input.low_at;
   }
+  // "Stock up to": what a delivery should bring it back to. Zero means no level is set.
+  if (has('par')) {
+    if (!isLevel(input.par)) errors.push({ field: 'par', message: 'stock-up-to level must be zero or more, with at most 3 decimals' });
+    else out.par = input.par;
+  }
+  // Cost of one unit. null clears it.
+  if (has('unit_cost')) {
+    if (input.unit_cost !== null && !isCost(input.unit_cost)) errors.push({ field: 'unit_cost', message: `cost must be zero or more, at most ${MAX_UNIT_COST.toLocaleString('en-IN')}, with at most 4 decimals` });
+    else out.unit_cost = input.unit_cost;
+  }
   // Opening stock is accepted when an ingredient is created, never on an edit: changing what is on
   // hand has to go through an adjustment so the movement log says why.
   if (!partial && has('on_hand')) {
@@ -127,6 +147,12 @@ export function validateIngredientInput(input, { partial = false } = {}) {
   }
   return errors.length ? invalid(errors) : { ok: true, item: out };
 }
+
+// A level to stock up TO has to be above the level that warns, or the shopping list would ask for nothing.
+// Checked on the whole ingredient, because either figure can be edited alone.
+const parTooLow = item => (item.par > 0 && item.par <= item.low_at
+  ? { field: 'par', message: 'the stock-up-to level must be more than the low-stock level, or leave it empty' }
+  : null);
 
 const usedBy = (state, ingredientId) => state.recipes.filter(r => r.lines.some(l => l.inventory_item_id === ingredientId));
 
@@ -153,7 +179,12 @@ export function addIngredient(state, input, ctx = {}) {
   if (state.items.some(i => norm(i.name) === norm(v.item.name))) {
     return fail(409, 'DUPLICATE_INGREDIENT', `"${v.item.name}" already exists.`);
   }
-  const item = { id: newIngredientId(), name: v.item.name, unit: v.item.unit, on_hand: v.item.on_hand ?? 0, low_at: v.item.low_at ?? 0 };
+  const item = {
+    id: newIngredientId(), name: v.item.name, unit: v.item.unit, on_hand: v.item.on_hand ?? 0, low_at: v.item.low_at ?? 0,
+    par: v.item.par ?? 0, unit_cost: v.item.unit_cost ?? null
+  };
+  const parProblem = parTooLow(item);
+  if (parProblem) return invalid([parProblem]);
   const moves = item.on_hand > 0 ? [movement(item, item.on_hand, 'opening', ctx)] : [];
   return { ok: true, data: bump(state, { items: [...state.items, item], movements: appendMovements(state, moves) }), meta: { item } };
 }
@@ -174,6 +205,8 @@ export function updateIngredient(state, id, input) {
     return fail(409, 'DUPLICATE_INGREDIENT', `"${v.item.name}" already exists.`);
   }
   const item = { ...current, ...v.item };
+  const parProblem = parTooLow(item);
+  if (parProblem) return invalid([parProblem]);
   return { ok: true, data: bump(state, { items: state.items.map((i, n) => (n === idx ? item : i)) }), meta: { item } };
 }
 
@@ -459,6 +492,63 @@ export function refusalFor(shortages, lines) {
   return { error: `Not enough stock for this order. ${shown}${more}.`, code: 'OUT_OF_STOCK', details };
 }
 
+// --- costing --------------------------------------------------------------------------------------
+
+/**
+ * What one portion costs, from the ingredients' costs. `complete` is false when ANY ingredient on the
+ * list has no cost: the figure is then a floor, not a cost, and callers must say so rather than show it
+ * as the cost. The extras are costed separately -- what a choice adds -- and never folded into the dish.
+ */
+export function recipeCost(state, recipe) {
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  const tally = lines => {
+    let cost = 0;
+    let complete = true;
+    for (const l of lines) {
+      const ing = byId.get(l.inventory_item_id);
+      if (!ing || ing.unit_cost === null || ing.unit_cost === undefined) { complete = false; continue; }
+      cost += l.qty * ing.unit_cost;
+    }
+    return { cost: Math.round(cost * 100) / 100, complete };
+  };
+  const base = tally((recipe.lines || []).filter(l => !isOptionLine(l)));
+  const extras = {};
+  for (const l of (recipe.lines || []).filter(isOptionLine)) {
+    const key = optionKey(l.group_id, l.option_id);
+    (extras[key] ||= []).push(l);
+  }
+  return { ...base, extras: Object.fromEntries(Object.entries(extras).map(([k, lines]) => [k, tally(lines)])) };
+}
+
+// --- the shopping list ----------------------------------------------------------------------------
+
+/**
+ * What to buy: everything at or below its warning level, the emptiest first. With a stock-up-to level set,
+ * the suggestion is how much brings it back there; without one the item is still listed, because the
+ * warning was set, and reception decides how much. An estimated cost appears only where the ingredient
+ * has a cost, and the total says how many items it leaves out.
+ */
+export function reorderList(state) {
+  // Furthest below its warning level first: what is out (nothing on hand) is at 0%, so it leads.
+  const items = state.items
+    .filter(i => levelOf(i) !== 'ok')
+    .map(i => {
+      const suggested = i.par > 0 ? r3(Math.max(0, i.par - i.on_hand)) : null;
+      return {
+        id: i.id, name: i.name, unit: i.unit, on_hand: i.on_hand, low_at: i.low_at, par: i.par || 0, unit_cost: i.unit_cost ?? null,
+        level: levelOf(i), suggested,
+        estimated_cost: suggested !== null && i.unit_cost !== null && i.unit_cost !== undefined ? Math.round(suggested * i.unit_cost * 100) / 100 : null
+      };
+    })
+    .sort((a, b) => (a.on_hand / (a.low_at || 1)) - (b.on_hand / (b.low_at || 1)) || a.name.localeCompare(b.name));
+  const priced = items.filter(i => i.estimated_cost !== null);
+  return {
+    items,
+    estimated_total: Math.round(priced.reduce((s, i) => s + i.estimated_cost, 0) * 100) / 100,
+    unpriced: items.length - priced.length
+  };
+}
+
 /** Counts for the console's header. */
 export function summarize(state) {
   const levels = state.items.map(levelOf);
@@ -466,6 +556,8 @@ export function summarize(state) {
     ingredients: state.items.length,
     out: levels.filter(l => l === 'out').length,
     low: levels.filter(l => l === 'low').length,
+    // Everything on the shopping list: out or low.
+    reorder: levels.filter(l => l !== 'ok').length,
     recipes: state.recipes.length
   };
 }

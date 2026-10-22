@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   emptyState, normalizeState, addIngredient, updateIngredient, deleteIngredient, adjustStock, setRecipe,
-  shortagesFor, consume, restock, stockOutKeys, overlayMenuItems, summarize, levelOf
+  shortagesFor, consume, restock, recipeCost, reorderList, stockOutKeys, overlayMenuItems, summarize, levelOf
 } from './inventory.js';
 
 // The hub's stock and recipes on disk (hub_server/data/inventory.json), around the pure rules in
@@ -135,7 +135,9 @@ export class InventoryStore {
       restaurant_id: s.restaurant_id,
       revision: s.revision,
       items: s.items.map(i => ({ ...i, level: levelOf(i) })),
-      recipes: s.recipes,
+      // Each recipe carries what a portion costs (and what each extra adds), and the list carries what to buy.
+      recipes: s.recipes.map(r => ({ ...r, cost: recipeCost(s, r) })),
+      reorder: reorderList(s),
       summary: summarize(s)
     };
   }

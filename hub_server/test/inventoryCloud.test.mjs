@@ -96,7 +96,7 @@ const quiet = async fn => { const w = console.warn, l = console.log, e = console
 // --- mapping -------------------------------------------------------------------------------
 
 test('rows: an ingredient and a recipe become the columns migration 009 defines', () => {
-  assert.deepEqual(inventoryItemRow(RID, ING[0]), { restaurant_id: RID, hub_ref: 'ing_paneer', name: 'Paneer', unit: 'g', on_hand: 800, low_at: 200 });
+  assert.deepEqual(inventoryItemRow(RID, ING[0]), { restaurant_id: RID, hub_ref: 'ing_paneer', name: 'Paneer', unit: 'g', on_hand: 800, low_at: 200, par: null, unit_cost: null });
   assert.deepEqual(recipeRow(RID, REC[1]), {
     restaurant_id: RID, hub_ref: 'rec_2', menu_item_ref: 'biryani', variant_ref: 'full', lines: [{ inventory_item_id: 'ing_onion', qty: 0.4 }]
   });

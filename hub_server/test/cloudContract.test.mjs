@@ -110,6 +110,7 @@ test('menu, category and table rows fit their tables', () => {
 
 test('stock and recipe rows fit, including a recipe that carries an extra', () => {
   fits('inventory_items', inventoryItemRow(RID, { id: 'ing_1', name: 'Cheese', unit: 'g', on_hand: 100, low_at: 10 }));
+  fits('inventory_items', inventoryItemRow(RID, { id: 'ing_1', name: 'Cheese', unit: 'g', on_hand: 100, low_at: 10, par: 500, unit_cost: 0.45 }));
   fits('recipes', recipeRow(RID, { id: 'rec_1', item_id: 'm1', variant_id: null, lines: [{ inventory_item_id: 'ing_1', qty: 20, group_id: 'g', option_id: 'o' }] }));
 });
 
@@ -135,6 +136,7 @@ test('every catalog the hub upserts on (restaurant_id, hub_ref) has a unique ind
 test('every column the hub names when reading the cloud exists', () => {
   const named = [
     ['inventory_items', 'hub_ref, name, unit, on_hand, low_at'],
+    ['inventory_items', 'par, unit_cost'],
     ['recipes', 'hub_ref, menu_item_ref, variant_ref, lines'],
     ['restaurants', 'plan, plan_status, trial_ends_at, current_period_end'],
     ['staff_users', 'id, restaurant_id, role']
@@ -156,6 +158,7 @@ test('what the source asks the cloud for is what this test checks: no read goes 
     'catalogSync.js: id, hub_ref',
     'hubConfig.js: plan, plan_status, trial_ends_at, current_period_end',
     'inventorySync.js: hub_ref, name, unit, on_hand, low_at',
+    'inventorySync.js: hub_ref, name, unit, on_hand, low_at, par, unit_cost',
     'inventorySync.js: hub_ref, menu_item_ref, variant_ref, lines',
     'supabaseClient.js: id, restaurant_id, role',
     'invoiceSync.js: id', 'reconciliationSync.js: id', 'syncQueue.js: id',

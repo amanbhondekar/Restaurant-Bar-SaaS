@@ -68,7 +68,7 @@ test('inventory: an ingredient and a recipe can be set up, and the console sees 
   assert.equal(snap.success, true);
   assert.deepEqual(snap.items.map(i => [i.name, i.on_hand, i.level]), [['Paneer', 1000, 'ok'], ['Onion', 2, 'ok']]);
   assert.deepEqual(snap.recipes.map(r => [r.item_name, r.on_menu]).sort(), [['Dal Tadka', true], ['Paneer Tikka', true]]);
-  assert.deepEqual(snap.summary, { ingredients: 2, out: 0, low: 0, recipes: 2 });
+  assert.deepEqual(snap.summary, { ingredients: 2, out: 0, low: 0, reorder: 0, recipes: 2 });
   assert.ok(snap.units.includes('g'));
 
   assert.equal((await menuItem('paneer')).stock_out, undefined, 'plenty on hand: nothing flagged');

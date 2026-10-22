@@ -59,11 +59,11 @@ describe('ingredient form', () => {
   it('a name and a unit are enough: stock and warning level are optional and default to zero', () => {
     const { errors, payload } = validateIngredientForm(form());
     expect(errors).toEqual({});
-    expect(payload).toEqual({ name: 'Paneer', unit: 'g', low_at: 0, on_hand: 0 });
+    expect(payload).toEqual({ name: 'Paneer', unit: 'g', low_at: 0, par: 0, unit_cost: null, on_hand: 0 });
   });
   it('sends what was typed, trimmed', () => {
     const { payload } = validateIngredientForm(form({ name: '  Paneer  ', on_hand: '1000', low_at: '200' }));
-    expect(payload).toEqual({ name: 'Paneer', unit: 'g', low_at: 200, on_hand: 1000 });
+    expect(payload).toEqual({ name: 'Paneer', unit: 'g', low_at: 200, par: 0, unit_cost: null, on_hand: 1000 });
   });
   it('reports every problem at once, beside the right field', () => {
     const { errors } = validateIngredientForm(form({ name: '  ', on_hand: '-4', low_at: 'x' }));
@@ -82,7 +82,7 @@ describe('ingredient form', () => {
     expect('on_hand' in payload).toBe(false);
   });
   it('opens an existing ingredient with its warning level filled in and no stock field to edit', () => {
-    expect(ingredientToForm({ name: 'Paneer', unit: 'g', on_hand: 800, low_at: 200 })).toEqual({ name: 'Paneer', unit: 'g', on_hand: '', low_at: '200' });
+    expect(ingredientToForm({ name: 'Paneer', unit: 'g', on_hand: 800, low_at: 200 })).toEqual({ name: 'Paneer', unit: 'g', on_hand: '', low_at: '200', par: '', unit_cost: '' });
     expect(ingredientToForm({ name: 'Salt', unit: 'g', on_hand: 5, low_at: 0 }).low_at).toBe('');
   });
 });

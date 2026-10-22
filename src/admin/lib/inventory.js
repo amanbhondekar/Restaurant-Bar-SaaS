@@ -37,9 +37,33 @@ export function parseQuantity(text, { allowZero = false } = {}) {
 
 // --- ingredients --------------------------------------------------------------------------------
 
-export const blankIngredient = () => ({ name: '', unit: 'g', on_hand: '', low_at: '' });
+/** ₹1,080 or ₹49.50: Indian digit grouping, up to two decimals, none when whole. */
+export const rupees = n => (Number.isFinite(Number(n)) ? `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '');
 
-export const ingredientToForm = ing => ({ name: ing.name, unit: ing.unit, on_hand: '', low_at: ing.low_at ? String(ing.low_at) : '' });
+const MAX_COST = 1e6;
+
+/**
+ * What one unit costs, typed into a box. Empty is allowed and means "not costed" (null) -- which is NOT
+ * the same as free (0), because a dish with an uncosted ingredient has an unknown cost, not a smaller one.
+ */
+export function parseCost(text) {
+  const raw = String(text ?? '').trim().replace(/^₹\s*/, '');
+  if (raw === '') return { ok: true, value: null };
+  if (!/^\d+(\.\d+)?$/.test(raw)) return { ok: false, error: 'Use digits only, with a point for paise (for example 0.45).' };
+  if ((raw.split('.')[1] || '').length > 4) return { ok: false, error: 'At most 4 decimal places.' };
+  const value = Number(raw);
+  if (value > MAX_COST) return { ok: false, error: 'That is more than the hub accepts.' };
+  return { ok: true, value };
+}
+
+export const blankIngredient = () => ({ name: '', unit: 'g', on_hand: '', low_at: '', par: '', unit_cost: '' });
+
+export const ingredientToForm = ing => ({
+  name: ing.name, unit: ing.unit, on_hand: '',
+  low_at: ing.low_at ? String(ing.low_at) : '',
+  par: ing.par ? String(ing.par) : '',
+  unit_cost: ing.unit_cost === null || ing.unit_cost === undefined ? '' : String(ing.unit_cost)
+});
 
 /**
  * Check the add/edit form. `editing` ingredients cannot change what is on hand here (that is a delivery,
@@ -57,11 +81,28 @@ export function validateIngredientForm(form, { editing = false, others = [] } = 
   const low = form.low_at.trim() === '' ? { ok: true, value: 0 } : parseQuantity(form.low_at, { allowZero: true });
   if (!low.ok) errors.low_at = low.error; else payload.low_at = low.value;
 
+  const par = String(form.par ?? '').trim() === '' ? { ok: true, value: 0 } : parseQuantity(form.par, { allowZero: true });
+  if (!par.ok) errors.par = par.error;
+  else if (par.value > 0 && !errors.low_at && par.value <= (payload.low_at ?? 0)) errors.par = 'Must be more than the warning level, or leave it empty.';
+  else payload.par = par.value;
+
+  // Sent on an edit too, as null when emptied: that is how a cost is taken away again.
+  const cost = parseCost(form.unit_cost);
+  if (!cost.ok) errors.unit_cost = cost.error; else payload.unit_cost = cost.value;
+
   if (!editing) {
     const have = form.on_hand.trim() === '' ? { ok: true, value: 0 } : parseQuantity(form.on_hand, { allowZero: true });
     if (!have.ok) errors.on_hand = have.error; else payload.on_hand = have.value;
   }
   return { errors, payload };
+}
+
+/** The figures under an ingredient's name: "₹90 per kg · stocks up to 10 kg". Empty when none are set. */
+export function pricingNote(ing) {
+  const parts = [];
+  if (ing.unit_cost !== null && ing.unit_cost !== undefined) parts.push(`${rupees(ing.unit_cost)} per ${ing.unit}`);
+  if (ing.par > 0) parts.push(`stocks up to ${formatQty(ing.par, ing.unit)}`);
+  return parts.join(' · ');
 }
 
 // --- adjustments --------------------------------------------------------------------------------
@@ -130,11 +171,11 @@ export function recipeSubjects(menuItems) {
     const sizes = Array.isArray(item.variants) ? item.variants : [];
     const extras = dishExtras(item);
     if (sizes.length === 0) {
-      out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: item.name, extras });
+      out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: item.name, extras, price: Number(item.price) || null });
       continue;
     }
-    out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: `${item.name} · every size`, extras });
-    for (const v of sizes) out.push({ key: subjectKey(item.id, v.id), item_id: String(item.id), variant_id: String(v.id), label: `${item.name} · ${v.label}`, extras });
+    out.push({ key: subjectKey(item.id, null), item_id: String(item.id), variant_id: null, label: `${item.name} · every size`, extras, price: null });
+    for (const v of sizes) out.push({ key: subjectKey(item.id, v.id), item_id: String(item.id), variant_id: String(v.id), label: `${item.name} · ${v.label}`, extras, price: Number(v.price) || null });
   }
   return out;
 }
@@ -224,6 +265,51 @@ export function validateRecipe(lines, extras, offered, ingredients) {
   const errors = { ...base.errors };
   if (total > 30 && !errors.form) errors.form = 'A recipe can list at most 30 ingredients.';
   return { errors, extraErrors, payload };
+}
+
+/**
+ * The line under a recipe: what a portion costs and what share of the price that is. Honest about a figure
+ * that is only part of the truth: with an uncosted ingredient it says "at least", and gives no percentage,
+ * because a food-cost share built on a missing cost would flatter the dish.
+ */
+export function costLine(recipe, subject) {
+  const c = recipe?.cost;
+  if (!c) return '';
+  const anyCost = c.cost > 0 || c.complete;
+  if (!anyCost) return 'No costs entered for these ingredients yet.';
+  const parts = [];
+  if (c.complete) {
+    parts.push(`Costs ${rupees(c.cost)} a portion`);
+    if (subject?.price) parts.push(`${Math.round((c.cost / subject.price) * 100)}% of the ${rupees(subject.price)} price`);
+  } else {
+    parts.push(`At least ${rupees(c.cost)} a portion (some ingredients have no cost)`);
+  }
+  const named = new Map((subject?.extras ?? []).map(x => [x.key, x.label]));
+  for (const [key, e] of Object.entries(c.extras ?? {})) {
+    parts.push(`${named.get(key) ?? key.split('|')[1]} adds ${e.complete ? '' : 'at least '}${rupees(e.cost)}`);
+  }
+  return parts.join(' · ');
+}
+
+/** The shopping list as text a supplier can read: what to buy, how much, and what it should cost. */
+export function reorderText(reorder, dateText = '') {
+  const items = reorder?.items ?? [];
+  if (items.length === 0) return '';
+  const lines = items.map(i => {
+    const qty = i.suggested === null || i.suggested === undefined ? '(how much?)' : formatQty(i.suggested, i.unit);
+    return `- ${i.name}: ${qty}`;
+  });
+  return [`Shopping list${dateText ? ` — ${dateText}` : ''}`, ...lines].join('\n');
+}
+
+/** The line under the list: how much it should come to, and what that leaves out. */
+export function reorderTotalLine(reorder) {
+  const items = reorder?.items ?? [];
+  if (items.length === 0) return '';
+  const priced = items.length - (reorder.unpriced ?? 0);
+  if (priced === 0) return 'Add a cost and a stock-up-to level to an ingredient to see what a delivery should come to.';
+  const left = reorder.unpriced > 0 ? `, not counting the ${reorder.unpriced} without a cost or a quantity` : '';
+  return `About ${rupees(reorder.estimated_total)} for ${priced} of ${items.length} ${items.length === 1 ? 'item' : 'items'}${left}.`;
 }
 
 // --- reading the menu for stock-outs ------------------------------------------------------------

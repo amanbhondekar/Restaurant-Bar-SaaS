@@ -340,7 +340,7 @@ test('levels: out at zero, low at or below the level reception set, and never lo
   assert.equal(levelOf({ on_hand: 5, low_at: 5 }), 'low', 'at the level counts');
   assert.equal(levelOf({ on_hand: 5.001, low_at: 5 }), 'ok');
   assert.equal(levelOf({ on_hand: 1, low_at: 0 }), 'ok', 'no level set means no warning');
-  assert.deepEqual(summarize(stocked().s), { ingredients: 4, out: 0, low: 0, recipes: 4 });
+  assert.deepEqual(summarize(stocked().s), { ingredients: 4, out: 0, low: 0, reorder: 0, recipes: 4 });
 });
 
 // --- the menu overlay ----------------------------------------------------------------------
