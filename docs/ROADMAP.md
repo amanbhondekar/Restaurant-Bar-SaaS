@@ -54,11 +54,11 @@ M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant �
 is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–013 are all unrun, because there are
+project or Razorpay keys: migrations 004–014 have never run on a hosted project, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1143 hub tests across 57 files** (pure rules plus live
+Automated coverage is **1166 hub tests across 58 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **724 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -244,7 +244,7 @@ Display and the waiter's QR scanner are still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1143 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1166 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -262,9 +262,10 @@ Display and the waiter's QR scanner are still verified by hand.
 - 🟡 **Inventory limits** (what is left): nothing in the code. Costing, stock-up-to
   levels, the shopping list (§4.2), order cancellation (§4.3) and an out-of-stock
   extra greyed out on the waiter's sheet and hidden from guests have all shipped.
-  What is open is outside it: migrations 009 and 012 are unrun and their restore
-  paths are untested against a real project. Not plan-gated: whether stock is a
-  paid feature is a pricing call.
+  Migrations 009 and 012 now apply on a real Postgres engine and the hub's stock
+  rows fit their constraints (§3, Billing replication); what is open is outside the
+  code: they have not run on a hosted project and their restore paths are untested
+  against one. Not plan-gated: whether stock is a paid feature is a pricing call.
 - ✅ **Station screens are role-scoped**: a station tablet enrols with a
   `kitchen` device token, which can read the board and mark tickets and stations
   done and is refused everything else -- placing orders, every bill route, staff,
@@ -282,9 +283,18 @@ Display and the waiter's QR scanner are still verified by hand.
   `npm run cloud:check` (read-only; `--probe
   <restaurant>` writes one voided probe bill, reads it back and deletes it) is
   how it gets proven against a real project, and names the migration to run for
-  anything missing. **What is still open:** it has not been run against a real
-  project, and row-level security is proven by nothing. Building it found and
-  fixed two real bugs: status updates were keyed on the ticket number alone (so
+  anything missing. **The SQL has now been run, on a real Postgres engine** (PGlite, in
+  the test suite, with Supabase's default privileges modelled): every migration
+  applies and re-applies, tenants cannot see or write each other's rows, every row
+  the hub builds fits the real constraints, and onboarding and the hub's secret
+  binding behave as designed. That run found that the "insert-only" and "service
+  role only" table claims protected nothing under those defaults -- a tenant's own
+  login could set its plan to enterprise, edit or delete its cash-ups and feedback,
+  and rewrite its staff rows -- so migration 014 states each role's privileges
+  explicitly. **What is still open:** none of it has run on a *hosted* Supabase
+  project (PostgREST, the auth service and the project's real defaults are not in
+  PGlite), and whether the hosted defaults are what the stub assumes is unchecked.
+  Building it found and fixed two real bugs: status updates were keyed on the ticket number alone (so
   after a hub reinstall, numbers restarting at 101, they rewrote every older
   order with that number), and **a voided bill could never reach the cloud** --
   the hub writes `voided`, the table's CHECK allows `void`, so a bill the cloud
@@ -355,7 +365,7 @@ milestones (§5) when a theme is pulled into a release.
   split-bill, refunds, thermal printing, reconciliation — all shipped in M1.
 - ✅ Cloud replication of invoices (migration 005): every issue, settlement,
   void, refund and split is pushed as a full snapshot, upserted on the hub's
-  own invoice id. **Not yet run against a real Supabase project.**
+  own invoice id. **Run on a real Postgres engine, not yet on a hosted Supabase project.**
 - ✅ Restore: a hub with an empty ledger pulls its bills and cash-ups back
   from the cloud at boot and on reconnect. Only ever fills, never merges —
   a hub that holds bills is the authority on them.
