@@ -264,6 +264,7 @@ test('every column the hub names when reading the cloud exists', () => {
     ['recipes', 'hub_ref, menu_item_ref, variant_ref, lines'],
     ['guest_feedback', 'hub_ref, restaurant_id, table_label, rating, comment, invoice_number, invoice_ref, created_at'],
     ['restaurants', 'plan, plan_status, trial_ends_at, current_period_end'],
+    ['restaurants', 'id, name, slug, city, pairing_code, plan, plan_status, trial_ends_at, current_period_end'],
     ['staff_users', 'id, restaurant_id, role']
   ];
   for (const [table, list] of named) {
@@ -282,6 +283,8 @@ test('what the source asks the cloud for is what this test checks: no read goes 
   const known = new Set([
     'catalogSync.js: id, hub_ref',
     'hubConfig.js: plan, plan_status, trial_ends_at, current_period_end',
+    // pairing, for a cloud that has not run migration 015 (restaurant_for_pairing_code) and so is read the old way
+    'hubConfig.js: id, name, slug, city, pairing_code, plan, plan_status, trial_ends_at, current_period_end',
     'inventorySync.js: hub_ref, name, unit, on_hand, low_at',
     'inventorySync.js: hub_ref, name, unit, on_hand, low_at, par, unit_cost',
     'inventorySync.js: hub_ref, menu_item_ref, variant_ref, lines',

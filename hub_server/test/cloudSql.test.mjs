@@ -94,9 +94,12 @@ const INTENDED = {
   subscriptions: '', subscription_events: ''                      // the operator's, service key only
 };
 const LETTER = { SELECT: 'S', INSERT: 'I', UPDATE: 'U', DELETE: 'D' };
+// Table-level privileges, plus SELECT where it was granted on some columns only (restaurants and staff_users keep a
+// secret column out of reach, so their SELECT is per column).
 const privsOf = async (role, table) => {
-  const rows = (await q(`SELECT privilege_type FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = $1 AND grantee = $2`, [table, role])).rows;
-  return rows.map(r => r.privilege_type).sort();
+  const rows = (await q(`SELECT privilege_type FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = $1 AND grantee = $2`, [table, role])).rows.map(r => r.privilege_type);
+  const columns = (await q(`SELECT DISTINCT privilege_type FROM information_schema.column_privileges WHERE table_schema = 'public' AND table_name = $1 AND grantee = $2 AND privilege_type = 'SELECT'`, [table, role])).rows.map(r => r.privilege_type);
+  return [...new Set([...rows, ...columns])].sort();
 };
 
 test('a tenant\'s hub can do to each table what the code needs and no more', async () => {
