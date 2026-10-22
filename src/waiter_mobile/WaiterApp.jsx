@@ -19,6 +19,7 @@ import { cancelledMessage } from '../admin/lib/openOrders';
 
 const WAITER_SESSION_KEY = 'kullina_waiter_session';
 
+
 export const WaiterApp = () => {
   const { currentRestaurant, isMenuUninitialized: posMenuUninitialized } = usePos() || {};
   const shouldReduceMotion = useReducedMotion();
@@ -86,9 +87,19 @@ export const WaiterApp = () => {
   const [activeOrders, setActiveOrders] = useState([]);
   const wasConnectedRef = useRef(false);
   const isGracePeriodRef = useRef(true);
+  // Which read of the floor started last. Every socket event starts a fresh read, so two can be on their way at
+  // once, and nothing says they land in the order they left: an older one arriving last would put the screen back
+  // as it was. Only the most recently STARTED read is applied.
+  const readSeqRef = useRef(0);
+  // Orders already counted into a table's total. The hub announces every new order twice (NEW_ORDER and
+  // order_created) and both arrive within the same moment, so a total added on each would show double until the
+  // next read of the floor corrected it.
+  const countedOrdersRef = useRef(new Set());
+  const orderKey = ticket => String(ticket?.id ?? ticket?.ticket_number);
 
   const fetchLiveState = useCallback(async (targetUrl = hubUrl) => {
     const cleanUrl = targetUrl.replace(/\/+$/, '');
+    const seq = ++readSeqRef.current;
     try {
       const [tablesRes, ordersRes, menuRes] = await Promise.all([
         authFetch(`${cleanUrl}/tables`).catch(() => null),
@@ -107,21 +118,23 @@ export const WaiterApp = () => {
         return;
       }
 
-      if (menuRes && menuRes.ok) {
-        const menuData = await menuRes.json();
-        setHubMenuUninitialized(!!menuData.uninitialized);
+      // Read the bodies first, then decide: reading is itself asynchronous, and a newer read may land meanwhile.
+      const menuData = menuRes && menuRes.ok ? await menuRes.json() : null;
+      const tablesData = tablesRes && tablesRes.ok ? await tablesRes.json() : null;
+      const ordersData = ordersRes && ordersRes.ok ? await ordersRes.json() : null;
+      if (seq !== readSeqRef.current) return;   // a newer read has started since; this answer is the older one
+
+      if (menuData) setHubMenuUninitialized(!!menuData.uninitialized);
+
+      if (tablesData) {
+        if (tablesData.uninitialized) setHubMenuUninitialized(true);
+        if (tablesData.tables && Array.isArray(tablesData.tables)) setLiveTables(tablesData.tables);
+        if (Array.isArray(tablesData.sections)) setLiveSections(tablesData.sections);
       }
 
-      if (tablesRes && tablesRes.ok) {
-        const data = await tablesRes.json();
-        if (data.uninitialized) setHubMenuUninitialized(true);
-        if (data.tables && Array.isArray(data.tables)) setLiveTables(data.tables);
-        if (Array.isArray(data.sections)) setLiveSections(data.sections);
-      }
-
-      if (ordersRes && ordersRes.ok) {
-        const data = await ordersRes.json();
-        if (data.tickets && Array.isArray(data.tickets)) setActiveOrders(data.tickets);
+      if (ordersData && ordersData.tickets && Array.isArray(ordersData.tickets)) {
+        setActiveOrders(ordersData.tickets);
+        countedOrdersRef.current = new Set(ordersData.tickets.map(orderKey));   // what the read says is already in the totals
       }
     } catch (err) {
       console.warn('Could not fetch live state from hub:', err);
@@ -260,9 +273,11 @@ export const WaiterApp = () => {
     } else if (type === 'NEW_ORDER' || type === 'order_created') {
       const ticket = payload.ticket || payload;
       if (ticket && ticket.table_id) {
+        const alreadyCounted = countedOrdersRef.current.has(orderKey(ticket));
+        countedOrdersRef.current.add(orderKey(ticket));
         setLiveTables(prev => prev.map(t => {
           if (String(t.id) === String(ticket.table_id)) {
-            return { ...t, status: t.status === 'ready' ? 'ready' : 'kot', activeOrderTotal: (t.activeOrderTotal || 0) + (Number(ticket.total_amount) || 0) };
+            return { ...t, status: t.status === 'ready' ? 'ready' : 'kot', activeOrderTotal: (t.activeOrderTotal || 0) + (alreadyCounted ? 0 : Number(ticket.total_amount) || 0) };
           }
           return t;
         }));
@@ -285,6 +300,9 @@ export const WaiterApp = () => {
     let isSubscribed = true;
 
     const connectWs = () => {
+      // A reconnect timer set before this effect was cleaned up (the app went away, or the hub's address changed)
+      // still fires. It must not open a socket that nothing will ever close.
+      if (!isSubscribed) return;
       try {
         const finalWsUrl = authWsUrl(wsUrl);
         ws = new WebSocket(finalWsUrl);

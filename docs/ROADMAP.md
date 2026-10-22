@@ -60,13 +60,13 @@ guest ordering, repeat-visit recognition and reservations.
 
 Automated coverage is **1143 hub tests across 57 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**698 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**724 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
 Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
-repair, guest ordering), and the waiter login, floor grid, modifier sheet, menu
-grid and order drawer. The reception Kitchen Display and the rest of the waiter
-PWA (the QR scanner, connection handling) are still verified by hand.
+repair, guest ordering), and the waiter app (login, floor grid, modifier sheet,
+menu grid, order drawer, and how it keeps hold of the hub). The reception Kitchen
+Display and the waiter's QR scanner are still verified by hand.
 
 ---
 
@@ -327,11 +327,11 @@ PWA (the QR scanner, connection handling) are still verified by hand.
   reception admin tab except the Kitchen Display (including the Menu tab and its
   item editor, Tables, Cash and Sales, which handle prices, the floor, the till
   and the owner's figures, Printers, Plan and the menu importer), and the waiter
-  login, floor grid, modifier sheet, menu grid and order drawer. The reception
-  Kitchen Display (`src/kitchen_main.jsx`, 2,035 lines in one file, to be split
-  before it can be tested) and the rest of the waiter app (the QR scanner,
-  connection handling) are still verified by hand, and nothing drives a real
-  browser in CI. Things found only by looking past a passing build or by checking
+  login, floor grid, modifier sheet, menu grid, order drawer and connection
+  handling. The reception Kitchen Display (`src/kitchen_main.jsx`, 2,035 lines in
+  one file, to be split before it can be tested) and the waiter's QR scanner (it
+  needs a camera) are still verified by hand, and nothing drives a real browser
+  in CI. Things found only by looking past a passing build or by checking
   the tests themselves: a cross-page flow (the device-scope report), a
   screen-reader bug in the 86 switches (the admin-tab report), in the importer a
   Replace mode that stayed selected over a merge's numbers ("0 items will be
@@ -339,7 +339,9 @@ PWA (the QR scanner, connection handling) are still verified by hand.
   minted a new request id, so a waiter whose reply was lost could put the same
   order in the kitchen twice, and in the floor grid a "pieces in the draft" badge
   that had never once been drawn, because it added up the lines' rows instead of
-  their quantities.
+  their quantities, and in the connection handling a reconnect timer that opened a
+  socket after the app had gone, floor reads that could land out of order, and a
+  new order that showed double its total until the next read.
 
 ---
 
@@ -540,8 +542,8 @@ milestones (§5) when a theme is pulled into a release.
   First surfaces are the diner page, the admin Feedback tab and the waiter
   modifier sheet, including a contract test that feeds the sheet's output to
   the hub's real `priceOrder`. Since extended to every reception admin tab
-  (Printers, Plan and the menu importer included), and the waiter's order
-  drawer. Still to do: the reception KDS, the rest of the waiter app, and a
+  (Printers, Plan and the menu importer included), and the waiter app (all of it
+  but the QR scanner). Still to do: the reception KDS, the QR scanner, and a
   Playwright smoke run in a real browser.
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
