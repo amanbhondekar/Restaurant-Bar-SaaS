@@ -13,6 +13,10 @@ unmerged `docs/roadmap` branch, so §6's maintenance rule could not be followed 
 the document fell a full two milestones behind. It is on the working line now, and
 every change since has updated it in the same commit.
 
+**Under review:** the working line (`feat/m2-kitchen-ops`) is open as
+[PR #1](https://github.com/amanbhondekar/Restaurant-Bar-SaaS/pull/1) against
+`main`. Until it merges, `main` does not have anything described here.
+
 ---
 
 ## 1. Where we are today
@@ -558,8 +562,9 @@ parallel manual bill book. **Complete 2026-10-05.**
   printer, reconciliation.
 - ✅ 4.7 waiter PIN login on the PWA.
 - ✅ 4.8 CI pipeline + hub error reporting.
-- 🟡 Carried to 4.1: replication is one-way and unproven against a real
-  Supabase project; reconciliation records are still hub-local.
+- 🟡 Carried to 4.1: bills and reconciliation records now replicate (005, 006)
+  and can be restored, but replication is one-way and unproven against a real
+  Supabase project (§3).
 
 ### M2 — Menu depth  ✅
 Enough menu modelling to onboard restaurants beyond a flat item list.
@@ -567,7 +572,9 @@ Enough menu modelling to onboard restaurants beyond a flat item list.
 - ✅ 4.2 modifiers, variants, per-variant 86'd, day-part pricing.
 - ✅ 4.3 multi-station KDS routing and course firing.
 - ✅ 4.2 stock-driven 86'd and inventory tables.
-- ✅ 4.2 modifier choices that use stock (2026-10-22).
+- ✅ 4.2 modifier choices that use stock, order cancellation, costing, stock-up-to
+  levels and a shopping list (2026-10-22). Left: greying out an out-of-stock
+  extra on the waiter's modifier sheet.
 
 ### M3 — Self-serve tenant  🟡
 The product can onboard a new restaurant without engineering.
@@ -584,6 +591,8 @@ The product can onboard a new restaurant without engineering.
 - ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
 
 ### M4 — Customer surfaces  🟡
+- ✅ Sales analytics for reception (2026-10-22): period comparisons, guests new
+  and returning, cohorts, and daily/weekly summaries sent by WhatsApp tap (§3).
 - 🟡 4.5 diner QR menu, guest ordering (opt-in) and repeat-visit recognition
   shipped; paying from the phone is open and needs Razorpay keys.
 - 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; a public
