@@ -53,12 +53,13 @@ guest ordering, repeat-visit recognition and reservations.
 
 Automated coverage is **965 hub tests across 50 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**316 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
-its basket, the station screens, device enrolment, the admin Feedback, Stock,
-Kitchen, Staff, Bookings, Regulars, ledger-repair and guest-ordering panels, and
-the waiter login, modifier sheet and menu grid. The reception Kitchen Display,
-the Menu, Tables and Cash tabs and the rest of the waiter PWA are still verified
-by hand.
+**452 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+its basket, the station screens, device enrolment, every reception admin tab
+except Printers, Plan and the Kitchen Display (Menu and its item editor, Tables,
+Bookings, Cash, Stock, Kitchen, Staff, Feedback, ledger repair, guest ordering),
+and the waiter login, modifier sheet and menu grid. The reception Kitchen Display,
+the Printers and Plan tabs, the menu importer and the rest of the waiter PWA are
+still verified by hand.
 
 ---
 
@@ -245,14 +246,15 @@ by hand.
   running hub — sales, floor grid, active KOTs and billed orders all render
   with no console errors. Moved out of this section.
 - 🟡 **Test coverage**: the hub is well covered. A frontend runner covers the
-  diner page and its basket, the station screens, device enrolment, the admin
-  Feedback, Stock, Kitchen, Staff, Bookings, Regulars, ledger-repair and
-  guest-ordering panels, and the waiter login, modifier sheet and menu grid. The
-  reception Kitchen Display, the Menu, Tables and Cash tabs, and the waiter
+  diner page and its basket, the station screens, device enrolment, every
+  reception admin tab except Printers, Plan and the Kitchen Display (including
+  the Menu tab and its item editor, Tables and Cash, which handle prices, the
+  floor and the till), and the waiter login, modifier sheet and menu grid. The
+  reception Kitchen Display, Printers, Plan, the menu importer, and the waiter
   app's order entry and connection handling are still verified by hand, and
-  nothing drives a real browser in CI. (A cross-page flow in this area was
-  caught only by checking it against a scratch hub in a browser: see the
-  device-scope report.)
+  nothing drives a real browser in CI. Two things were found only by looking
+  past a passing build: a cross-page flow (the device-scope report) and a
+  screen-reader bug in the 86 switches (the admin-tab report).
 
 ---
 
@@ -420,8 +422,9 @@ milestones (§5) when a theme is pulled into a release.
 - 🟡 Frontend test suite: Vitest + Testing Library runs in CI as its own step.
   First surfaces are the diner page, the admin Feedback tab and the waiter
   modifier sheet, including a contract test that feeds the sheet's output to
-  the hub's real `priceOrder`. Still to do: the reception KDS, order entry, the
-  Menu / Tables / Cash tabs, and a Playwright smoke run in a real browser.
+  the hub's real `priceOrder`. Since extended to every reception admin tab but
+  Printers and Plan. Still to do: the reception KDS, order entry, the menu
+  importer, Printers and Plan, and a Playwright smoke run in a real browser.
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
   there is no window between choosing a port and holding it. Runner

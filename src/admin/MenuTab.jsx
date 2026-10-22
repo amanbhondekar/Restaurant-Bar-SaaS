@@ -293,7 +293,11 @@ export function MenuTab({ menu, error, onRetry, onReload, onStale, notify }) {
                         <TableCell className="hidden capitalize md:table-cell">{item.station || <span className="text-muted-foreground">hot</span>}</TableCell>
                         <TableCell onClick={event => event.stopPropagation()}>
                           <label className="inline-flex h-10 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                            <Switch checked={available} disabled={busy} onCheckedChange={() => toggleAvailable(item)} aria-label={`${item.name}: ${available ? 'available' : '86’d'}`} />
+                            {/* The switch is named by this label (the Switch wires aria-labelledby to it, which wins over any
+                                aria-label), so the label has to say WHICH dish. Without the hidden name every row read
+                                "Available, switch" and a screen reader could not tell them apart. */}
+                            <Switch checked={available} disabled={busy} onCheckedChange={() => toggleAvailable(item)} />
+                            <span className="sr-only">{item.name}: </span>
                             <span className="w-14">{available ? 'Available' : '86’d'}</span>
                           </label>
                         </TableCell>

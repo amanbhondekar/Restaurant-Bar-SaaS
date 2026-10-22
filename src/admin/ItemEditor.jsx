@@ -29,11 +29,16 @@ function Section({ title, description, error, children }) {
   );
 }
 
+// The switch is named by its wrapping label (the Switch wires aria-labelledby to it, which wins over any
+// aria-label), so `label` goes INTO the label. It used to be an aria-label that was ignored, which made
+// every variant and option read "Available, switch". The visible "Available" / "86'd" is the state, which
+// aria-checked already says, so it is hidden from the name rather than repeated in it.
 function AvailableSwitch({ checked, onChange, label }) {
   return (
     <label className="inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
-      <span className="w-14">{checked ? 'Available' : '86’d'}</span>
+      <Switch checked={checked} onCheckedChange={onChange} />
+      <span className="sr-only">{label}</span>
+      <span className="w-14" aria-hidden="true">{checked ? 'Available' : '86’d'}</span>
     </label>
   );
 }
