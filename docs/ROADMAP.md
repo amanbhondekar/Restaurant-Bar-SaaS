@@ -204,10 +204,14 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
   `suspended` (§4.4).
 
 ### Frontend surfaces
-- ✅ Kitchen KDS (`src/server_laptop/KitchenKdsView.jsx`): live ticket rail,
-  pairing QR + enrollment code, connection badge grace states, Framer
-  Motion ticket-printer moment, kitchen summary counters, station chips,
-  bill preview and settlement.
+- ✅ Kitchen KDS (`src/kitchen_main.jsx`, the page the hub serves at `/`): live
+  ticket rail, pairing QR + enrollment code, connection badge grace states,
+  Framer Motion ticket-printer moment, kitchen summary counters, station chips,
+  bill preview and settlement. It is one 2,035-line file mixing the socket, the
+  state and the rendering, which is why it is the one reception surface with no
+  automated tests (§3): it has to be split before it can be tested in pieces.
+  (An earlier version of this line named `src/server_laptop/KitchenKdsView.jsx`;
+  that is a smaller view in the old shell, not this.)
 - ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
   cash & payments, sales analytics, stock and recipes, kitchen performance and
   station screens, printers, staff and devices, guest feedback, plan.
@@ -319,7 +323,8 @@ floor grid, the QR scanner, connection handling) are still verified by hand.
   item editor, Tables, Cash and Sales, which handle prices, the floor, the till
   and the owner's figures, Printers, Plan and the menu importer), and the waiter
   login, modifier sheet, menu grid and order drawer. The reception Kitchen
-  Display and the rest of the waiter app (the floor grid, the QR scanner,
+  Display (`src/kitchen_main.jsx`, 2,035 lines in one file, to be split before it
+  can be tested) and the rest of the waiter app (the floor grid, the QR scanner,
   connection handling) are still verified by hand, and nothing drives a real
   browser in CI. Things found only by looking past a passing build or by checking
   the tests themselves: a cross-page flow (the device-scope report), a
