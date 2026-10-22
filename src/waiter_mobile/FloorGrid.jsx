@@ -101,7 +101,8 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, se
           const st = STATUS[t.status] || STATUS.available;
           const sel = selectedTable === t.id;
           const mins = elapsed(t.occupiedSince);
-          const draftCount = drafts[t.id] ? Object.values(drafts[t.id]).reduce((s, q) => s + q, 0) : 0;
+          // A draft is { lineKey: row } and each row carries its own quantity (see WaiterApp), so add the quantities up.
+          const draftCount = drafts[t.id] ? Object.values(drafts[t.id]).reduce((sum, row) => sum + (Number(row?.qty) || 0), 0) : 0;
 
           return (
             <div key={t.id} onClick={() => onSelectTable(t.id)} className={`table-card${sel ? ' selected' : ''}`}>
