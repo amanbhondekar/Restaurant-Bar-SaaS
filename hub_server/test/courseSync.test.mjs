@@ -108,17 +108,19 @@ function fakeCloud({ missing = [], reject = null } = {}) {
           const result = error ? { data: null, error } : { data: { id: 'db-order-1' }, error: null };
           return { select: () => ({ single: async () => result }), then: (ok, no) => Promise.resolve({ error: result.error }).then(ok, no) };
         },
+        // Chainable like PostgREST's filter builder: .eq(a).eq(b) narrows, and awaiting it runs the update.
         update(patch) {
-          return {
-            eq: async (col, val) => {
-              log.attempts.push({ table, patch, col, val });
-              const bad = unknownColumn(table, [patch]);
-              if (reject) return { error: reject };
-              if (bad) return { error: { code: 'PGRST204', message: `Could not find the '${bad}' column of '${table}' in the schema cache` } };
-              log.updates.push({ patch, col, val });
-              return { error: null };
-            }
+          const filters = [];
+          const run = async () => {
+            log.attempts.push({ table, patch, filters });
+            const bad = unknownColumn(table, [patch]);
+            if (reject) return { error: reject };
+            if (bad) return { error: { code: 'PGRST204', message: `Could not find the '${bad}' column of '${table}' in the schema cache` } };
+            log.updates.push({ patch, filters: Object.fromEntries(filters) });
+            return { error: null };
           };
+          const chain = { eq(col, val) { filters.push([col, val]); return chain; }, then: (ok, no) => run().then(ok, no) };
+          return chain;
         }
       };
     }
@@ -184,8 +186,8 @@ test('sync: a status change carries the course state with it', async () => {
 
   assert.equal(ok, true);
   const [u] = cloud.log.updates;
-  assert.equal(u.col, 'ticket_number');
-  assert.equal(u.val, 142);
+  // Queued without a request id (before one was recorded): still found by number, still inside the restaurant.
+  assert.deepEqual(u.filters, { restaurant_id: RID, ticket_number: 142 });
   assert.equal(u.patch.status, 'in_progress');
   assert.deepEqual(u.patch.course_log[1].stations_ready, { bar: T1 });
 });

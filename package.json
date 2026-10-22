@@ -7,6 +7,7 @@
     "dev": "vite",
     "hub": "node hub_server/server.js",
     "signup": "node signup_server/server.js",
+    "cloud:check": "node hub_server/scripts/cloud-check.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "npm run test:hub && npm run test:web",

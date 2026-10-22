@@ -385,11 +385,19 @@ class SyncQueue {
    * travels with the status: a station marking its part ready or a course being fired changes the
    * state without always changing the status, so the status alone would lose it.
    */
-  enqueueStatusUpdate(ticketId, newStatus, restaurantId, ticket) {
+  enqueueStatusUpdate(ticketId, newStatus, restaurantId, ticket, { requestId } = {}) {
+    // The id the order was inserted under (see syncOrderToSupabase). The ticket NUMBER is not an identity:
+    // it restarts at 101 on a hub whose data directory was lost, so a change aimed at the number alone
+    // rewrites every older order that ever had it.
+    const orderRequestId = requestId ?? (ticket ? (ticket.order_request_id || ticket.id) : undefined);
     const queueItem = {
       queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       type: 'UPDATE_STATUS',
-      payload: { ticketId, status: newStatus, restaurantId, ...(ticket ? { course: orderCourseColumns(ticket) } : {}) },
+      payload: {
+        ticketId, status: newStatus, restaurantId,
+        ...(orderRequestId ? { requestId: orderRequestId } : {}),
+        ...(ticket ? { course: orderCourseColumns(ticket) } : {})
+      },
       queued_at: new Date().toISOString(),
       attempts: 0
     };
@@ -1111,12 +1119,19 @@ class SyncQueue {
     }
   }
 
-  async syncStatusToSupabase({ ticketId, status, restaurantId, course }) {
+  async syncStatusToSupabase({ ticketId, status, restaurantId, course, requestId }) {
     try {
-      const update = (extra = {}) => this.cloud
+      // Aimed at one order of one restaurant. An item queued before request ids were recorded carries only
+      // the number, and still drains: it is the best that was known when it was queued, and it stays
+      // inside the restaurant.
+      const aim = query => {
+        let q = query;
+        if (restaurantId) q = q.eq('restaurant_id', restaurantId);
+        return requestId ? q.eq('order_request_id', requestId) : q.eq('ticket_number', Number(ticketId));
+      };
+      const update = (extra = {}) => aim(this.cloud
         .from('orders')
-        .update({ status, updated_at: new Date().toISOString(), ...extra })
-        .eq('ticket_number', Number(ticketId));
+        .update({ status, updated_at: new Date().toISOString(), ...extra }));
 
       let { error } = await update(course || {});
       // Cloud not migrated yet (008): the status is the part that must get through.

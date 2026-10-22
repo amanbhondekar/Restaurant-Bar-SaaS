@@ -1905,7 +1905,7 @@ app.post('/tables/:id/clear', requireDevice, (req, res) => {
 
   if (clearedTickets && clearedTickets.length > 0) {
     clearedTickets.forEach(t => {
-      syncQueue.enqueueStatusUpdate(t.ticket_number || t.id, 'completed', pairing.restaurant_id);
+      syncQueue.enqueueStatusUpdate(t.ticket_number || t.id, 'completed', pairing.restaurant_id, undefined, { requestId: t.order_request_id || t.id });
     });
   }
 
@@ -1958,7 +1958,7 @@ app.post('/orders/:id/clear', requireDevice, (req, res) => {
 
   if (clearedTickets && clearedTickets.length > 0) {
     clearedTickets.forEach(t => {
-      syncQueue.enqueueStatusUpdate(t.ticket_number || t.id, 'completed', pairing.restaurant_id);
+      syncQueue.enqueueStatusUpdate(t.ticket_number || t.id, 'completed', pairing.restaurant_id, undefined, { requestId: t.order_request_id || t.id });
     });
   }
 

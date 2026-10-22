@@ -52,7 +52,7 @@ project or Razorpay keys: migrations 004–011 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **965 hub tests across 50 files** (pure rules plus live
+Automated coverage is **994 hub tests across 52 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **452 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -263,10 +263,20 @@ still verified by hand.
   five that are open are pinned by a test. Devices enrolled before this keep full
   authority. What remains is in §4.7. The reception Kitchen Display still sends no
   token, so it only works on the reception laptop itself.
-- 🟡 **Billing replication is unproven**: bills and cash-ups push to the cloud
-  (005, 006), a boot backfill carries up anything the cloud has not confirmed,
-  and a hub with an empty or partial ledger restores or repairs it from the
-  cloud (§4.1) -- but none of it has run against a real Supabase project.
+- 🟡 **Billing replication is proven as far as it can be without a cloud**: bills
+  and cash-ups push to the cloud (005, 006), a boot backfill carries up anything
+  the cloud has not confirmed, and a hub with an empty or partial ledger restores
+  or repairs it (§4.1). A contract test reads the schema out of the migrations
+  and holds every row the hub builds against it: columns, required columns,
+  CHECK values, the unique index behind every upsert, every column read back --
+  and found them all consistent. `npm run cloud:check` (read-only; `--probe
+  <restaurant>` writes one voided probe bill, reads it back and deletes it) is
+  how it gets proven against a real project, and names the migration to run for
+  anything missing. **What is still open:** it has not been run against a real
+  project, and row-level security is proven by nothing. Writing it also found
+  and fixed a real bug: status updates were keyed on the ticket number alone, so
+  after a hub reinstall (numbers restart at 101) they rewrote every older order
+  with that number.
 - ✅ **Waitlist**: moved out of this section. The walk-in queue is on the hub,
   with "your table is ready" by WhatsApp click-to-chat, and time-slot
   reservations are checked against the real layout (§4.6). A public booking page
