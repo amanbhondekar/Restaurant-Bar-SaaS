@@ -63,8 +63,18 @@ export async function cloudDb({ apply = true } = {}) {
   };
   if (apply) await applyAll();
 
+  // One connection serves everything, and a role is a property of the session, so two callers acting as different
+  // users at once would see each other's role. Acting as someone is therefore one at a time. (Do not call `as` from
+  // inside another `as`: it would wait for itself.)
+  let turn = Promise.resolve();
+
   /** Run `fn` as a role (and, for authenticated, as a user), then put the session back to the superuser. */
-  const as = async (role, userId, fn) => {
+  const as = (role, userId, fn) => {
+    const run = turn.then(() => actAs(role, userId, fn));
+    turn = run.catch(() => {});
+    return run;
+  };
+  const actAs = async (role, userId, fn) => {
     await pg.exec(`SET ROLE ${role}`);
     await pg.query(`SELECT set_config('request.jwt.claim.sub', $1, false)`, [userId ?? '']);
     try {

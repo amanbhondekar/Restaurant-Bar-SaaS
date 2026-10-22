@@ -19,6 +19,7 @@ export default defineConfig({
         admin: resolve(__dirname, 'admin.html'),
         diner: resolve(__dirname, 'diner.html'),
         station: resolve(__dirname, 'station.html'),
+        owner: resolve(__dirname, 'owner.html'),
       },
     },
   },

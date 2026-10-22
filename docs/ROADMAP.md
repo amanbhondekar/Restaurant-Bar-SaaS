@@ -54,13 +54,13 @@ M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant �
 is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–014 have never run on a hosted project, because there are
+project or Razorpay keys: migrations 004–015 have never run on a hosted project, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1166 hub tests across 58 files** (pure rules plus live
+Automated coverage is **1200 hub tests across 60 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**724 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**748 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
 Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
@@ -244,7 +244,7 @@ Display and the waiter's QR scanner are still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1166 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1200 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -256,9 +256,24 @@ Display and the waiter's QR scanner are still verified by hand.
 ## 3. In-flight / partial
 
 - 🟡 **Owner console**: plan and usage, staff invites, role management, PIN
-  rotation and per-device revocation have all shipped (§4.4). What is left is
-  that the console is reception-only -- there is no remote owner view -- and
-  that a person's role is stored but not enforced (§4.7).
+  rotation and per-device revocation have all shipped (§4.4), and there is now a
+  **remote, read-only owner view** (`owner.html`, `src/owner/`, runbook in
+  `docs/OWNER_VIEW.md`): sign in with an email and password and see sales against
+  the period before (the hub's own report code, so the numbers match the
+  reception Sales tab), the till, stock, and what guests said, with how long ago
+  the hub last sent anything. The database makes it read-only, not the page:
+  migration 015 lets any staff login of a restaurant READ its rows and only the
+  hub's own identity write them, hides the secret hash and PIN hashes from every
+  login, and adds `provision_owner()` for the operator. Proven on a real Postgres
+  engine, including that an owner reads their own restaurant and nothing of
+  another's and changes nothing. **What is still open:** it is not deployed (it
+  needs a hosted Supabase project and a static host); bookings are not on it;
+  password reset and SSO are not built; a login belongs to one restaurant; and on
+  the reception laptop a person's role is still stored but not enforced (§4.7).
+  Building it found that **a freshly provisioned restaurant's hub could never
+  pair**: it looked the restaurant up before it was bound and row-level security
+  hid the row. Fixed in 015 (`restaurant_for_pairing_code()`), with the hub
+  falling back to the old read if the function is not there yet.
 - 🟡 **Inventory limits** (what is left): nothing in the code. Costing, stock-up-to
   levels, the shopping list (§4.2), order cancellation (§4.3) and an out-of-stock
   extra greyed out on the waiter's sheet and hidden from guests have all shipped.
@@ -525,9 +540,11 @@ milestones (§5) when a theme is pulled into a release.
 
 ### 4.7 Auth & access control  🟡
 - ✅ Waiter PIN login wired into the PWA, session bound to a device token.
-- ⬜ Role UIs for owner / manager / waiter / kitchen. Roles are now STORED per
-  staff member and shown to reception, but nothing enforces them: anyone signed
-  in can still void a bill.
+- 🟡 Role UIs for owner / manager / waiter / kitchen. Roles are STORED per
+  staff member and shown to reception, and **the cloud now enforces them for
+  owners and managers** (read-only; only the hub's `kitchen` identity writes,
+  migration 015). On the reception laptop itself nothing enforces them: anyone
+  signed in can still void a bill.
 - ✅ Role-scoped device tokens: a station tablet enrols with a `kitchen` token
   that can read the board and mark tickets and stations done, and is refused
   everything else with 403 `DEVICE_SCOPE`. Default-deny -- `requireDevice` refuses
