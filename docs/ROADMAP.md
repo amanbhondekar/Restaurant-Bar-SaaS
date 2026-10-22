@@ -39,7 +39,8 @@ early pilots:
 - **Diner menu** (`/diner`) — no sign-in, opened from a table code. Read-only
   unless reception switches guest ordering on, which lets a guest send an order
   to the kitchen (§4.5).
-- **Reception / server-laptop app** — sales analytics, waitlist.
+- **Reception / server-laptop app** — the older shell, with a demo-era sales view
+  and waitlist; sales analytics now live in the admin console's Sales tab.
 - **Operator service** (`signup_server/`) — not part of a restaurant's
   installation. Holds the Supabase service key and the Razorpay webhook
   secret: creates tenants, and keeps `plan_status` honest.
@@ -52,12 +53,12 @@ project or Razorpay keys: migrations 004–012 are all unrun, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1046 hub tests across 54 files** (pure rules plus live
+Automated coverage is **1103 hub tests across 56 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**515 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**562 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except Printers, Plan and the Kitchen Display (Menu and its item editor, Tables,
-Bookings, Cash, Stock, Kitchen, Staff, Feedback, ledger repair, guest ordering),
+Bookings, Cash, Sales, Stock, Kitchen, Staff, Feedback, ledger repair, guest ordering),
 and the waiter login, modifier sheet and menu grid. The reception Kitchen Display,
 the Printers and Plan tabs, the menu importer and the rest of the waiter PWA are
 still verified by hand.
@@ -208,10 +209,11 @@ still verified by hand.
   Motion ticket-printer moment, kitchen summary counters, station chips,
   bill preview and settlement.
 - ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
-  cash & payments, stock and recipes, kitchen performance and station screens,
-  printers, staff and devices, guest feedback, plan.
-- ✅ Reception: `SalesAnalyticsView` and the `ServerLaptopApp` shell. Its older
-  `WaitlistView` is still there too: see §4.6 for why that is a problem.
+  cash & payments, sales analytics, stock and recipes, kitchen performance and
+  station screens, printers, staff and devices, guest feedback, plan.
+- ✅ Reception: the `ServerLaptopApp` shell. Its older `WaitlistView` is still
+  there too: see §4.6 for why that is a problem. So is its `SalesAnalyticsView`
+  (§3, Analytics): the admin Sales tab is the real one.
 - ✅ Station screens (`src/station/`) and the diner page with its optional basket
   (`src/diner/`).
 - ✅ Waiter PWA (`src/waiter_mobile/`): floor grid with live table state,
@@ -232,7 +234,7 @@ still verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (965 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1103 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -286,9 +288,27 @@ still verified by hand.
   with "your table is ready" by WhatsApp click-to-chat, and time-slot
   reservations are checked against the real layout (§4.6). A public booking page
   is the part still open, and it needs hosting.
-- 🟡 **Analytics**: real-time revenue + orders panel is live and cash
-  reconciliation exports a CSV ledger; no period comparison, cohorting or
-  scheduled reports.
+- ✅ **Analytics** (reception Sales tab): today, this week, this month or a
+  chosen range, each set against the same stretch of the period before it --
+  "today so far" against yesterday up to the same time, never against all of
+  yesterday -- in the restaurant's local time. Takings are the cash screen's own
+  definition (payments less refunds, by method; one function, not a second one
+  that can drift), bills raised and the average bill, voided bills, best sellers,
+  busy hours, guests new and returning, how many of last period's new guests came
+  back, and cohorts by month of first visit. The hub prepares a daily summary the
+  morning after and a weekly one on Mondays and keeps them frozen; sending is a
+  tap that opens WhatsApp with the message written (the same click-to-chat
+  decision as bookings -- no provider, no per-message fee), to the owner's number
+  if one is saved. **Not done:** a hub cannot send a message on its own, so
+  "scheduled" means prepared, not delivered; guests are counted only where a phone
+  number was given (seated bookings and walk-ins), so it is not every diner; no
+  per-waiter or per-table view; no CSV export of sales. Found in a real browser,
+  not by a test: the comparison period had no wording, so the screen read "set
+  against ." and a summary read "up 5% on undefined". Fixed, with the test written
+  first. The older `SalesAnalyticsView` in the server-laptop shell is still there
+  and is **misleading**: it adds up every ticket in the browser's storage, with no
+  period and no regard for voids or refunds. It should be deleted once reception
+  stops opening it.
 - ✅ **Operational dashboard** (`/dashboard`): the 2026-09-19 revision of
   this file flagged flaky hydration. Re-checked on 2026-10-13 against a
   running hub — sales, floor grid, active KOTs and billed orders all render
@@ -296,8 +316,8 @@ still verified by hand.
 - 🟡 **Test coverage**: the hub is well covered. A frontend runner covers the
   diner page and its basket, the station screens, device enrolment, every
   reception admin tab except Printers, Plan and the Kitchen Display (including
-  the Menu tab and its item editor, Tables and Cash, which handle prices, the
-  floor and the till), and the waiter login, modifier sheet and menu grid. The
+  the Menu tab and its item editor, Tables, Cash and Sales, which handle prices,
+  the floor, the till and the owner's figures), and the waiter login, modifier sheet and menu grid. The
   reception Kitchen Display, Printers, Plan, the menu importer, and the waiter
   app's order entry and connection handling are still verified by hand, and
   nothing drives a real browser in CI. Two things were found only by looking

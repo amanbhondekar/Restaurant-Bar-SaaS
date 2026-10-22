@@ -32,6 +32,12 @@ const visitsFrom = (rows, kind) => (Array.isArray(rows) ? rows : [])
   }))
   .filter(v => v.at);
 
+/** Every seated visit, oldest first: the raw material for cohorts. A visit is someone who sat down. */
+export function allVisits(state) {
+  return [...visitsFrom(state?.reservations, 'reservations'), ...visitsFrom(state?.waitlist, 'waitlist')]
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
 /**
  * Everyone the restaurant has seen, newest visit first.
  *

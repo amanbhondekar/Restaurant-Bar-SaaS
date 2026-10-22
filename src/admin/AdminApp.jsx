@@ -10,6 +10,7 @@ import { Notice } from './ui';
 import { MenuTab } from './MenuTab';
 import { TablesTab } from './TablesTab';
 import { CashTab } from './CashTab';
+import { SalesTab } from './SalesTab';
 import { PrintersTab } from './PrintersTab';
 import { KitchenTab } from './KitchenTab';
 import { PlanTab } from './PlanTab';
@@ -224,6 +225,7 @@ export const AdminApp = () => {
             <TabsTrigger value="tables" className="px-5">Tables</TabsTrigger>
             <TabsTrigger value="bookings" className="px-5">Bookings</TabsTrigger>
             <TabsTrigger value="cash" className="px-5">Cash &amp; payments</TabsTrigger>
+            <TabsTrigger value="sales" className="px-5">Sales</TabsTrigger>
             <TabsTrigger value="stock" className="px-5">Stock</TabsTrigger>
             <TabsTrigger value="kitchen" className="px-5">Kitchen</TabsTrigger>
             <TabsTrigger value="printers" className="px-5">Printers</TabsTrigger>
@@ -261,6 +263,9 @@ export const AdminApp = () => {
           </TabsContent>
           <TabsContent value="cash" className="pt-2">
             <CashTab notify={notify} />
+          </TabsContent>
+          <TabsContent value="sales" className="pt-2">
+            <SalesTab notify={notify} />
           </TabsContent>
           <TabsContent value="stock" className="pt-2">
             <InventoryTab menu={menu} notify={notify} />

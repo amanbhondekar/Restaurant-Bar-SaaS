@@ -33,7 +33,9 @@ import { publicMenu } from './lib/dinerMenu.js';
 import { inventoryStore } from './lib/inventoryStore.js';
 import { reservationStore } from './lib/reservationStore.js';
 import { whatsappLink, telLink, formatPhone, normalizePhone } from './lib/guestContact.js';
-import { guestByPhone, recognise, regulars } from './lib/loyalty.js';
+import { guestByPhone, recognise, regulars, allVisits } from './lib/loyalty.js';
+import { windowFor, salesReport, monthlyCohorts, PRESET_IDS } from './lib/analytics.js';
+import { reportStore } from './lib/reportStore.js';
 import { validateGuestOrder, guestOrderReceipt, isCoolingDown as orderCoolingDown } from './lib/guestOrdering.js';
 import { refusalFor, UNITS } from './lib/inventory.js';
 import { StationScreens, STATIONS as STATION_IDS, parseScreen, snapshot as stationSnapshot } from './lib/stationScreens.js';
@@ -1478,6 +1480,59 @@ app.get('/admin/guests/lookup', requireReception, (req, res) => {
   const guest = guestByPhone(reservationStore.stateFor(rid), phone, rid);
   res.json({ success: true, guest, recognised: recognise(guest) });
 });
+
+// ---------------------------------------------------------------------------------------------------
+// Sales analytics and scheduled summaries (§3 analytics). Reception-only: this is the restaurant's revenue.
+// ---------------------------------------------------------------------------------------------------
+
+const analyticsInputs = () => {
+  const pairing = hubConfig.getPairingInfo();
+  const rid = pairing.restaurant_id;
+  return { rid, currency: pairing.currency || '₹', invoices: invoiceStore.listInvoices(rid), visits: allVisits(reservationStore.stateFor(rid)) };
+};
+
+// GET /admin/sales?period=today|week|month|custom[&from=&to=] -- the period against the one before it,
+// like for like, with guests new and returning, and the cohorts by month of first visit.
+app.get('/admin/sales', requireReception, (req, res) => {
+  const win = windowFor(String(req.query.period || 'today'), new Date(), { from: req.query.from, to: req.query.to });
+  if (!win.ok) return res.status(400).json({ success: false, code: win.code, error: win.error });
+  const { rid, currency, invoices, visits } = analyticsInputs();
+  res.json({ success: true, currency, periods: [...PRESET_IDS, 'custom'], ...salesReport({ invoices, visits, restaurantId: rid, window: win }), cohorts: monthlyCohorts(visits) });
+});
+
+// GET /admin/reports -- the summaries the hub has prepared, newest first, each with a link that opens
+// WhatsApp with it written. Preparing is idempotent, so opening the screen can never find it stale.
+app.get('/admin/reports', requireReception, (req, res) => {
+  const { rid, currency, invoices, visits } = analyticsInputs();
+  reportStore.ensure({ invoices, visits, restaurantId: rid, currency });
+  res.json({ success: true, contact: reportStore.contactFor(rid), summaries: reportStore.list(rid) });
+});
+
+app.put('/admin/reports/contact', requireReception, (req, res) => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const result = reportStore.setContact(rid, req.body?.phone);
+  if (!result.ok) return res.status(400).json({ success: false, code: result.code, error: result.error });
+  res.json({ success: true, contact: result.phone });
+});
+
+app.post('/admin/reports/:id/sent', requireReception, (req, res) => {
+  const result = reportStore.markSent(hubConfig.getPairingInfo().restaurant_id, req.params.id);
+  if (!result.ok) return res.status(404).json({ success: false, code: result.code, error: result.error });
+  res.json({ success: true, sent_at: result.summary.sent_at });
+});
+
+// The summaries are prepared on a timer and at boot, not only when someone opens the screen: the point of
+// a scheduled summary is that it is already there in the morning. Idempotent, so a restart repeats nothing.
+const prepareSummaries = () => {
+  try {
+    const { rid, currency, invoices, visits } = analyticsInputs();
+    reportStore.ensure({ invoices, visits, restaurantId: rid, currency });
+  } catch (err) {
+    console.error('📊 Could not prepare summaries:', err);
+  }
+};
+setTimeout(prepareSummaries, 3000).unref();
+setInterval(prepareSummaries, 30 * 60 * 1000).unref();
 
 app.get('/admin/bookings', requireReception, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
