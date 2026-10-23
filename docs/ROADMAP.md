@@ -56,15 +56,15 @@ is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup, Razorpay webhooks and the
 subscription itself (the owner starts, switches and cancels it from the Plan tab).
 What is left is everything that needs a real Supabase project or Razorpay keys:
-migrations 004–018 have never run on a hosted project, and the Razorpay calls have
+migrations 004–019 have never run on a hosted project, and the Razorpay calls have
 only ever been made against a stand-in, because there are no credentials on the
 machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition, reservations with staff-sent reminders,
 and a reward for coming back that the restaurant sets itself.
 
-Automated coverage is **1444 hub tests across 71 files** (pure rules plus live
+Automated coverage is **1454 hub tests across 71 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**911 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**916 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -282,7 +282,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1444 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1454 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -589,10 +589,19 @@ milestones (§5) when a theme is pulled into a release.
   visit. The record replicates (migration 017: three nullable columns on
   `reservations`) and is restored with the diary. 18 hub tests, 17 on the tab and
   panel, a row of the real-database round trip; 47 + 36 mutations, the gaps closed.
+- ✅ The same reward for a guest at the door (2026-10-23). A walk-in who left a number
+  and has been here before is offered it in the queue, under the same rule: the queue
+  row says "3rd visit: a free lassi" and offers "Reward given", which records when, the
+  words and which visit, and can be taken back. It is offered while they wait, once they
+  are messaged and once they are seated, never once they have left, and a walk-in is
+  not counted as their own earlier visit. A guest who gave no number cannot be
+  recognised, so is offered nothing. The record replicates (migration 019: the same
+  three nullable columns on `walkins`) and is restored with the diary. 10 hub tests,
+  5 on the tab, a row of the real-database round trip; 44 mutations, the gaps closed.
 - ⬜ Not built: **points, tiers, and any automatic discount.** The reward is applied on
   the bill by a person, because the product does not know what a dessert costs or how
-  much the owner will give. Only bookings are offered the reward, not walk-ins. The
-  rule itself is a setting on the hub (like guest ordering) and is not replicated.
+  much the owner will give. The rule itself is a setting on the hub (like guest
+  ordering) and is not replicated.
 - ✅ Feedback at bill-close: a guest rates their meal on the diner page and
   the hub attaches it to that table's own settled bill server-side, so
   reception knows which meal it is about without the guest ever seeing a
@@ -617,7 +626,7 @@ milestones (§5) when a theme is pulled into a release.
   the hub queue, so a restaurant that opened the wrong tab saw an unrelated,
   empty-looking list. It is deleted; the tab now says where bookings and the queue
   are and links to the admin console's Bookings tab. (The unused waitlist state in
-  `PosContext` is still there.)
+  `PosContext`, its demo data and its two operations are deleted too.)
 - ✅ "Your table is ready" by WhatsApp click-to-chat: the hub writes the message and
   staff tap to send from their own phone. No Meta approval, no provider, no
   per-message fee, and it works with the line down.
@@ -765,8 +774,8 @@ The product can onboard a new restaurant without engineering.
   code: paying from the phone needs Razorpay keys and a public callback address.
   A reward for coming back shipped in the one form that needs no commercial
   decision from the product: the restaurant sets "every Nth visit, <words>" and the
-  hub reminds and records (migration 017). Points, tiers and an automatic discount
-  are not built.
+  hub reminds and records (migration 017), for bookings and for guests at
+  the door (migration 019). Points, tiers and an automatic discount are not built.
 - 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; the old
   browser-local Waitlist tab is retired. Reminders are staff-sent: the hub lists who
   to remind, builds the message and records that a person sent it (migration 016); it

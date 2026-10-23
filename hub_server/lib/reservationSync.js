@@ -45,7 +45,10 @@ export function walkInRow(restaurantId, e) {
     created_at: e.created_at,
     notified_at: e.notified_at ?? null,
     seated_at: e.seated_at ?? null,
-    left_at: e.left_at ?? null
+    left_at: e.left_at ?? null,
+    reward_given_at: e.reward_given_at ?? null,
+    reward_given_text: e.reward_given_text ?? null,
+    reward_visit: e.reward_visit ?? null
   };
 }
 
@@ -106,7 +109,10 @@ export async function pullReservations(client, restaurantId) {
       created_at: e.created_at,
       ...(e.notified_at ? { notified_at: e.notified_at } : {}),
       ...(e.seated_at ? { seated_at: e.seated_at } : {}),
-      ...(e.left_at ? { left_at: e.left_at } : {})
+      ...(e.left_at ? { left_at: e.left_at } : {}),
+      ...(e.reward_given_at ? { reward_given_at: e.reward_given_at } : {}),
+      ...(e.reward_given_text ? { reward_given_text: e.reward_given_text } : {}),
+      ...(e.reward_visit ? { reward_visit: Number(e.reward_visit) } : {})
     }))
   };
 }

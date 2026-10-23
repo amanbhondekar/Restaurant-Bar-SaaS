@@ -211,7 +211,7 @@ test('the booking diary comes back from the real database: bookings in every sta
     ...(status === 'seated' ? { seated_at: day(22) } : {}), ...(status === 'cancelled' ? { cancelled_at: day(21) } : {}), ...(status === 'no_show' ? { no_show_at: day(23) } : {})
   }));
   const walkins = ['waiting', 'notified', 'seated', 'left'].map((status, i) => ({ id: `wl_${i}`, guest_name: `Walk ${i}`, phone: '9198765511' + (10 + i), phone_key: String(9 - i).repeat(64), party_size: 1 + i, quoted_wait_mins: 10 * i, status, created_at: day(21),
-    ...(['notified', 'seated'].includes(status) ? { notified_at: day(21) } : {}), ...(status === 'seated' ? { seated_at: day(22) } : {}), ...(status === 'left' ? { left_at: day(22) } : {}) }));
+    ...(['notified', 'seated'].includes(status) ? { notified_at: day(21) } : {}), ...(status === 'seated' ? { seated_at: day(22), reward_given_at: day(22), reward_given_text: 'a free dessert', reward_visit: 5 } : {}), ...(status === 'left' ? { left_at: day(22) } : {}) }));
   reservationStore.state = { ...emptyDiary(A_RID), revision: 4, reservations: bookings, waitlist: walkins };
   reservationStore.save?.();
 

@@ -368,6 +368,76 @@ describe('bookings tab', () => {
     });
   });
 
+  describe('rewards for coming back, for a guest at the door', () => {
+    const EARNED = { ...RAHUL, reward_due: { visit_number: 3, text: 'a free lassi' } };
+    const GIVEN = { ...RAHUL, reward_given_at: new Date(2026, 9, 21, 20, 0).toISOString(), reward_given_text: 'a free lassi', reward_visit: 3 };
+    const queue = list => answer({ waitlist: list });
+
+    it('says in the queue that this is the guest\'s 3rd visit and what the restaurant gives', async () => {
+      setup({ 'GET /admin/bookings': queue([EARNED, NO_PHONE]) });
+      const row = await screen.findByRole('listitem', { name: 'Rahul' });
+      expect(within(row).getByText('3rd visit: a free lassi')).toBeInTheDocument();
+      expect(within(row).getByRole('button', { name: 'Reward given' })).toBeInTheDocument();
+      const other = screen.getByRole('listitem', { name: 'Quiet' });
+      expect(within(other).queryByText(/visit:/)).not.toBeInTheDocument();
+      expect(within(other).queryByRole('button', { name: 'Reward given' })).not.toBeInTheDocument();
+      expect(within(other).queryByRole('button', { name: 'Take back' })).not.toBeInTheDocument();
+    });
+
+    it('recording it tells the hub about the walk-in, says so, and reads the diary again', async () => {
+      const { hub, notify } = setup({
+        'GET /admin/bookings': ({ call }) => queue([call === 1 ? EARNED : GIVEN]),
+        'POST /admin/waitlist/wl_1/reward': { body: { success: true, entry: GIVEN } }
+      });
+      const row = await screen.findByRole('listitem', { name: 'Rahul' });
+      await userEvent.click(within(row).getByRole('button', { name: 'Reward given' }));
+      expect(hub.calls('POST /admin/waitlist/wl_1/reward')).toHaveLength(1);
+      expect(hub.calls('POST /admin/bookings/wl_1/reward')).toHaveLength(0);
+      expect(notify).toHaveBeenCalledWith('Reward recorded for Rahul: a free lassi.');
+      expect(await screen.findByText('Reward given: a free lassi')).toBeInTheDocument();
+      expect(screen.queryByText('3rd visit: a free lassi')).not.toBeInTheDocument();
+    });
+
+    it('the buttons are disabled while the hub is being asked, so a double press cannot send two', async () => {
+      let release;
+      const { hub } = setup({
+        'GET /admin/bookings': queue([EARNED]),
+        'POST /admin/waitlist/wl_1/reward': () => new Promise(resolve => { release = () => resolve({ body: { success: true, entry: GIVEN } }); })
+      });
+      const row = await screen.findByRole('listitem', { name: 'Rahul' });
+      await userEvent.click(within(row).getByRole('button', { name: 'Reward given' }));
+      expect(within(row).getByRole('button', { name: 'Reward given' })).toBeDisabled();
+      await userEvent.click(within(row).getByRole('button', { name: 'Reward given' }));
+      expect(hub.calls('POST /admin/waitlist/wl_1/reward')).toHaveLength(1);
+      release();
+      await vi.waitFor(() => expect(within(row).getByRole('button', { name: 'Reward given' })).toBeEnabled());
+    });
+
+    it('a reward already given says so, with the words that were promised, and can be taken back', async () => {
+      const { hub, notify } = setup({
+        'GET /admin/bookings': queue([GIVEN]),
+        'DELETE /admin/waitlist/wl_1/reward': { body: { success: true, entry: RAHUL } }
+      });
+      const row = await screen.findByRole('listitem', { name: 'Rahul' });
+      expect(within(row).getByText('Reward given: a free lassi')).toBeInTheDocument();
+      expect(within(row).queryByRole('button', { name: 'Reward given' })).not.toBeInTheDocument();
+      await userEvent.click(within(row).getByRole('button', { name: 'Take back' }));
+      expect(hub.calls('DELETE /admin/waitlist/wl_1/reward')).toHaveLength(1);
+      expect(notify).toHaveBeenCalledWith("Rahul's reward taken back.");
+    });
+
+    it('a refusal is said in the hub\'s words and nothing changes on the row', async () => {
+      const { notify } = setup({
+        'GET /admin/bookings': queue([EARNED]),
+        'POST /admin/waitlist/wl_1/reward': { status: 409, body: { success: false, code: 'NOT_DUE', error: 'This is not a visit that earns a reward for Rahul.' } }
+      });
+      const row = await screen.findByRole('listitem', { name: 'Rahul' });
+      await userEvent.click(within(row).getByRole('button', { name: 'Reward given' }));
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledWith('This is not a visit that earns a reward for Rahul.'));
+      expect(screen.getByText('3rd visit: a free lassi')).toBeInTheDocument();
+    });
+  });
+
   describe('rewards for coming back', () => {
     const EARNED = { ...ASHA, reward_due: { visit_number: 5, text: 'a free dessert' } };
     const GIVEN = { ...ASHA, reward_given_at: new Date(2026, 9, 21, 20, 0).toISOString(), reward_given_text: 'a free dessert', reward_visit: 5 };

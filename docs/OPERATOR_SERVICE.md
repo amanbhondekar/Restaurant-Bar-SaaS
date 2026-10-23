@@ -42,7 +42,7 @@ Start it with `npm run signup`. It warns at start about every missing variable a
    `RAZORPAY_WEBHOOK_SECRET`), for these events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`,
    `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.cancelled`, `subscription.completed`.
    Any other event is acknowledged and ignored.
-3. **Apply migrations 001–018** to the hosted project. Migration 018 adds the columns and the unique index the subscription flow
+3. **Apply migrations 001–019** to the hosted project. Migration 018 adds the columns and the unique index the subscription flow
    writes to. Without it a new subscription is not recorded, and every webhook is answered `502` (Razorpay keeps retrying) because
    the service cannot write what it received.
 

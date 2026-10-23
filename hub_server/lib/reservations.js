@@ -228,38 +228,47 @@ export const reminderMessage = (reservation, restaurantName) =>
 
 // --- the reward for coming back -------------------------------------------------------------------------------
 
+// A reward is given to a booking or to a walk-in, by the same rule. They live in different lists and answer with a different
+// key (`reservation` or `entry`), so what differs is only where to look and what to call it.
+const REWARDED = {
+  reservations: { key: 'reservation', missing: 'That booking is not in the book.' },
+  waitlist: { key: 'entry', missing: 'That party is not in the queue.' }
+};
+
+function giveRewardIn(list, state, id, scheme, { now = new Date() } = {}) {
+  const { key, missing } = REWARDED[list];
+  const found = state[list].find(r => r.id === id);
+  if (!found) return fail(404, 'NOT_FOUND', missing);
+  if (!normalizeRewardScheme(scheme)) return fail(409, 'REWARDS_OFF', 'No reward is set up. Set one in the Rewards panel first.');
+  if (found.reward_given_at) return { ok: true, data: state, meta: { [key]: found, already: true } };
+  const earned = rewardDue(state, found, scheme);
+  if (!earned) return fail(409, 'NOT_DUE', `This is not a visit that earns a reward for ${found.guest_name}.`);
+  const updated = { ...found, reward_given_at: now.toISOString(), reward_given_text: earned.text, reward_visit: earned.visit_number };
+  return { ok: true, data: bump(state, { [list]: state[list].map(r => (r.id === id ? updated : r)) }), meta: { [key]: updated } };
+}
+
+function takeBackRewardIn(list, state, id) {
+  const { key, missing } = REWARDED[list];
+  const found = state[list].find(r => r.id === id);
+  if (!found) return fail(404, 'NOT_FOUND', missing);
+  if (!found.reward_given_at) return { ok: true, data: state, meta: { [key]: found } };
+  const { reward_given_at, reward_given_text, reward_visit, ...rest } = found;
+  return { ok: true, data: bump(state, { [list]: state[list].map(r => (r.id === id ? rest : r)) }), meta: { [key]: rest } };
+}
+
 /**
  * Record that a guest was given the reward their visit earned: when, the words that were promised and which visit it was, so
  * changing the scheme later does not rewrite what a guest was told. It only happens on a visit that earns it, while a scheme
  * is on: the host cannot hand it out at will. Giving it twice changes nothing.
  */
-export function giveReward(state, reservationId, scheme, { now = new Date() } = {}) {
-  const found = state.reservations.find(r => r.id === reservationId);
-  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
-  if (!normalizeRewardScheme(scheme)) return fail(409, 'REWARDS_OFF', 'No reward is set up. Set one in the Rewards panel first.');
-  if (found.reward_given_at) return { ok: true, data: state, meta: { reservation: found, already: true } };
-  const earned = rewardDue(state, found, scheme);
-  if (!earned) return fail(409, 'NOT_DUE', `This is not a visit that earns a reward for ${found.guest_name}.`);
-  const updated = { ...found, reward_given_at: now.toISOString(), reward_given_text: earned.text, reward_visit: earned.visit_number };
-  return {
-    ok: true,
-    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? updated : r)) }),
-    meta: { reservation: updated }
-  };
-}
+export const giveReward = (state, reservationId, scheme, opts) => giveRewardIn('reservations', state, reservationId, scheme, opts);
 
 /** Take it back (pressed by mistake): the visit is due the reward again. */
-export function takeBackReward(state, reservationId) {
-  const found = state.reservations.find(r => r.id === reservationId);
-  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
-  if (!found.reward_given_at) return { ok: true, data: state, meta: { reservation: found } };
-  const { reward_given_at, reward_given_text, reward_visit, ...rest } = found;
-  return {
-    ok: true,
-    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? rest : r)) }),
-    meta: { reservation: rest }
-  };
-}
+export const takeBackReward = (state, reservationId) => takeBackRewardIn('reservations', state, reservationId);
+
+/** The same, for a guest in the walk-in queue. A booking's id is not found here, nor a walk-in's in the book. */
+export const giveWalkInReward = (state, entryId, scheme, opts) => giveRewardIn('waitlist', state, entryId, scheme, opts);
+export const takeBackWalkInReward = (state, entryId) => takeBackRewardIn('waitlist', state, entryId);
 
 // --- the walk-in queue ---------------------------------------------------------------------------
 

@@ -1555,6 +1555,12 @@ const prepareSummaries = () => {
 setTimeout(prepareSummaries, 3000).unref();
 setInterval(prepareSummaries, 30 * 60 * 1000).unref();
 
+// What a booking or a walk-in earns under the restaurant's own rule, if it has set one (lib/loyalty.js).
+const rewardOffer = row => {
+  const earned = reservationStore.rewardDue(hubConfig.getPairingInfo().restaurant_id, row, rewardScheme());
+  return earned ? { reward_due: earned } : {};
+};
+
 app.get('/admin/bookings', requireReception, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const snap = reservationStore.snapshot(pairing.restaurant_id, localDay(req.query.day));
@@ -1566,10 +1572,9 @@ app.get('/admin/bookings', requireReception, (req, res) => {
       ...withContact(r, bookingMessage(r, name)),
       // The same link with the reminder's words in it, for a booking that can still be reminded.
       ...(r.phone && r.status === 'booked' ? { reminder_whatsapp: whatsappLink(r.phone, reminderMessage(r, name)) } : {}),
-      // What this visit earns under the restaurant's own rule, if it has set one (lib/loyalty.js).
-      ...(() => { const earned = reservationStore.rewardDue(pairing.restaurant_id, r, rewardScheme()); return earned ? { reward_due: earned } : {}; })()
+      ...rewardOffer(r)
     })),
-    waitlist: snap.waitlist.map(e => withContact(e, readyMessage(e, name)))
+    waitlist: snap.waitlist.map(e => ({ ...withContact(e, readyMessage(e, name)), ...rewardOffer(e) }))
   });
 });
 
@@ -1675,6 +1680,21 @@ app.post('/admin/waitlist', requireReception, (req, res) => {
   const result = reservationStore.addWalkIn(pairing.restaurant_id, req.body);
   if (!result.ok) return bookingRefusal(res, result);
   res.status(201).json({ success: true, revision: result.data.revision, entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName())) });
+});
+
+// The same reward, for a guest in the queue who has been here before (they have to have left a number to be recognised).
+app.post('/admin/waitlist/:id/reward', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.giveWalkInReward(pairing.restaurant_id, req.params.id, pairing.rewards);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, already: result.meta.already === true, entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName())) });
+});
+
+app.delete('/admin/waitlist/:id/reward', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.takeBackWalkInReward(pairing.restaurant_id, req.params.id);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName())) });
 });
 
 app.put('/admin/waitlist/:id/status', requireReception, (req, res) => {

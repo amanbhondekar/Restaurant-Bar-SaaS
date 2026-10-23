@@ -236,10 +236,11 @@ export function BookingsTab({ notify }) {
   };
   // The reward the restaurant gives on a guest's Nth visit (its own rule, set in the Rewards panel). The hub records that it was
   // given; applying it on the bill is still a person's job.
-  const giveReward = async r => {
+  // The same for a guest at the door: their reward is on the queue's own route, so a booking's id can never reach it.
+  const giveReward = async (r, where = 'bookings') => {
     setBusy(true);
     try {
-      await hubSend('POST', `/admin/bookings/${encodeURIComponent(r.id)}/reward`, {});
+      await hubSend('POST', `/admin/${where === 'queue' ? 'waitlist' : 'bookings'}/${encodeURIComponent(r.id)}/reward`, {});
       notify(`Reward recorded for ${r.guest_name}: ${r.reward_due.text}.`);
       await load();
     } catch (e) {
@@ -248,10 +249,10 @@ export function BookingsTab({ notify }) {
       setBusy(false);
     }
   };
-  const takeBackReward = async r => {
+  const takeBackReward = async (r, where = 'bookings') => {
     setBusy(true);
     try {
-      await hubSend('DELETE', `/admin/bookings/${encodeURIComponent(r.id)}/reward`);
+      await hubSend('DELETE', `/admin/${where === 'queue' ? 'waitlist' : 'bookings'}/${encodeURIComponent(r.id)}/reward`);
       notify(`${r.guest_name}'s reward taken back.`);
       await load();
     } catch (e) {
@@ -364,6 +365,8 @@ export function BookingsTab({ notify }) {
                       <Badge variant="outline">{entry.party_size}</Badge>
                       <Badge variant="outline" style={toneStyle(WAITLIST_TONE[entry.status])}>{WAITLIST_LABEL[entry.status]}</Badge>
                       {late && <Badge variant="outline" style={toneStyle('rust')}>Over the wait they were told</Badge>}
+                      {entry.reward_due && <Badge variant="outline" style={toneStyle('green')}>{ordinal(entry.reward_due.visit_number)} visit: {entry.reward_due.text}</Badge>}
+                      {entry.reward_given_at && <Badge variant="outline" style={toneStyle('muted')}>Reward given: {entry.reward_given_text}</Badge>}
                     </div>
                     <div className="text-sm text-muted-foreground">
                       Waiting {formatWait(waitedMins(entry, now))}{entry.quoted_wait_mins ? ` of the ${entry.quoted_wait_mins} min they were told` : ''}
@@ -371,6 +374,8 @@ export function BookingsTab({ notify }) {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <ContactButtons row={entry} label="their table is ready" />
+                    {entry.reward_due && <Button className="h-9" disabled={busy} onClick={() => giveReward(entry, 'queue')}>Reward given</Button>}
+                    {entry.reward_given_at && <Button variant="outline" className="h-9" disabled={busy} onClick={() => takeBackReward(entry, 'queue')}>Take back</Button>}
                     {entry.phone && entry.status === 'waiting' && (
                       <Button variant="outline" className="h-9" disabled={busy} onClick={() => run(() => hubSend('PUT', `/admin/waitlist/${encodeURIComponent(entry.id)}/status`, { status: 'notified' }), () => `${entry.guest_name} marked as messaged.`)}>
                         Mark messaged

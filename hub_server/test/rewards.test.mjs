@@ -2,7 +2,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeRewardScheme, rewardDue, MAX_VISITS_BETWEEN, REWARD_TEXT_MAX } from '../lib/loyalty.js';
-import { emptyState, book, setReservationStatus, addWalkIn, setWaitlistStatus, giveReward, takeBackReward } from '../lib/reservations.js';
+import { emptyState, book, setReservationStatus, addWalkIn, setWaitlistStatus, giveReward, takeBackReward, giveWalkInReward, takeBackWalkInReward } from '../lib/reservations.js';
 import { startHub, call, RESTAURANT_ID } from './helpers/spawnHub.mjs';
 
 // A reward for coming back, in the one form that does not need the product to decide anything commercial: the RESTAURANT
@@ -155,6 +155,82 @@ test('it can be taken back, and the visit is due it again', () => {
   refused(takeBackReward(d.s, 'res_nope'), 'NOT_FOUND');
 });
 
+// --- walk-ins ------------------------------------------------------------------------------------------------------
+
+/** A diary where `phone` has been seated `visits` times (as bookings) and has just joined the queue. Returns the walk-in. */
+function queueDiary(visits, { entryPhone = PHONE } = {}) {
+  let s = emptyState(RID);
+  for (let i = 0; i < visits; i++) {
+    const r = ok(book(s, { guest_name: 'Asha', phone: PHONE, party_size: 2, at: day(i) }, { now: new Date(2026, 8, 1), tables: TABLES, force: true }));
+    s = ok(setReservationStatus(r.data, r.meta.reservation.id, 'seated', { now: new Date(day(i)) })).data;
+  }
+  s = ok(addWalkIn(s, { guest_name: 'Asha', ...(entryPhone ? { phone: entryPhone } : {}), party_size: 2 }, { now: NOW })).data;
+  return { s, entry: s.waitlist[s.waitlist.length - 1] };
+}
+const walkInDue = ({ s, entry }, scheme = SCHEME) => rewardDue(s, s.waitlist.find(e => e.id === entry.id), scheme);
+const moved = (d, status) => ok(setWaitlistStatus(d.s, d.entry.id, status, { now: NOW })).data;
+
+test('a walk-in on their 5th visit is due the reward from the moment they join the queue', () => {
+  assert.deepEqual(walkInDue(queueDiary(4)), { visit_number: 5, text: 'a free dessert' });
+  for (const visits of [0, 1, 3, 5, 6]) assert.equal(walkInDue(queueDiary(visits)), null, `after ${visits} visits`);
+});
+
+test('a walk-in is due it while waiting, once messaged and once seated (not counted as their own earlier visit), but not once they have left', () => {
+  const d = queueDiary(4);
+  for (const status of ['notified', 'seated']) {
+    const s = moved(d, status);
+    assert.equal(rewardDue(s, s.waitlist.find(e => e.id === d.entry.id), SCHEME).visit_number, 5, status);
+  }
+  const left = moved(d, 'left');
+  assert.equal(rewardDue(left, left.waitlist.find(e => e.id === d.entry.id), SCHEME), null, 'a party that gave up earns nothing');
+});
+
+test('a walk-in who gave no number cannot be recognised, so is offered nothing; and with no scheme nothing is due', () => {
+  assert.equal(walkInDue(queueDiary(4, { entryPhone: null })), null);
+  assert.equal(walkInDue(queueDiary(4), null), null);
+});
+
+test("a walk-in's earlier visits are counted the same way as a booking's: another guest's do not count", () => {
+  const d = queueDiary(4);
+  const other = ok(book(d.s, { guest_name: 'Someone', phone: OTHER, party_size: 2, at: day(9) }, { now: new Date(2026, 8, 1), tables: TABLES, force: true }));
+  const s = ok(setReservationStatus(other.data, other.meta.reservation.id, 'seated', { now: new Date(day(9)) })).data;
+  assert.equal(rewardDue(s, s.waitlist.find(e => e.id === d.entry.id), SCHEME).visit_number, 5);
+});
+
+test('giving a walk-in the reward records when, the words promised and which visit, and it is not offered again', () => {
+  const d = queueDiary(4);
+  const r = ok(giveWalkInReward(d.s, d.entry.id, SCHEME, { now: NOW }));
+  assert.deepEqual([r.meta.entry.reward_given_at, r.meta.entry.reward_given_text, r.meta.entry.reward_visit], [NOW.toISOString(), 'a free dessert', 5]);
+  assert.equal(r.data.revision, d.s.revision + 1);
+  assert.equal(d.s.waitlist.find(e => e.id === d.entry.id).reward_given_at, undefined, 'the state it was given is not changed');
+  assert.equal(rewardDue(r.data, r.data.waitlist.find(e => e.id === d.entry.id), SCHEME), null);
+});
+
+test('it cannot be given to a walk-in at will, and a booking is not a walk-in', () => {
+  const early = queueDiary(2);
+  refused(giveWalkInReward(early.s, early.entry.id, SCHEME, { now: NOW }), 'NOT_DUE');
+  const d = queueDiary(4);
+  refused(giveWalkInReward(d.s, d.entry.id, null, { now: NOW }), 'REWARDS_OFF');
+  assert.equal(refused(giveWalkInReward(d.s, 'wl_nope', SCHEME, { now: NOW }), 'NOT_FOUND').error, 'That party is not in the queue.');
+  refused(giveWalkInReward(d.s, d.s.reservations[0].id, SCHEME, { now: NOW }), 'NOT_FOUND');
+  refused(takeBackWalkInReward(d.s, d.s.reservations[0].id), 'NOT_FOUND');
+  assert.equal(refused(takeBackWalkInReward(d.s, 'wl_nope'), 'NOT_FOUND').error, 'That party is not in the queue.');
+});
+
+test('giving it to a walk-in twice changes nothing, and it can be taken back', () => {
+  const d = queueDiary(4);
+  const first = ok(giveWalkInReward(d.s, d.entry.id, SCHEME, { now: NOW }));
+  const second = ok(giveWalkInReward(first.data, d.entry.id, SCHEME, { now: new Date(NOW.getTime() + 3600000) }));
+  assert.equal(second.data, first.data);
+  assert.equal(second.meta.already, true);
+  assert.equal(second.meta.entry.reward_given_at, NOW.toISOString());
+
+  const back = ok(takeBackWalkInReward(first.data, d.entry.id));
+  for (const k of ['reward_given_at', 'reward_given_text', 'reward_visit']) assert.equal(k in back.meta.entry, false, k);
+  assert.equal(rewardDue(back.data, back.data.waitlist.find(e => e.id === d.entry.id), SCHEME).visit_number, 5);
+  assert.equal(ok(takeBackWalkInReward(d.s, d.entry.id)).data, d.s, 'nothing given: nothing changes');
+});
+
 // --- a real hub ---------------------------------------------------------------------------------------------------------
 
 let reception;
@@ -239,9 +315,61 @@ test('hub: a reward cannot be given on a visit that has not earned it, or with n
 });
 
 test('hub: a waiter\'s handset cannot set the scheme, give a reward or take one back', async () => {
-  for (const [method, path, body] of [['GET', '/admin/rewards'], ['PUT', '/admin/rewards', { every_n_visits: 2, text: 'x' }], ['POST', '/admin/bookings/res_1/reward', {}], ['DELETE', '/admin/bookings/res_1/reward']]) {
+  for (const [method, path, body] of [['GET', '/admin/rewards'], ['PUT', '/admin/rewards', { every_n_visits: 2, text: 'x' }], ['POST', '/admin/bookings/res_1/reward', {}], ['DELETE', '/admin/bookings/res_1/reward'], ['POST', '/admin/waitlist/wl_1/reward', {}], ['DELETE', '/admin/waitlist/wl_1/reward']]) {
     const res = await call(remote, path, { method, token: handset, body });
     assert.equal(res.status, 403, `${method} ${path}`);
     assert.equal((await res.json()).code, 'RECEPTION_ONLY');
   }
+});
+
+// --- walk-ins, on a real hub -------------------------------------------------------------------------------------------
+
+const PHONE3 = '98777 66655';
+const addToQueue = async (name, phone) => {
+  const r = await call(reception, '/admin/waitlist', { method: 'POST', body: { guest_name: name, party_size: 2, ...(phone ? { phone } : {}) } });
+  assert.equal(r.status, 201, JSON.stringify(await r.clone().json()));
+  return (await r.json()).entry;
+};
+const queueRow = async id => (await (await call(reception, '/admin/bookings')).json()).waitlist.find(e => e.id === id);
+
+test('hub: the queue says which walk-in is on their 3rd visit, and giving the reward is recorded, shown, and can be taken back', async () => {
+  await call(reception, '/admin/rewards', { method: 'PUT', body: { every_n_visits: 3, text: 'a free lassi' } });
+  for (const h of [7, 8]) await seat((await bookNow('Regular', PHONE3, h)).id);
+  const regular = await addToQueue('Regular', PHONE3);
+  const stranger = await addToQueue('Newcomer', '98123 45678');
+  const nobody = await addToQueue('No Number');
+
+  assert.deepEqual((await queueRow(regular.id)).reward_due, { visit_number: 3, text: 'a free lassi' });
+  assert.equal((await queueRow(stranger.id)).reward_due, undefined, 'a first visit has nothing to offer');
+  assert.equal((await queueRow(nobody.id)).reward_due, undefined, 'and a guest with no number cannot be recognised');
+
+  const given = await call(reception, `/admin/waitlist/${regular.id}/reward`, { method: 'POST' });
+  assert.equal(given.status, 200);
+  const after = await queueRow(regular.id);
+  assert.equal(after.reward_due, undefined);
+  assert.equal(after.reward_given_text, 'a free lassi');
+  assert.ok(Math.abs(Date.parse(after.reward_given_at) - Date.now()) < SKEW_MS);
+
+  const again = await (await call(reception, `/admin/waitlist/${regular.id}/reward`, { method: 'POST' })).json();
+  assert.equal(again.already, true, 'giving it twice says it was already given');
+  assert.equal((await queueRow(regular.id)).reward_given_at, after.reward_given_at, 'and keeps the first time');
+
+  assert.equal((await call(reception, `/admin/waitlist/${regular.id}/reward`, { method: 'DELETE' })).status, 200);
+  assert.deepEqual((await queueRow(regular.id)).reward_due, { visit_number: 3, text: 'a free lassi' });
+});
+
+test("hub: a walk-in's reward cannot be given too early, with no scheme, to nobody, or by using a booking's id", async () => {
+  await call(reception, '/admin/rewards', { method: 'PUT', body: { every_n_visits: 3, text: 'a free lassi' } });
+  const newcomer = await addToQueue('Early', '98000 11122');
+  const notDue = await call(reception, `/admin/waitlist/${newcomer.id}/reward`, { method: 'POST' });
+  assert.deepEqual([notDue.status, (await notDue.json()).code], [409, 'NOT_DUE']);
+  assert.equal((await call(reception, '/admin/waitlist/wl_nope/reward', { method: 'POST' })).status, 404);
+  assert.equal((await call(reception, '/admin/waitlist/wl_nope/reward', { method: 'DELETE' })).status, 404);
+
+  const booking = await bookNow('A booking', '98555 44433', 9);
+  assert.equal((await call(reception, `/admin/waitlist/${booking.id}/reward`, { method: 'POST' })).status, 404, 'a booking is not in the queue');
+
+  await call(reception, '/admin/rewards', { method: 'PUT', body: { enabled: false } });
+  const off = await call(reception, `/admin/waitlist/${newcomer.id}/reward`, { method: 'POST' });
+  assert.deepEqual([off.status, (await off.json()).code], [409, 'REWARDS_OFF']);
 });

@@ -39,18 +39,23 @@ export function normalizeRewardScheme(raw) {
   return { enabled: true, every_n_visits: every, text };
 }
 
+/** A visit that can earn the reward: a booking still on the books or seated, a walk-in still at the door or seated. */
+const EARNS = new Set(['booked', 'seated', 'waiting', 'notified']);
+
+// Array.isArray rather than a default, for the same reason as below: a damaged file can hold a string where a list should be.
+const without = (rows, id) => (Array.isArray(rows) ? rows : []).filter(r => r.id !== id);
+
 /**
- * Whether this booking is a visit that earns the reward, as `{ visit_number, text }`, or null. It is when the guest has sat
- * down a multiple of N minus one times before: the 5th, 10th and 15th visit of a "every 5th" rule. Only seated visits count
- * (not cancellations, no-shows or other guests), the booking is not counted as its own earlier visit, and a reward already
- * given for it is not offered again.
+ * Whether this booking or walk-in is a visit that earns the reward, as `{ visit_number, text }`, or null. It is when the guest
+ * has sat down a multiple of N minus one times before: the 5th, 10th and 15th visit of a "every 5th" rule. Only seated visits
+ * count (not cancellations, no-shows, parties that gave up waiting, or other guests), the visit is not counted as its own
+ * earlier one, and a reward already given for it is not offered again. A walk-in can only be recognised if they left a number.
  */
 export function rewardDue(state, reservation, scheme) {
   const rule = normalizeRewardScheme(scheme);
   if (!rule || !reservation || !reservation.phone_key || reservation.reward_given_at) return null;
-  if (reservation.status !== 'booked' && reservation.status !== 'seated') return null;
-  const others = { reservations: (state?.reservations || []).filter(r => r.id !== reservation.id), waitlist: state?.waitlist };
-  const prior = [...visitsFrom(others.reservations, 'reservations'), ...visitsFrom(others.waitlist, 'waitlist')]
+  if (!EARNS.has(reservation.status)) return null;
+  const prior = [...visitsFrom(without(state?.reservations, reservation.id), 'reservations'), ...visitsFrom(without(state?.waitlist, reservation.id), 'waitlist')]
     .filter(v => v.phone_key === reservation.phone_key).length;
   const visit = prior + 1;
   return visit % rule.every_n_visits === 0 ? { visit_number: visit, text: rule.text } : null;

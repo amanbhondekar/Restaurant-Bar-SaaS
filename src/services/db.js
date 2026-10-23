@@ -109,43 +109,6 @@ export const INITIAL_TABLES = {
   ]
 };
 
-export const INITIAL_WAITLIST = {
-  rest_mejwani: [
-    {
-      id: 'w1',
-      name: 'Deshmukh Family',
-      phone: '98220XXXXX',
-      partySize: 5,
-      section: 'Family Room',
-      createdAt: new Date(Date.now() - 18 * 60000).toISOString(),
-      status: 'waiting',
-      estimatedWaitMins: 15
-    },
-    {
-      id: 'w2',
-      name: 'Pankaj Bawane',
-      phone: '94231XXXXX',
-      partySize: 2,
-      section: 'AC Room',
-      createdAt: new Date(Date.now() - 8 * 60000).toISOString(),
-      status: 'waiting',
-      estimatedWaitMins: 8
-    },
-  ],
-  rest_spicegarden: [
-    {
-      id: 'sg_w1',
-      name: 'Varun K',
-      phone: '98450XXXXX',
-      partySize: 3,
-      section: 'Garden Lawn',
-      createdAt: new Date(Date.now() - 5 * 60000).toISOString(),
-      status: 'waiting',
-      estimatedWaitMins: 10
-    }
-  ]
-};
-
 export const INITIAL_TICKETS = {
   rest_mejwani: [
     {

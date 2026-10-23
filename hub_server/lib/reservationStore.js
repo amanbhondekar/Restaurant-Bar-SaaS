@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 import {
   emptyState, normalizeState, book, setReservationStatus, addWalkIn, setWaitlistStatus,
-  bookingsOn, queue, seatedWalkInCount, summarize, availability, remindersDue, markReminded, unmarkReminded, giveReward, takeBackReward
+  bookingsOn, queue, seatedWalkInCount, summarize, availability, remindersDue, markReminded, unmarkReminded, giveReward, takeBackReward, giveWalkInReward, takeBackWalkInReward
 } from './reservations.js';
 import { rewardDue } from './loyalty.js';
 
@@ -119,7 +119,9 @@ export class ReservationStore {
   remindersDue(rid, opts) { return remindersDue(this.stateFor(rid), opts); }
   giveReward(rid, id, scheme, opts) { return this.commit(rid, s => giveReward(s, id, scheme, opts)); }
   takeBackReward(rid, id) { return this.commit(rid, s => takeBackReward(s, id)); }
-  /** Whether this booking earns the reward under the scheme (lib/loyalty.js). */
+  giveWalkInReward(rid, id, scheme, opts) { return this.commit(rid, s => giveWalkInReward(s, id, scheme, opts)); }
+  takeBackWalkInReward(rid, id) { return this.commit(rid, s => takeBackWalkInReward(s, id)); }
+  /** Whether this booking or walk-in earns the reward under the scheme (lib/loyalty.js). */
   rewardDue(rid, reservation, scheme) { return rewardDue(this.stateFor(rid), reservation, scheme); }
   addWalkIn(rid, input, opts) { return this.commit(rid, s => addWalkIn(s, input, opts)); }
   setWaitlistStatus(rid, id, status, opts) { return this.commit(rid, s => setWaitlistStatus(s, id, status, opts)); }

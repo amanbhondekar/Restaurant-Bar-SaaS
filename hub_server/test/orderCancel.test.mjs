@@ -222,9 +222,16 @@ test('hub: a table with nothing left on it reads as free again', async () => {
 test('hub: the cancellation is queued for the cloud against the order\'s own request id', async () => {
   const t = await order([{ id: 'tea', qty: 1 }]);
   await cancel(t.id);
-  await new Promise(r => setTimeout(r, 300));
-  const queue = JSON.parse(fs.readFileSync(path.join(hub.dataDir, 'sync_queue.json'), 'utf8'));
-  const item = queue.find(q => q.type === 'UPDATE_STATUS' && q.payload.status === 'cancelled' && q.payload.requestId === t.order_request_id);
+  // The queue is written to disk in the background, so look until it is there rather than after a fixed wait: on a busy machine
+  // a fixed wait is a coin toss.
+  const find = () => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(hub.dataDir, 'sync_queue.json'), 'utf8'))
+        .find(q => q.type === 'UPDATE_STATUS' && q.payload.status === 'cancelled' && q.payload.requestId === t.order_request_id);
+    } catch { return undefined; }   // caught mid-write
+  };
+  let item = find();
+  for (let waited = 0; !item && waited < 5000; waited += 50) { await new Promise(r => setTimeout(r, 50)); item = find(); }
   assert.ok(item, 'a cancelled status for this order is waiting to go up');
   assert.equal(item.payload.restaurantId, RESTAURANT_ID);
 });

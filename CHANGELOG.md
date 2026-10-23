@@ -12,6 +12,7 @@ and what is not.
 Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 
 ### Added
+- **The reward for coming back, for a guest at the door**: a walk-in who left a number and has been here before is offered the same reward as a booking, under the same rule, in the queue ("3rd visit: a free lassi"); the host records that it was given, and can take it back (migration 019). A guest who gave no number cannot be recognised and is offered nothing.
 - **Subscribing from the Plan tab**: the owner starts a subscription (and is sent to Razorpay's page to authorise payment; nothing
   is charged until they do), switches plan or cancels, the last two after an "are you sure" and at the end of the paid period. The
   hub only forwards (`/admin/billing…`, reception only); the operator service decides and calls Razorpay, and the restaurant comes
@@ -34,12 +35,13 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   queue with WhatsApp click-to-chat (migration 011).
 - **Role-scoped devices**: a `kitchen` device token reaches five routes only; the live feed now tells it the board and not the
   bill (`hub_server/lib/liveFeed.js`).
-- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–018, privileges, pairing, the owner's access, and
+- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–019, privileges, pairing, the owner's access, and
   the hub's own push and restore code round-tripped against the schema.
-- **Tests for every reception surface**: the frontend suite grew from none to 911 tests, including the whole Kitchen Display
+- **Tests for every reception surface**: the frontend suite grew from none to 916 tests, including the whole Kitchen Display
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
+- The demo-era waitlist that lived in the browser (its state, demo rows and two operations in `PosContext`) is deleted; the hub queue replaced it long ago.
 - The Kitchen Display is no longer one 1,950-line file: `src/kitchen_main.jsx` is 360 lines and the rest is in `src/kitchen/`
   (a `useBill` hook and seven components), with 100+ tests behind it.
 - A kitchen token is sent only what a station screen draws: an allow-list of event keys, ticket fields and line fields, not a
@@ -65,7 +67,7 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 - A queue file that would not parse was answered with an empty queue and overwritten; it is now salvaged and kept.
 
 ### Known gaps
-- Migrations 004–018 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
+- Migrations 004–019 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
   have never been made against Razorpay itself (no keys). A subscription runs for 12 billing periods and then ends; whether that
   is the right length is undecided.
 - The owner view is not deployed; the waiter's QR scanner needs a camera and is untested; nothing drives a real browser in CI.

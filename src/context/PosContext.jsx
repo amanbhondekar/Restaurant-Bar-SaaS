@@ -3,7 +3,6 @@ import {
   DEMO_RESTAURANTS,
   INITIAL_MENU,
   INITIAL_TABLES,
-  INITIAL_WAITLIST,
   INITIAL_TICKETS,
   INITIAL_STAFF,
   loadStoredData,
@@ -25,7 +24,6 @@ export const PosProvider = ({ children }) => {
   const [allTables, setAllTables] = useState(() => loadStoredData('all_tables', INITIAL_TABLES));
   const [allMenu, setAllMenu] = useState(() => loadStoredData('all_menu', INITIAL_MENU));
   const [allTickets, setAllTickets] = useState(() => loadStoredData('all_tickets', INITIAL_TICKETS));
-  const [allWaitlist, setAllWaitlist] = useState(() => loadStoredData('all_waitlist', INITIAL_WAITLIST));
   const [allStaff, setAllStaff] = useState(() => loadStoredData('all_staff', INITIAL_STAFF));
   const [allCloudQueues, setAllCloudQueues] = useState(() => loadStoredData('all_cloud_queues', {}));
 
@@ -57,7 +55,6 @@ export const PosProvider = ({ children }) => {
   useEffect(() => saveStoredData('all_tables', allTables), [allTables]);
   useEffect(() => saveStoredData('all_menu', allMenu), [allMenu]);
   useEffect(() => saveStoredData('all_tickets', allTickets), [allTickets]);
-  useEffect(() => saveStoredData('all_waitlist', allWaitlist), [allWaitlist]);
   useEffect(() => saveStoredData('all_staff', allStaff), [allStaff]);
   useEffect(() => saveStoredData('all_cloud_queues', allCloudQueues), [allCloudQueues]);
   useEffect(() => saveStoredData('pairing_state', pairingState), [pairingState]);
@@ -66,7 +63,6 @@ export const PosProvider = ({ children }) => {
   const tables = allTables[currentRestaurantId] || [];
   const menu = allMenu[currentRestaurantId] || [];
   const tickets = allTickets[currentRestaurantId] || [];
-  const waitlist = allWaitlist[currentRestaurantId] || [];
   const staff = allStaff[currentRestaurantId] || [];
   const cloudQueue = allCloudQueues[currentRestaurantId] || [];
 
@@ -149,11 +145,6 @@ export const PosProvider = ({ children }) => {
 
         case 'UPDATE_TABLES': {
           setAllTables(prev => ({ ...prev, [restaurantId]: payload }));
-          break;
-        }
-
-        case 'UPDATE_WAITLIST': {
-          setAllWaitlist(prev => ({ ...prev, [restaurantId]: payload }));
           break;
         }
 
@@ -499,7 +490,6 @@ export const PosProvider = ({ children }) => {
     setAllTables(prev => ({ ...prev, [restId]: createdTables }));
     setAllMenu(prev => ({ ...prev, [restId]: createdMenu }));
     setAllTickets(prev => ({ ...prev, [restId]: [] }));
-    setAllWaitlist(prev => ({ ...prev, [restId]: [] }));
     setAllStaff(prev => ({ ...prev, [restId]: createdStaff }));
 
     // Switch to newly created restaurant
@@ -511,38 +501,6 @@ export const PosProvider = ({ children }) => {
     });
 
     return newRest;
-  };
-
-  // Waitlist Operations
-  const addWaitlistEntry = (entry) => {
-    const newEntry = {
-      id: 'w_' + Date.now(),
-      createdAt: new Date().toISOString(),
-      status: 'waiting',
-      ...entry
-    };
-    const updated = [newEntry, ...waitlist];
-    setAllWaitlist(prev => ({ ...prev, [currentRestaurantId]: updated }));
-    lanBus.publish('UPDATE_WAITLIST', updated, currentRestaurantId);
-  };
-
-  const updateWaitlistStatus = (id, status, assignedTableId = null) => {
-    const updated = waitlist.map(w => w.id === id ? { ...w, status, assignedTableId } : w);
-    setAllWaitlist(prev => ({ ...prev, [currentRestaurantId]: updated }));
-    lanBus.publish('UPDATE_WAITLIST', updated, currentRestaurantId);
-
-    if (status === 'seated' && assignedTableId) {
-      setAllTables(prev => {
-        const list = prev[currentRestaurantId] || [];
-        const nextTables = list.map(t => t.id === assignedTableId ? {
-          ...t,
-          status: 'occupied',
-          occupiedSince: new Date().toISOString()
-        } : t);
-        lanBus.publish('UPDATE_TABLES', nextTables, currentRestaurantId);
-        return { ...prev, [currentRestaurantId]: nextTables };
-      });
-    }
   };
 
   // Admin Menu Operations
@@ -606,7 +564,6 @@ export const PosProvider = ({ children }) => {
       tables,
       menu,
       tickets,
-      waitlist,
       staff,
       cloudQueue,
       isSyncing,
@@ -623,8 +580,6 @@ export const PosProvider = ({ children }) => {
       submitOrder: sendOrderToKitchen,
       markTicketReady,
       clearTableBill,
-      addWaitlistEntry,
-      updateWaitlistStatus,
       addMenuItem,
       updateMenuItem,
       deleteMenuItem,

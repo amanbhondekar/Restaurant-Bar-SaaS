@@ -114,6 +114,19 @@ test('a walk-in carries what it has and nulls what it does not', () => {
   assert.equal(walkInRow(RID, { ...WALKIN, phone: undefined, phone_key: undefined }).phone, null);
 });
 
+test('a walk-in that was given the reward carries it up and gets it back', async () => {
+  const given = { ...WALKIN, reward_given_at: '2026-10-21T19:00:00.000Z', reward_given_text: 'a free dessert', reward_visit: 5 };
+  const row = walkInRow(RID, given);
+  assert.deepEqual([row.reward_given_at, row.reward_given_text, row.reward_visit], ['2026-10-21T19:00:00.000Z', 'a free dessert', 5]);
+  const plain = walkInRow(RID, WALKIN);
+  assert.deepEqual([plain.reward_given_at, plain.reward_given_text, plain.reward_visit], [null, null, null]);
+  const cloud = fakeCloud();
+  await pushReservations(cloud, RID, snapshot({ waitlist: [given] }));
+  assert.deepEqual((await pullReservations(cloud, RID)).waitlist[0], given, 'a given reward survives a replacement laptop');
+  const asText = fakeCloud({ walkins: [{ ...walkInRow(RID, given), reward_visit: '5' }] });
+  assert.strictEqual((await pullReservations(asText, RID)).waitlist[0].reward_visit, 5, 'a number that arrives as text is still a number');
+});
+
 // --- the push -----------------------------------------------------------------------------------
 
 test('push: bookings and walk-ins both go, and removals only after everything is written', async () => {
