@@ -1368,7 +1368,7 @@ app.get('/reconciliation/ledger.csv', receptionCash, (req, res) => {
 });
 
 // 7d. POST /invoices/:id/void — Reopen the underlying tickets and record why
-app.post('/invoices/:id/void', requireDevice, (req, res) => {
+app.post('/invoices/:id/void', requireDevice, requireReceptionFor('Voiding a bill'), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1398,7 +1398,7 @@ app.post('/invoices/:id/void', requireDevice, (req, res) => {
 });
 
 // 7e. POST /invoices/:id/mark-paid — Record a settled payment against the invoice
-app.post('/invoices/:id/mark-paid', requireDevice, (req, res) => {
+app.post('/invoices/:id/mark-paid', requireDevice, requireReceptionFor('Settling a bill'), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1830,7 +1830,7 @@ app.post('/invoices/:id/print-receipt', requireDevice, async (req, res) => {
 });
 
 // 7e-2. POST /invoices/:id/refund — Reverse a paid invoice (parent + all paid splits)
-app.post('/invoices/:id/refund', requireDevice, requireFeature(FEATURES.REFUNDS), (req, res) => {
+app.post('/invoices/:id/refund', requireDevice, requireReceptionFor('Refunding a bill'), requireFeature(FEATURES.REFUNDS), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1851,7 +1851,7 @@ app.post('/invoices/:id/refund', requireDevice, requireFeature(FEATURES.REFUNDS)
 });
 
 // 7f. POST /invoices/:id/split-by-seats — Divide grand_total into N equal shares
-app.post('/invoices/:id/split-by-seats', requireDevice, requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
+app.post('/invoices/:id/split-by-seats', requireDevice, requireReceptionFor('Splitting a bill'), requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1872,7 +1872,7 @@ app.post('/invoices/:id/split-by-seats', requireDevice, requireFeature(FEATURES.
 });
 
 // 7f-3. POST /invoices/:id/split-by-items — Per-split item assignment
-app.post('/invoices/:id/split-by-items', requireDevice, requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
+app.post('/invoices/:id/split-by-items', requireDevice, requireReceptionFor('Splitting a bill'), requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1893,7 +1893,7 @@ app.post('/invoices/:id/split-by-items', requireDevice, requireFeature(FEATURES.
 });
 
 // 7f-2. POST /invoices/:id/split-by-amounts — Reception-supplied per-split amounts
-app.post('/invoices/:id/split-by-amounts', requireDevice, requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
+app.post('/invoices/:id/split-by-amounts', requireDevice, requireReceptionFor('Splitting a bill'), requireFeature(FEATURES.SPLIT_BILL), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1914,7 +1914,7 @@ app.post('/invoices/:id/split-by-amounts', requireDevice, requireFeature(FEATURE
 });
 
 // 7g. DELETE /invoices/:id/splits — Undo the split (only if nothing is paid yet)
-app.delete('/invoices/:id/splits', requireDevice, (req, res) => {
+app.delete('/invoices/:id/splits', requireDevice, requireReceptionFor('Undoing a split'), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const result = invoiceStore.unsplit(req.params.id, pairing.restaurant_id);
 
@@ -1930,7 +1930,7 @@ app.delete('/invoices/:id/splits', requireDevice, (req, res) => {
 });
 
 // 7h. POST /invoices/:id/splits/:index/mark-paid — Settle one seat share
-app.post('/invoices/:id/splits/:index/mark-paid', requireDevice, (req, res) => {
+app.post('/invoices/:id/splits/:index/mark-paid', requireDevice, requireReceptionFor('Settling a split'), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
 
@@ -1960,6 +1960,14 @@ app.post('/invoices/:id/splits/:index/mark-paid', requireDevice, (req, res) => {
   res.json({ success: true, invoice: result.invoice, parent_settled: result.parent_settled });
 });
 
+/** True when a close-the-table body tries to change what the bill comes to (any discount, or a service-charge override). */
+function setsPrice(adjustments) {
+  if (!adjustments) return false;
+  const discounts = adjustments.discounts;
+  const hasDiscount = Array.isArray(discounts) ? discounts.length > 0 : discounts !== undefined && discounts !== null;
+  return hasDiscount || (adjustments.service_charge_percent !== undefined && adjustments.service_charge_percent !== null);
+}
+
 function issueInvoiceForTable(tableId, pairing, adjustments) {
   const openTickets = ticketStore.getActiveTicketsForTable(tableId, pairing.restaurant_id);
   if (openTickets.length === 0) return { ok: true, invoice: null };
@@ -1981,6 +1989,16 @@ app.post('/tables/:id/clear', requireDevice, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const tableId = req.params.id;
   const adjustments = (req.body && typeof req.body === 'object') ? req.body : undefined;
+
+  // A handset closes a table at the price on the screen. A discount or a service-charge override is a
+  // money decision, so it is reception's alone -- and refused before anything is billed or cleared.
+  if (setsPrice(adjustments) && !isReceptionRequest(req)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Discounts and service-charge changes are only available on the reception laptop.',
+      code: 'RECEPTION_ONLY'
+    });
+  }
 
   // Issue the invoice BEFORE clearing so the tickets are still queryable.
   // invoiceStore.issueInvoice is idempotent per (table, ticket ids), so a

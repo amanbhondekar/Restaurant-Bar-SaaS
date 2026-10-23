@@ -312,22 +312,43 @@ test('hub: a stale handset sending modifiers is refused (SPURIOUS_MODIFIERS), no
 });
 
 test('hub: split-bill and refund routes return 403 PLAN_FEATURE_UNAVAILABLE on starter', async () => {
-  const cases = [
-    ['/invoices/any/split-by-seats', { count: 2 }, 'split_bill'],
-    ['/invoices/any/split-by-items', { assignments: [] }, 'split_bill'],
-    ['/invoices/any/split-by-amounts', { shares: [] }, 'split_bill'],
-    ['/invoices/any/refund', { reason: 'test' }, 'refunds'],
-    // The gate runs before the handler, so this 403s whether or not the ticket exists.
-    ['/orders/any/fire', { course: 2 }, 'course_firing']
-  ];
-  for (const [route, payload, feature] of cases) {
-    const res = await api(route, { token: tokens[0], method: 'POST', body: JSON.stringify(payload) });
-    assert.equal(res.status, 403, route);
-    const body = await res.json();
-    assert.equal(body.code, 'PLAN_FEATURE_UNAVAILABLE', route);
-    assert.equal(body.feature, feature, route);
-    assert.equal(body.upgrade_to, 'pro', route);
+  // Splitting and refunding are reception's (a handset gets RECEPTION_ONLY first, see moneyRoutes.test.mjs), so the
+  // plan gate is exercised from a hub that acts as the reception laptop, on the same degraded plan as the hub above.
+  const reception = await startHub({
+    trustLoopback: true,
+    menu: MENU,
+    tables: { restaurant_id: RESTAURANT_ID, tables: [{ id: 1, name: 'T1', section: 'Main', capacity: 4 }] },
+    enrollmentCode: CODE,
+    config: { pairing_code: 'PLN-0003', plan: 'pro', plan_status: 'cancelled' }
+  });
+  try {
+    const cases = [
+      ['/invoices/any/split-by-seats', { count: 2 }, 'split_bill'],
+      ['/invoices/any/split-by-items', { assignments: [] }, 'split_bill'],
+      ['/invoices/any/split-by-amounts', { shares: [] }, 'split_bill'],
+      ['/invoices/any/refund', { reason: 'test' }, 'refunds']
+    ];
+    for (const [route, payload, feature] of cases) {
+      const res = await fetch(`${reception.base}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      assert.equal(res.status, 403, route);
+      const body = await res.json();
+      assert.equal(body.code, 'PLAN_FEATURE_UNAVAILABLE', route);
+      assert.equal(body.feature, feature, route);
+      assert.equal(body.upgrade_to, 'pro', route);
+    }
+  } finally {
+    reception.stop();
   }
+});
+
+test('hub: course firing returns 403 PLAN_FEATURE_UNAVAILABLE on starter', async () => {
+  // The gate runs before the handler, so this 403s whether or not the ticket exists.
+  const res = await api('/orders/any/fire', { token: tokens[0], method: 'POST', body: JSON.stringify({ course: 2 }) });
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.code, 'PLAN_FEATURE_UNAVAILABLE');
+  assert.equal(body.feature, 'course_firing');
+  assert.equal(body.upgrade_to, 'pro');
 });
 
 test('hub: core flows are never blocked by a degraded plan (order entry, bill preview, KOT reprint)', async () => {

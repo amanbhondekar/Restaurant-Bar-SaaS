@@ -288,8 +288,17 @@ test('idempotency still returns the original ticket for a repeated request id', 
 // M1 — billing foundation
 // ---------------------------------------------------------------------------
 
+// Everything below that touches a bill -- closing it, voiding, settling, splitting, refunding -- is the reception
+// laptop's job (see moneyRoutes.test.mjs for the handset side), so an authenticated call goes to the hub that
+// acts as reception. A call made without auth still goes to the remote hub: the "requires auth" tests are about it.
+function billApi(pathname, opts = {}) {
+  if (!opts.auth) return api(pathname, opts);
+  const { auth, ...rest } = opts;
+  return asReception(pathname, rest);
+}
+
 async function createOrder(tableId, items, opts = {}) {
-  return api('/orders', {
+  return billApi('/orders', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({
@@ -302,17 +311,17 @@ async function createOrder(tableId, items, opts = {}) {
 }
 
 test('M1: /tables/:id/invoice requires auth', async () => {
-  const res = await api('/tables/9/invoice');
+  const res = await billApi('/tables/9/invoice');
   assert.equal(res.status, 401);
 });
 
 test('M1: /invoices/:id requires auth', async () => {
-  const res = await api('/invoices/inv_anything');
+  const res = await billApi('/invoices/inv_anything');
   assert.equal(res.status, 401);
 });
 
 test('M1: invoice preview 404s when the table has no open tickets', async () => {
-  const res = await api('/tables/9/invoice', { auth: true });
+  const res = await billApi('/tables/9/invoice', { auth: true });
   assert.equal(res.status, 404);
   const body = await res.json();
   assert.equal(body.code, 'NO_OPEN_TICKETS');
@@ -325,7 +334,7 @@ test('M1: invoice preview folds every open ticket for the table into one bill wi
   assert.equal(t1.status, 201);
   assert.equal(t2.status, 201);
 
-  const res = await api('/tables/3/invoice', { auth: true });
+  const res = await billApi('/tables/3/invoice', { auth: true });
   assert.equal(res.status, 200);
   const { invoice } = await res.json();
 
@@ -343,10 +352,10 @@ test('M1: invoice preview folds every open ticket for the table into one bill wi
 });
 
 test('M1: closing the bill issues an invoice number, persists it, and returns it', async () => {
-  const preview = await api('/tables/3/invoice', { auth: true });
+  const preview = await billApi('/tables/3/invoice', { auth: true });
   const previewInvoice = (await preview.json()).invoice;
 
-  const cleared = await api('/tables/3/clear', { auth: true, method: 'POST' });
+  const cleared = await billApi('/tables/3/clear', { auth: true, method: 'POST' });
   assert.equal(cleared.status, 200);
   const body = await cleared.json();
   assert.equal(body.cleared_count, 2);
@@ -355,20 +364,20 @@ test('M1: closing the bill issues an invoice number, persists it, and returns it
   assert.equal(body.invoice.grand_total, previewInvoice.grand_total, 'issued total must match the preview');
 
   // Retrieval by both id and invoice_number
-  const byId = await api(`/invoices/${body.invoice.id}`, { auth: true });
+  const byId = await billApi(`/invoices/${body.invoice.id}`, { auth: true });
   assert.equal(byId.status, 200);
-  const byNumber = await api(`/invoices/${body.invoice.invoice_number}`, { auth: true });
+  const byNumber = await billApi(`/invoices/${body.invoice.invoice_number}`, { auth: true });
   assert.equal(byNumber.status, 200);
 });
 
 test('M1: a network-retry double-close does not double-charge', async () => {
   await createOrder(1, [{ id: 'm1', qty: 1 }]); // 230 + 5% = 242
-  const first = await api('/tables/1/clear', { auth: true, method: 'POST' });
+  const first = await billApi('/tables/1/clear', { auth: true, method: 'POST' });
   const firstBody = await first.json();
   assert.ok(firstBody.invoice);
 
   // Second clear with the tickets already completed must not issue another invoice
-  const second = await api('/tables/1/clear', { auth: true, method: 'POST' });
+  const second = await billApi('/tables/1/clear', { auth: true, method: 'POST' });
   const secondBody = await second.json();
   assert.equal(secondBody.cleared_count, 0);
   assert.equal(secondBody.invoice, null, 'no open tickets remain, so no new invoice');
@@ -381,7 +390,7 @@ test('M1: a network-retry double-close does not double-charge', async () => {
 test('M1: flat bill discount is subtracted before tax', async () => {
   // 460 subtotal (m1×2), ₹60 flat off => 400 taxable, 5% GST = 20 => 420
   await createOrder(4, [{ id: 'm1', qty: 2 }]);
-  const res = await api('/tables/4/invoice/preview', {
+  const res = await billApi('/tables/4/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ discounts: [{ type: 'flat', value: 60, reason: 'Loyalty' }] })
@@ -400,7 +409,7 @@ test('M1: flat bill discount is subtracted before tax', async () => {
 test('M1: percent bill discount is subtracted before tax', async () => {
   // 440 subtotal (m2×2), 10% off => 44 discount => 396 taxable, 5% = 19.8 => 416
   await createOrder(5, [{ id: 'm2', qty: 2 }]);
-  const res = await api('/tables/5/invoice/preview', {
+  const res = await billApi('/tables/5/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ discounts: [{ type: 'percent', value: 10 }] })
@@ -417,7 +426,7 @@ test('M1: percent bill discount is subtracted before tax', async () => {
 test('M1: service charge is added before tax and both are tenant-configurable per bill', async () => {
   // 230 subtotal (m1×1), 10% service = 23 => 253 taxable, 5% GST = 12.65 => 266
   await createOrder(6, [{ id: 'm1', qty: 1 }]);
-  const res = await api('/tables/6/invoice/preview', {
+  const res = await billApi('/tables/6/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ service_charge_percent: 10 })
@@ -437,7 +446,7 @@ test('M1: discount + service charge compose in the right order', async () => {
   // 460 subtotal, 10% off (46) => 414, +5% service (20.7) => 434.7 taxable,
   // 5% GST = 21.74 (rounded to 21.74 by 2dp = 21.74; grand rupee-rounded)
   await createOrder(7, [{ id: 'm1', qty: 2 }]);
-  const res = await api('/tables/7/invoice/preview', {
+  const res = await billApi('/tables/7/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({
@@ -460,7 +469,7 @@ test('M1: discount + service charge compose in the right order', async () => {
 
 test('M1: adjustments carry through to the persisted invoice', async () => {
   await createOrder(8, [{ id: 'm1', qty: 2 }]);
-  const cleared = await api('/tables/8/clear', {
+  const cleared = await billApi('/tables/8/clear', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({
@@ -478,7 +487,7 @@ test('M1: adjustments carry through to the persisted invoice', async () => {
   assert.equal(invoice.taxable_base, 420);
   assert.equal(invoice.grand_total, 441);
 
-  const retrieved = await api(`/invoices/${invoice.invoice_number}`, { auth: true });
+  const retrieved = await billApi(`/invoices/${invoice.invoice_number}`, { auth: true });
   const body = await retrieved.json();
   assert.equal(body.invoice.discount_rows[0].reason, 'Loyalty');
   assert.equal(body.invoice.grand_total, 441);
@@ -486,7 +495,7 @@ test('M1: adjustments carry through to the persisted invoice', async () => {
 
 test('M1: discount larger than subtotal is refused', async () => {
   await createOrder(9, [{ id: 'm1', qty: 1 }]); // 230
-  const res = await api('/tables/9/invoice/preview', {
+  const res = await billApi('/tables/9/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ discounts: [{ type: 'flat', value: 500 }] })
@@ -498,7 +507,7 @@ test('M1: discount larger than subtotal is refused', async () => {
 
 test('M1: negative discount is refused', async () => {
   await createOrder(10, [{ id: 'm1', qty: 1 }]);
-  const res = await api('/tables/10/invoice/preview', {
+  const res = await billApi('/tables/10/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ discounts: [{ type: 'flat', value: -10 }] })
@@ -508,7 +517,7 @@ test('M1: negative discount is refused', async () => {
 
 test('M1: percent discount over 100 is refused', async () => {
   await createOrder(11, [{ id: 'm1', qty: 1 }]);
-  const res = await api('/tables/11/invoice/preview', {
+  const res = await billApi('/tables/11/invoice/preview', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ discounts: [{ type: 'percent', value: 150 }] })
@@ -518,7 +527,7 @@ test('M1: percent discount over 100 is refused', async () => {
 
 test('M1: invalid adjustments on /clear refuse the close (tickets stay open)', async () => {
   await createOrder(12, [{ id: 'm1', qty: 1 }]);
-  const bad = await api('/tables/12/clear', {
+  const bad = await billApi('/tables/12/clear', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({ service_charge_percent: 50 }) // over the 25% cap
@@ -526,7 +535,7 @@ test('M1: invalid adjustments on /clear refuse the close (tickets stay open)', a
   assert.equal(bad.status, 400);
 
   // Tickets must remain openable, so a successful retry produces an invoice.
-  const good = await api('/tables/12/clear', {
+  const good = await billApi('/tables/12/clear', {
     auth: true,
     method: 'POST',
     body: JSON.stringify({})
@@ -541,7 +550,7 @@ test('M1: invalid adjustments on /clear refuse the close (tickets stay open)', a
 // ---------------------------------------------------------------------------
 
 async function closeTable(tableId) {
-  const res = await api(`/tables/${tableId}/clear`, {
+  const res = await billApi(`/tables/${tableId}/clear`, {
     auth: true, method: 'POST', body: JSON.stringify({})
   });
   const body = await res.json();
@@ -549,7 +558,7 @@ async function closeTable(tableId) {
 }
 
 test('M1: void requires auth', async () => {
-  const res = await api('/invoices/inv_anything/void', {
+  const res = await billApi('/invoices/inv_anything/void', {
     method: 'POST',
     body: JSON.stringify({ reason: 'x' })
   });
@@ -557,7 +566,7 @@ test('M1: void requires auth', async () => {
 });
 
 test('M1: void of an unknown invoice returns 404', async () => {
-  const res = await api('/invoices/inv_does_not_exist/void', {
+  const res = await billApi('/invoices/inv_does_not_exist/void', {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
   });
   assert.equal(res.status, 404);
@@ -566,7 +575,7 @@ test('M1: void of an unknown invoice returns 404', async () => {
 test('M1: void without a reason is refused', async () => {
   await createOrder(20, [{ id: 'm1', qty: 1 }]);
   const { invoice } = await closeTable(20);
-  const res = await api(`/invoices/${invoice.id}/void`, {
+  const res = await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({})
   });
   assert.equal(res.status, 400);
@@ -580,10 +589,10 @@ test('M1: voiding an invoice reopens the underlying tickets', async () => {
   assert.equal(invoice.grand_total, 483);
 
   // Post-close: no active tickets on T21.
-  const preview1 = await api('/tables/21/invoice', { auth: true });
+  const preview1 = await billApi('/tables/21/invoice', { auth: true });
   assert.equal(preview1.status, 404);
 
-  const voided = await api(`/invoices/${invoice.id}/void`, {
+  const voided = await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'Wrong table' })
   });
   assert.equal(voided.status, 200);
@@ -593,7 +602,7 @@ test('M1: voiding an invoice reopens the underlying tickets', async () => {
   assert.equal(voidBody.reopened_ticket_ids.length, 1);
 
   // Post-void: the table has an active bill again with the same total.
-  const preview2 = await api('/tables/21/invoice', { auth: true });
+  const preview2 = await billApi('/tables/21/invoice', { auth: true });
   assert.equal(preview2.status, 200);
   const preview2Body = await preview2.json();
   assert.equal(preview2Body.invoice.grand_total, invoice.grand_total);
@@ -602,10 +611,10 @@ test('M1: voiding an invoice reopens the underlying tickets', async () => {
 test('M1: double-void is refused', async () => {
   await createOrder(22, [{ id: 'm1', qty: 1 }]);
   const { invoice } = await closeTable(22);
-  await api(`/invoices/${invoice.id}/void`, {
+  await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'Wrong table' })
   });
-  const second = await api(`/invoices/${invoice.id}/void`, {
+  const second = await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'again' })
   });
   assert.equal(second.status, 400);
@@ -618,7 +627,7 @@ test('M1: mark-paid records method and transitions payment_status', async () => 
   const { invoice } = await closeTable(23);
   assert.equal(invoice.payment_status, 'pending');
 
-  const paid = await api(`/invoices/${invoice.id}/mark-paid`, {
+  const paid = await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
   assert.equal(paid.status, 200);
@@ -631,7 +640,7 @@ test('M1: mark-paid records method and transitions payment_status', async () => 
 test('M1: mark-paid rejects an unknown method', async () => {
   await createOrder(24, [{ id: 'm1', qty: 1 }]);
   const { invoice } = await closeTable(24);
-  const res = await api(`/invoices/${invoice.id}/mark-paid`, {
+  const res = await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'crypto' })
   });
   assert.equal(res.status, 400);
@@ -642,10 +651,10 @@ test('M1: mark-paid rejects an unknown method', async () => {
 test('M1: voiding a paid invoice is refused (must be refunded instead)', async () => {
   await createOrder(25, [{ id: 'm1', qty: 1 }]);
   const { invoice } = await closeTable(25);
-  await api(`/invoices/${invoice.id}/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
-  const res = await api(`/invoices/${invoice.id}/void`, {
+  const res = await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'oops' })
   });
   assert.equal(res.status, 400);
@@ -656,10 +665,10 @@ test('M1: voiding a paid invoice is refused (must be refunded instead)', async (
 test('M1: mark-paid on a voided invoice is refused', async () => {
   await createOrder(26, [{ id: 'm1', qty: 1 }]);
   const { invoice } = await closeTable(26);
-  await api(`/invoices/${invoice.id}/void`, {
+  await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
   });
-  const res = await api(`/invoices/${invoice.id}/mark-paid`, {
+  const res = await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
   assert.equal(res.status, 400);
@@ -678,7 +687,7 @@ async function issueInvoiceForTable(tableId, items = [{ id: 'm1', qty: 1 }]) {
 }
 
 test('M1: split-by-seats requires auth', async () => {
-  const res = await api('/invoices/inv_x/split-by-seats', {
+  const res = await billApi('/invoices/inv_x/split-by-seats', {
     method: 'POST', body: JSON.stringify({ count: 2 })
   });
   assert.equal(res.status, 401);
@@ -690,7 +699,7 @@ test('M1: split divides grand_total exactly across N seats (rupee-fair)', async 
   const invoice = await issueInvoiceForTable(30, [{ id: 'm1', qty: 2 }]);
   assert.equal(invoice.grand_total, 483);
 
-  const res = await api(`/invoices/${invoice.id}/split-by-seats`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 4 })
   });
   assert.equal(res.status, 200);
@@ -706,7 +715,7 @@ test('M1: split divides grand_total exactly across N seats (rupee-fair)', async 
 test('M1: split rejects out-of-range seat counts', async () => {
   const invoice = await issueInvoiceForTable(31);
   for (const count of [1, 0, -3, 999, 'x', null]) {
-    const res = await api(`/invoices/${invoice.id}/split-by-seats`, {
+    const res = await billApi(`/invoices/${invoice.id}/split-by-seats`, {
       auth: true, method: 'POST', body: JSON.stringify({ count })
     });
     assert.equal(res.status, 400, `count=${count} must be rejected`);
@@ -715,10 +724,10 @@ test('M1: split rejects out-of-range seat counts', async () => {
 
 test('M1: re-splitting an already split invoice is refused', async () => {
   const invoice = await issueInvoiceForTable(32);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  const res = await api(`/invoices/${invoice.id}/split-by-seats`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 3 })
   });
   assert.equal(res.status, 400);
@@ -728,16 +737,16 @@ test('M1: re-splitting an already split invoice is refused', async () => {
 
 test('M1: mark-paid on parent is refused once split; each split settles individually', async () => {
   const invoice = await issueInvoiceForTable(33);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  const parentPaid = await api(`/invoices/${invoice.id}/mark-paid`, {
+  const parentPaid = await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
   assert.equal(parentPaid.status, 400);
   assert.equal((await parentPaid.json()).code, 'INVOICE_SPLIT');
 
-  const splitPaid = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  const splitPaid = await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
   assert.equal(splitPaid.status, 200);
@@ -749,11 +758,11 @@ test('M1: mark-paid on parent is refused once split; each split settles individu
 
 test('M1: all-splits-paid rolls parent invoice to paid with method=split', async () => {
   const invoice = await issueInvoiceForTable(34);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 3 })
   });
   for (let i = 0; i < 3; i++) {
-    const res = await api(`/invoices/${invoice.id}/splits/${i}/mark-paid`, {
+    const res = await billApi(`/invoices/${invoice.id}/splits/${i}/mark-paid`, {
       auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
     });
     assert.equal(res.status, 200);
@@ -769,13 +778,13 @@ test('M1: all-splits-paid rolls parent invoice to paid with method=split', async
 
 test('M1: double-paying the same split is refused', async () => {
   const invoice = await issueInvoiceForTable(35);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
-  const dup = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  const dup = await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
   assert.equal(dup.status, 400);
@@ -784,10 +793,10 @@ test('M1: double-paying the same split is refused', async () => {
 
 test('M1: unknown split index is refused', async () => {
   const invoice = await issueInvoiceForTable(36);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  const res = await api(`/invoices/${invoice.id}/splits/9/mark-paid`, {
+  const res = await billApi(`/invoices/${invoice.id}/splits/9/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
   assert.equal(res.status, 400);
@@ -796,35 +805,35 @@ test('M1: unknown split index is refused', async () => {
 
 test('M1: unsplit works while all splits pending, refused after any split paid', async () => {
   const invoice = await issueInvoiceForTable(37);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 3 })
   });
 
-  const undo = await api(`/invoices/${invoice.id}/splits`, { auth: true, method: 'DELETE' });
+  const undo = await billApi(`/invoices/${invoice.id}/splits`, { auth: true, method: 'DELETE' });
   assert.equal(undo.status, 200);
   assert.equal((await undo.json()).invoice.splits, undefined);
 
   // Re-split, pay one, then try to unsplit — refused.
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
-  const undo2 = await api(`/invoices/${invoice.id}/splits`, { auth: true, method: 'DELETE' });
+  const undo2 = await billApi(`/invoices/${invoice.id}/splits`, { auth: true, method: 'DELETE' });
   assert.equal(undo2.status, 400);
   assert.equal((await undo2.json()).code, 'SPLIT_PAID');
 });
 
 test('M1: voiding a split invoice with a paid share is refused', async () => {
   const invoice = await issueInvoiceForTable(38);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
-  const res = await api(`/invoices/${invoice.id}/void`, {
+  const res = await billApi(`/invoices/${invoice.id}/void`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'oops' })
   });
   assert.equal(res.status, 400);
@@ -836,7 +845,7 @@ test('M1: voiding a split invoice with a paid share is refused', async () => {
 // ---------------------------------------------------------------------------
 
 test('M1: split-by-amounts requires auth', async () => {
-  const res = await api('/invoices/inv_x/split-by-amounts', {
+  const res = await billApi('/invoices/inv_x/split-by-amounts', {
     method: 'POST', body: JSON.stringify({ splits: [{ share_amount: 100 }, { share_amount: 100 }] })
   });
   assert.equal(res.status, 401);
@@ -847,7 +856,7 @@ test('M1: split-by-amounts accepts custom labelled shares summing to grand_total
   const invoice = await issueInvoiceForTable(40, [{ id: 'm1', qty: 2 }]);
   assert.equal(invoice.grand_total, 483);
 
-  const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [
         { label: 'Rohit', share_amount: 200 },
@@ -868,7 +877,7 @@ test('M1: split-by-amounts accepts custom labelled shares summing to grand_total
 
 test('M1: split-by-amounts uses default labels when caller omits them', async () => {
   const invoice = await issueInvoiceForTable(41, [{ id: 'm1', qty: 2 }]);
-  const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ share_amount: 250 }, { share_amount: 233 }]
     })
@@ -882,7 +891,7 @@ test('M1: split-by-amounts uses default labels when caller omits them', async ()
 test('M1: split-by-amounts refuses when sum ≠ grand_total (short and over)', async () => {
   const invoice = await issueInvoiceForTable(42, [{ id: 'm1', qty: 2 }]);
 
-  const short = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+  const short = await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ share_amount: 100 }, { share_amount: 100 }]
     })
@@ -892,7 +901,7 @@ test('M1: split-by-amounts refuses when sum ≠ grand_total (short and over)', a
   assert.equal(shortBody.code, 'INVALID_AMOUNTS');
   assert.match(shortBody.error, /short by ₹283/);
 
-  const over = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+  const over = await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ share_amount: 300 }, { share_amount: 300 }]
     })
@@ -912,7 +921,7 @@ test('M1: split-by-amounts rejects negative, zero, non-integer, and single-split
     { splits: 'not-an-array' }                                    // wrong type
   ];
   for (const body of cases) {
-    const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+    const res = await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
       auth: true, method: 'POST', body: JSON.stringify(body)
     });
     assert.equal(res.status, 400, `payload ${JSON.stringify(body).slice(0, 60)} must be rejected`);
@@ -921,10 +930,10 @@ test('M1: split-by-amounts rejects negative, zero, non-integer, and single-split
 
 test('M1: split-by-amounts refuses on already-split invoice', async () => {
   const invoice = await issueInvoiceForTable(44, [{ id: 'm1', qty: 2 }]);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  const res = await api(`/invoices/${invoice.id}/split-by-amounts`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ share_amount: 250 }, { share_amount: 233 }]
     })
@@ -935,19 +944,19 @@ test('M1: split-by-amounts refuses on already-split invoice', async () => {
 
 test('M1: amount-split shares settle the same way as seat splits', async () => {
   const invoice = await issueInvoiceForTable(45, [{ id: 'm1', qty: 2 }]);
-  await api(`/invoices/${invoice.id}/split-by-amounts`, {
+  await billApi(`/invoices/${invoice.id}/split-by-amounts`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ share_amount: 200 }, { share_amount: 283 }]
     })
   });
 
-  const first = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  const first = await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
   assert.equal(first.status, 200);
   assert.equal((await first.json()).invoice.payment_status, 'pending');
 
-  const second = await api(`/invoices/${invoice.id}/splits/1/mark-paid`, {
+  const second = await billApi(`/invoices/${invoice.id}/splits/1/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
   assert.equal(second.status, 200);
@@ -962,7 +971,7 @@ test('M1: amount-split shares settle the same way as seat splits', async () => {
 // ---------------------------------------------------------------------------
 
 test('M1: split-by-items requires auth', async () => {
-  const res = await api('/invoices/inv_x/split-by-items', {
+  const res = await billApi('/invoices/inv_x/split-by-items', {
     method: 'POST', body: JSON.stringify({ splits: [{ item_indices: [0] }, { item_indices: [1] }] })
   });
   assert.equal(res.status, 401);
@@ -978,7 +987,7 @@ test('M1: split-by-items assigns proportional shares that sum exactly to grand_t
   assert.equal(invoice.subtotal, 680);
   assert.equal(invoice.grand_total, 714);
 
-  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [
         { label: 'Veg only', item_indices: [0] },
@@ -1011,7 +1020,7 @@ test('M1: item-split allocates rounding remainder without breaking the sum invar
   assert.equal(invoice.subtotal, 790);
   assert.equal(invoice.grand_total, 830);
 
-  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [
         { item_indices: [0] },
@@ -1031,7 +1040,7 @@ test('M1: item-split allocates rounding remainder without breaking the sum invar
 test('M1: split-by-items rejects orphan items', async () => {
   await createOrder(52, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }]);
   const { invoice } = await closeTable(52);
-  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [
         { item_indices: [0] },
@@ -1048,7 +1057,7 @@ test('M1: split-by-items rejects orphan items', async () => {
 test('M1: split-by-items rejects an empty split', async () => {
   await createOrder(53, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }]);
   const { invoice } = await closeTable(53);
-  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ item_indices: [0, 1] }, { item_indices: [] }]
     })
@@ -1060,7 +1069,7 @@ test('M1: split-by-items rejects an empty split', async () => {
 test('M1: split-by-items rejects unassigned items with a helpful message', async () => {
   await createOrder(54, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }, { id: 'm4', qty: 1 }]);
   const { invoice } = await closeTable(54);
-  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ item_indices: [0] }, { item_indices: [1] }] // item 2 dropped
     })
@@ -1072,7 +1081,7 @@ test('M1: split-by-items rejects unassigned items with a helpful message', async
 test('M1: split-by-items rejects out-of-range indices', async () => {
   await createOrder(55, [{ id: 'm1', qty: 1 }, { id: 'm2', qty: 1 }]);
   const { invoice } = await closeTable(55);
-  const res = await api(`/invoices/${invoice.id}/split-by-items`, {
+  const res = await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ item_indices: [0] }, { item_indices: [99] }]
     })
@@ -1086,7 +1095,7 @@ test('M1: split-by-items rejects out-of-range indices', async () => {
 // ---------------------------------------------------------------------------
 
 test('M1: refund requires auth', async () => {
-  const res = await api('/invoices/inv_x/refund', {
+  const res = await billApi('/invoices/inv_x/refund', {
     method: 'POST', body: JSON.stringify({ reason: 'x' })
   });
   assert.equal(res.status, 401);
@@ -1094,7 +1103,7 @@ test('M1: refund requires auth', async () => {
 
 test('M1: refund on an unpaid invoice is refused', async () => {
   const invoice = await issueInvoiceForTable(60);
-  const res = await api(`/invoices/${invoice.id}/refund`, {
+  const res = await billApi(`/invoices/${invoice.id}/refund`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'oops' })
   });
   assert.equal(res.status, 400);
@@ -1103,10 +1112,10 @@ test('M1: refund on an unpaid invoice is refused', async () => {
 
 test('M1: refund without a reason is refused', async () => {
   const invoice = await issueInvoiceForTable(61);
-  await api(`/invoices/${invoice.id}/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
-  const res = await api(`/invoices/${invoice.id}/refund`, {
+  const res = await billApi(`/invoices/${invoice.id}/refund`, {
     auth: true, method: 'POST', body: JSON.stringify({})
   });
   assert.equal(res.status, 400);
@@ -1115,10 +1124,10 @@ test('M1: refund without a reason is refused', async () => {
 
 test('M1: refund flips paid → refunded and records reason + timestamp', async () => {
   const invoice = await issueInvoiceForTable(62);
-  await api(`/invoices/${invoice.id}/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'card', payment_ref: 'auth_98765' })
   });
-  const res = await api(`/invoices/${invoice.id}/refund`, {
+  const res = await billApi(`/invoices/${invoice.id}/refund`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'Customer complaint' })
   });
   assert.equal(res.status, 200);
@@ -1133,13 +1142,13 @@ test('M1: refund flips paid → refunded and records reason + timestamp', async 
 
 test('M1: double refund is refused', async () => {
   const invoice = await issueInvoiceForTable(63);
-  await api(`/invoices/${invoice.id}/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
-  await api(`/invoices/${invoice.id}/refund`, {
+  await billApi(`/invoices/${invoice.id}/refund`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
   });
-  const second = await api(`/invoices/${invoice.id}/refund`, {
+  const second = await billApi(`/invoices/${invoice.id}/refund`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'x' })
   });
   assert.equal(second.status, 400);
@@ -1148,17 +1157,17 @@ test('M1: double refund is refused', async () => {
 
 test('M1: refunding a split invoice reverses every paid share', async () => {
   const invoice = await issueInvoiceForTable(64, [{ id: 'm1', qty: 2 }]);
-  await api(`/invoices/${invoice.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoice.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'cash' })
   });
-  await api(`/invoices/${invoice.id}/splits/1/mark-paid`, {
+  await billApi(`/invoices/${invoice.id}/splits/1/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
 
-  const res = await api(`/invoices/${invoice.id}/refund`, {
+  const res = await billApi(`/invoices/${invoice.id}/refund`, {
     auth: true, method: 'POST', body: JSON.stringify({ reason: 'Card rejected in reconcile' })
   });
   assert.equal(res.status, 200);
@@ -1173,17 +1182,17 @@ test('M1: refunding a split invoice reverses every paid share', async () => {
 test('M1: payment_ref survives mark-paid → refund roundtrip on both parent and split', async () => {
   // Parent
   const invoiceA = await issueInvoiceForTable(65);
-  const paid = await api(`/invoices/${invoiceA.id}/mark-paid`, {
+  const paid = await billApi(`/invoices/${invoiceA.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi', payment_ref: 'UPI/2026/xyz' })
   });
   assert.equal((await paid.json()).invoice.payment_ref, 'UPI/2026/xyz');
 
   // Split
   const invoiceB = await issueInvoiceForTable(66);
-  await api(`/invoices/${invoiceB.id}/split-by-seats`, {
+  await billApi(`/invoices/${invoiceB.id}/split-by-seats`, {
     auth: true, method: 'POST', body: JSON.stringify({ count: 2 })
   });
-  const splitPaid = await api(`/invoices/${invoiceB.id}/splits/0/mark-paid`, {
+  const splitPaid = await billApi(`/invoices/${invoiceB.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'card', payment_ref: 'auth_abc123' })
   });
   assert.equal((await splitPaid.json()).invoice.splits[0].payment_ref, 'auth_abc123');
@@ -1192,7 +1201,7 @@ test('M1: payment_ref survives mark-paid → refund roundtrip on both parent and
 test('M1: payment_ref longer than 80 chars is trimmed', async () => {
   const invoice = await issueInvoiceForTable(67);
   const long = 'x'.repeat(200);
-  const paid = await api(`/invoices/${invoice.id}/mark-paid`, {
+  const paid = await billApi(`/invoices/${invoice.id}/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi', payment_ref: long })
   });
   const body = await paid.json();
@@ -1202,17 +1211,17 @@ test('M1: payment_ref longer than 80 chars is trimmed', async () => {
 test('M1: item-split shares settle and roll up parent identically', async () => {
   await createOrder(56, [{ id: 'm1', qty: 2 }, { id: 'm2', qty: 1 }]);
   const { invoice } = await closeTable(56);
-  await api(`/invoices/${invoice.id}/split-by-items`, {
+  await billApi(`/invoices/${invoice.id}/split-by-items`, {
     auth: true, method: 'POST', body: JSON.stringify({
       splits: [{ item_indices: [0] }, { item_indices: [1] }]
     })
   });
-  const first = await api(`/invoices/${invoice.id}/splits/0/mark-paid`, {
+  const first = await billApi(`/invoices/${invoice.id}/splits/0/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'upi' })
   });
   assert.equal((await first.json()).invoice.payment_status, 'pending');
 
-  const second = await api(`/invoices/${invoice.id}/splits/1/mark-paid`, {
+  const second = await billApi(`/invoices/${invoice.id}/splits/1/mark-paid`, {
     auth: true, method: 'POST', body: JSON.stringify({ payment_method: 'card' })
   });
   const body = await second.json();
@@ -1343,12 +1352,12 @@ test('sendToPrinter surfaces a network error for an unreachable host', async () 
 });
 
 test('M1: /orders/:id/print-kot returns preview text for a known ticket', async () => {
-  const created = await api('/orders', {
+  const created = await billApi('/orders', {
     auth: true, method: 'POST',
     body: JSON.stringify({ table_id: 80, table_name: 'T80', items: [{ id: 'm1', qty: 1 }] })
   });
   const { ticket } = await created.json();
-  const res = await api(`/orders/${ticket.id}/print-kot`, { auth: true, method: 'POST' });
+  const res = await billApi(`/orders/${ticket.id}/print-kot`, { auth: true, method: 'POST' });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.ok(body.preview_text);
@@ -1358,13 +1367,13 @@ test('M1: /orders/:id/print-kot returns preview text for a known ticket', async 
 });
 
 test('M1: /orders/:id/print-kot 404s on unknown ticket', async () => {
-  const res = await api('/orders/t_missing/print-kot', { auth: true, method: 'POST' });
+  const res = await billApi('/orders/t_missing/print-kot', { auth: true, method: 'POST' });
   assert.equal(res.status, 404);
 });
 
 test('M1: /invoices/:id/print-receipt returns preview text for the issued invoice', async () => {
   const invoice = await issueInvoiceForTable(81);
-  const res = await api(`/invoices/${invoice.id}/print-receipt`, { auth: true, method: 'POST' });
+  const res = await billApi(`/invoices/${invoice.id}/print-receipt`, { auth: true, method: 'POST' });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.match(body.preview_text, /Test Kitchen/);
@@ -1373,9 +1382,9 @@ test('M1: /invoices/:id/print-receipt returns preview text for the issued invoic
 });
 
 test('M1: /printers requires auth and lists nothing when no printers are configured', async () => {
-  const un = await api('/printers');
+  const un = await billApi('/printers');
   assert.equal(un.status, 401);
-  const ok = await api('/printers', { auth: true });
+  const ok = await billApi('/printers', { auth: true });
   assert.equal(ok.status, 200);
   assert.deepEqual((await ok.json()).printers, []);
 });

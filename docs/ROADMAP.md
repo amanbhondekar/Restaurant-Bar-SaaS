@@ -58,7 +58,7 @@ project or Razorpay keys: migrations 004–015 have never run on a hosted projec
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1208 hub tests across 61 files** (pure rules plus live
+Automated coverage is **1227 hub tests across 62 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **772 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -116,6 +116,13 @@ verified by hand.
   rest, rate-limited enrollment, constant-time compare.
 - ✅ Reception-only guard on catalog writes and admin routes; enrolled
   handsets get 403 `RECEPTION_ONLY`.
+- ✅ **Money decisions are reception's alone.** Voiding, refunding, settling, splitting
+  (by seats, items or amounts), undoing a split and settling a share used to take
+  any enrolled handset's token, and so did closing a table *with a discount or a
+  service-charge override*: a handset could close a table with a 100% discount
+  and get a ₹0 bill (shown by a test before the fix). All of those are now 403
+  `RECEPTION_ONLY` from a handset. A handset still closes a table at the full price
+  and reads the bill. Pinned by `moneyRoutes.test.mjs` (15 tests, 11 mutations).
 - ✅ The hub's server-rendered fallback page escapes the restaurant name,
   pairing code, table name and item names it prints. Table names come
   straight off an order body from a handset, so this was reachable by staff,
@@ -251,7 +258,7 @@ verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1208 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1227 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -555,10 +562,12 @@ milestones (§5) when a theme is pulled into a release.
 ### 4.7 Auth & access control  🟡
 - ✅ Waiter PIN login wired into the PWA, session bound to a device token.
 - 🟡 Role UIs for owner / manager / waiter / kitchen. Roles are STORED per
-  staff member and shown to reception, and **the cloud now enforces them for
-  owners and managers** (read-only; only the hub's `kitchen` identity writes,
-  migration 015). On the reception laptop itself nothing enforces them: anyone
-  signed in can still void a bill.
+  staff member and shown to reception, **the cloud enforces them for owners and
+  managers** (read-only; only the hub's `kitchen` identity writes, migration
+  015), and **the hub now keeps every money decision off the waiters' handsets**
+  (void, refund, settle, split, discount: reception only). What is not done is a
+  role *at* the reception laptop: whoever is signed in there can still void or
+  refund, with no manager PIN and no cashier/manager split.
 - ✅ Role-scoped device tokens: a station tablet enrols with a `kitchen` token
   that can read the board and mark tickets and stations done, and is refused
   everything else with 403 `DEVICE_SCOPE`. Default-deny -- `requireDevice` refuses
