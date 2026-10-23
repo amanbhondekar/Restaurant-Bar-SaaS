@@ -626,12 +626,13 @@ milestones (§5) when a theme is pulled into a release.
 - Signed auto-updates for the hub binary.
 - Remote fleet view: which tenants' hubs are online / behind on sync.
 
-### 4.10 Documentation  ⬜
-- `CHANGELOG.md` following Keep a Changelog.
-- `LICENSE` file (README references licensing but no file is present).
-- `CONTRIBUTING.md` capturing the `Darshil_docs` audit-report SOP.
-- A generic `docs/pilot-report-template.md` in place of the referenced
-  `docs/mejwani-pos-progress-report.md`, which is not in the tree.
+### 4.10 Documentation  🟡
+- ✅ `CHANGELOG.md` following Keep a Changelog: no releases are tagged, so it is grouped by milestone, with the unmerged work under Unreleased.
+- ✅ `CONTRIBUTING.md` capturing the `Darshil_docs` audit-report SOP, tests-first and mutation checking, and the default-deny rules.
+- ✅ `docs/pilot-report-template.md`, and the README no longer lists the missing
+  `docs/mejwani-pos-progress-report.md`.
+- ⬜ `LICENSE`: not written. Which licence this product is released under is the owner's decision, not an engineering one; the
+  README still says only "maintained by Darshil & Engineering Team".
 
 ---
 
@@ -673,7 +674,7 @@ The product can onboard a new restaurant without engineering.
 - 🟡 PR 19 — Razorpay chosen; the webhooks and plan status are built and tested.
   Nothing creates a subscription yet, and there are no keys.
 - ⬜ PR 20 — Windows installer + fleet view.
-- ⬜ 4.10 CHANGELOG, LICENSE, CONTRIBUTING.
+- 🟡 4.10 CHANGELOG and CONTRIBUTING are written; LICENSE is the owner's call.
 
 ### M4 — Customer surfaces  🟡
 - ✅ Sales analytics for reception (2026-10-22): period comparisons, guests new
