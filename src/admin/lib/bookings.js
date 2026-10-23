@@ -132,3 +132,23 @@ export function bookingsSummary(summary) {
   if (summary.waiting) parts.push(`${summary.waiting} waiting`);
   return parts.length ? parts.join(' · ') : 'Nothing booked yet.';
 }
+
+/** 1st, 2nd, 3rd, 4th ... 11th, 12th, 13th ... 21st: how a visit is said out loud. */
+export function ordinal(n) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th'}`;
+}
+
+/** The reward rule form: a whole number of visits from 2 to 50, and some words that fit on a diary row. */
+export function checkReward(form, { max_visits: maxVisits = 50, max_text: maxText = 80 } = {}) {
+  const errors = {};
+  const raw = String(form?.every_n_visits ?? '').trim();
+  if (!raw) errors.every_n_visits = 'How many visits between rewards?';
+  else if (!/^\d+$/.test(raw)) errors.every_n_visits = 'A whole number of visits.';
+  else if (Number(raw) < 2 || Number(raw) > maxVisits) errors.every_n_visits = `From 2 to ${maxVisits} visits.`;
+  const text = String(form?.text ?? '').trim();
+  if (!text) errors.text = 'What does the guest get?';
+  else if (text.length > maxText) errors.text = `At most ${maxText} characters.`;
+  return { ok: Object.keys(errors).length === 0, errors };
+}

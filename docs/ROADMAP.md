@@ -54,13 +54,13 @@ M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant �
 is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–016 have never run on a hosted project, because there are
+project or Razorpay keys: migrations 004–017 have never run on a hosted project, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1315 hub tests across 66 files** (pure rules plus live
+Automated coverage is **1333 hub tests across 67 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**858 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**875 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -270,7 +270,7 @@ drives a real browser in CI.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1315 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1333 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -540,8 +540,22 @@ milestones (§5) when a theme is pulled into a release.
   booking, and a Regulars list. Stored hashed per tenant for matching, so two
   restaurants on the same cloud cannot work out that they share a guest, and
   in plain only where staff need to ring the number back.
-- ⬜ No reward scheme (points, free dishes, tiers). Recognition is the useful
-  half and the half that needs no rules; a scheme is a pricing decision.
+- ✅ A reward for coming back, in the one form that does not need the product to decide
+  anything commercial: the **restaurant** sets the rule ("every 5th visit, a free
+  dessert": a number from 2 to 50 and its own words), off until it does, from the
+  Rewards panel in the Bookings tab. On a guest's Nth visit the booking says so and
+  offers "Reward given", which records when, the words that were promised and which
+  visit it was (so changing the rule later does not rewrite what a guest was told),
+  and can be taken back. The hub refuses to record one on a visit that has not
+  earned it. Only seated visits count (bookings and walk-ins; not cancellations,
+  no-shows or other guests), and the booking is not counted as its own earlier
+  visit. The record replicates (migration 017: three nullable columns on
+  `reservations`) and is restored with the diary. 18 hub tests, 17 on the tab and
+  panel, a row of the real-database round trip; 47 + 36 mutations, the gaps closed.
+- ⬜ Not built: **points, tiers, and any automatic discount.** The reward is applied on
+  the bill by a person, because the product does not know what a dessert costs or how
+  much the owner will give. Only bookings are offered the reward, not walk-ins. The
+  rule itself is a setting on the hub (like guest ordering) and is not replicated.
 - ✅ Feedback at bill-close: a guest rates their meal on the diner page and
   the hub attaches it to that table's own settled bill server-side, so
   reception knows which meal it is about without the guest ever seeing a

@@ -4,7 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { BookingsTab } from '@/admin/BookingsTab';
-import { bookingTime, today, shiftDay, dayLabel, waitedMins, formatWait, overdue, checkBooking, checkWalkIn, bookingsSummary, defaultBookingTime } from '@/admin/lib/bookings';
+import { bookingTime, today, shiftDay, dayLabel, waitedMins, formatWait, overdue, checkBooking, checkWalkIn, bookingsSummary, defaultBookingTime, ordinal, checkReward } from '@/admin/lib/bookings';
 import { fakeHub } from '../helpers/fakeHub';
 
 // The front-of-house diary. Rules first, then the screen.
@@ -85,6 +85,7 @@ const ASHA = {
 const RAHUL = { id: 'wl_1', guest_name: 'Rahul', party_size: 3, status: 'waiting', created_at: new Date(Date.now() - 25 * 60000).toISOString(), quoted_wait_mins: 20, phone: '919876511111', phone_display: '+91 98765 11111', whatsapp: 'https://wa.me/919876511111?text=ready', tel: 'tel:+919876511111' };
 const NO_PHONE = { id: 'wl_2', guest_name: 'Quiet', party_size: 2, status: 'waiting', created_at: new Date().toISOString() };
 
+const REWARDS_OFF = { body: { success: true, enabled: false, limits: { max_visits: 50, max_text: 80 } } };
 const NO_REMINDERS = { body: { success: true, window_hours: 24, reminders: [] } };
 const DUE = [
   { ...ASHA, id: 'res_1', whatsapp: 'https://wa.me/919876543210?text=A%20reminder%20from%20Mejwani', at: new Date(Date.now() + 3 * 3600000).toISOString() },
@@ -102,10 +103,32 @@ const answer = (over = {}) => ({
 });
 const setup = (routes = {}) => {
   const notify = vi.fn();
-  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/bookings/reminders': NO_REMINDERS, 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
+  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/bookings/reminders': NO_REMINDERS, 'GET /admin/rewards': REWARDS_OFF, 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
   render(<BookingsTab notify={notify} />);
   return { hub, notify };
 };
+
+describe('reward wording and checks', () => {
+  it('numbers read the way they are said', () => {
+    expect([1, 2, 3, 4, 5, 10, 11, 12, 13, 21, 22, 23, 101, 111, 112].map(ordinal)).toEqual(
+      ['1st', '2nd', '3rd', '4th', '5th', '10th', '11th', '12th', '13th', '21st', '22nd', '23rd', '101st', '111th', '112th']);
+  });
+
+  it('a rule needs a number of visits from 2 to 50 and some words that fit', () => {
+    expect(checkReward({ every_n_visits: '5', text: 'a free dessert' })).toEqual({ ok: true, errors: {} });
+    expect(checkReward({ every_n_visits: '1', text: 'x' }).errors.every_n_visits).toMatch(/2 to 50/);
+    expect(checkReward({ every_n_visits: '51', text: 'x' }).errors.every_n_visits).toMatch(/2 to 50/);
+    expect(checkReward({ every_n_visits: '2.5', text: 'x' }).errors.every_n_visits).toMatch(/whole number/);
+    expect(checkReward({ every_n_visits: '', text: 'x' }).errors.every_n_visits).toMatch(/How many visits/);
+    expect(checkReward({ every_n_visits: 'lots', text: 'x' }).errors.every_n_visits).toMatch(/whole number/);
+    expect(checkReward({ every_n_visits: '5', text: '   ' }).errors.text).toMatch(/What does the guest get/);
+    expect(checkReward({ every_n_visits: '5', text: 'x'.repeat(81) }).errors.text).toMatch(/80/);
+    expect(checkReward({ every_n_visits: '5', text: 'x'.repeat(80) }).ok).toBe(true);
+    expect(checkReward({ every_n_visits: '50', text: 'x' }).ok).toBe(true);
+    expect(checkReward({ every_n_visits: '2', text: 'x' }).ok).toBe(true);
+    expect(checkReward({ every_n_visits: '9', text: 'x' }, { max_visits: 8 }).errors.every_n_visits).toBe('From 2 to 8 visits.');
+  });
+});
 
 describe('bookings tab', () => {
   it('shows tonight: who is booked, who is at the door, and how long they have waited', async () => {
@@ -342,6 +365,74 @@ describe('bookings tab', () => {
       expect(await screen.findByRole('listitem', { name: /Asha at/ })).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: /Reminders to send/ })).not.toBeInTheDocument();
       expect(screen.queryByText('Could not load the diary')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('rewards for coming back', () => {
+    const EARNED = { ...ASHA, reward_due: { visit_number: 5, text: 'a free dessert' } };
+    const GIVEN = { ...ASHA, reward_given_at: new Date(2026, 9, 21, 20, 0).toISOString(), reward_given_text: 'a free dessert', reward_visit: 5 };
+
+    it('says on the booking that this is the guest\'s 5th visit and what the restaurant gives', async () => {
+      setup({ 'GET /admin/bookings': answer({ reservations: [EARNED] }) });
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      expect(within(row).getByText('5th visit: a free dessert')).toBeInTheDocument();
+      expect(within(row).getByRole('button', { name: 'Reward given' })).toBeInTheDocument();
+    });
+
+    it('says nothing on a booking that earns nothing', async () => {
+      setup();
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      expect(within(row).queryByText(/visit:/)).not.toBeInTheDocument();
+      expect(within(row).queryByRole('button', { name: 'Reward given' })).not.toBeInTheDocument();
+      expect(within(row).queryByRole('button', { name: 'Take back' })).not.toBeInTheDocument();
+    });
+
+    it('recording it tells the hub, says so, and reads the diary again', async () => {
+      const { hub, notify } = setup({
+        'GET /admin/bookings': ({ call }) => answer({ reservations: [call === 1 ? EARNED : GIVEN] }),
+        'POST /admin/bookings/res_1/reward': { body: { success: true, reservation: GIVEN } }
+      });
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      await userEvent.click(within(row).getByRole('button', { name: 'Reward given' }));
+      expect(hub.calls('POST /admin/bookings/res_1/reward')).toHaveLength(1);
+      expect(notify).toHaveBeenCalledWith('Reward recorded for Asha: a free dessert.');
+      expect(await screen.findByText('Reward given: a free dessert')).toBeInTheDocument();
+      expect(screen.queryByText('5th visit: a free dessert')).not.toBeInTheDocument();
+    });
+
+    it('a reward already given says so, with the words that were promised, and can be taken back', async () => {
+      const { hub, notify } = setup({
+        'GET /admin/bookings': answer({ reservations: [GIVEN] }),
+        'DELETE /admin/bookings/res_1/reward': { body: { success: true, reservation: ASHA } }
+      });
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      expect(within(row).getByText('Reward given: a free dessert')).toBeInTheDocument();
+      expect(within(row).queryByRole('button', { name: 'Reward given' })).not.toBeInTheDocument();
+      await userEvent.click(within(row).getByRole('button', { name: 'Take back' }));
+      expect(hub.calls('DELETE /admin/bookings/res_1/reward')).toHaveLength(1);
+      expect(notify).toHaveBeenCalledWith("Asha's reward taken back.");
+    });
+
+    it('a refusal is said in the hub\'s words and nothing changes on the row', async () => {
+      const { notify } = setup({
+        'GET /admin/bookings': answer({ reservations: [EARNED] }),
+        'POST /admin/bookings/res_1/reward': { status: 409, body: { success: false, code: 'NOT_DUE', error: 'This is not a visit that earns a reward for Asha.' } }
+      });
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      await userEvent.click(within(row).getByRole('button', { name: 'Reward given' }));
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledWith('This is not a visit that earns a reward for Asha.'));
+      expect(screen.getByText('5th visit: a free dessert')).toBeInTheDocument();
+    });
+
+    it('changing the rule reads the diary again, since what each booking earns has changed', async () => {
+      const { hub } = setup({
+        'GET /admin/rewards': { body: { success: true, enabled: true, every_n_visits: 5, text: 'a free dessert', limits: { max_visits: 50, max_text: 80 } } },
+        'PUT /admin/rewards': { body: { success: true, enabled: false } }
+      });
+      await screen.findByRole('listitem', { name: /Asha at/ });
+      const reads = hub.calls('GET /admin/bookings').length;
+      await userEvent.click(await screen.findByRole('button', { name: 'Turn off' }));
+      await vi.waitFor(() => expect(hub.calls('GET /admin/bookings').length).toBeGreaterThan(reads));
     });
   });
 

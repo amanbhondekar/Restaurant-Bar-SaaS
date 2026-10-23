@@ -192,7 +192,7 @@ test('hub: marking one sent takes it off the list, shows on the diary row, and c
   assert.equal(done.status, 200);
   const marked = (await done.json()).reservation;
   assert.equal(marked.reminded_by, 'Asha');
-  assert.ok(Date.parse(marked.reminded_at) <= Date.now());
+  assert.ok(Math.abs(Date.parse(marked.reminded_at) - Date.now()) < 2000, 'marked just now, allowing for the hub being another process with its own clock tick');
 
   assert.equal((await due()).reminders.some(r => r.id === b.id), false);
   const day = new Date(b.at);

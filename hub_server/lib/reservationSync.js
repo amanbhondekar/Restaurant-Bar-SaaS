@@ -25,7 +25,10 @@ export function reservationRow(restaurantId, r) {
     cancelled_at: r.cancelled_at ?? null,
     no_show_at: r.no_show_at ?? null,
     reminded_at: r.reminded_at ?? null,
-    reminded_by: r.reminded_by ?? null
+    reminded_by: r.reminded_by ?? null,
+    reward_given_at: r.reward_given_at ?? null,
+    reward_given_text: r.reward_given_text ?? null,
+    reward_visit: r.reward_visit ?? null
   };
 }
 
@@ -87,7 +90,10 @@ export async function pullReservations(client, restaurantId) {
       ...(r.cancelled_at ? { cancelled_at: r.cancelled_at } : {}),
       ...(r.no_show_at ? { no_show_at: r.no_show_at } : {}),
       ...(r.reminded_at ? { reminded_at: r.reminded_at } : {}),
-      ...(r.reminded_by ? { reminded_by: r.reminded_by } : {})
+      ...(r.reminded_by ? { reminded_by: r.reminded_by } : {}),
+      ...(r.reward_given_at ? { reward_given_at: r.reward_given_at } : {}),
+      ...(r.reward_given_text ? { reward_given_text: r.reward_given_text } : {}),
+      ...(r.reward_visit ? { reward_visit: Number(r.reward_visit) } : {})
     })),
     waitlist: back(walkinRows, e => ({
       id: String(e.hub_ref),

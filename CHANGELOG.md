@@ -12,6 +12,9 @@ and what is not.
 Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 
 ### Added
+- **A reward for coming back**, set by the restaurant: "every Nth visit, <what the guest gets>", off until set (Rewards panel in the
+  Bookings tab). The booking says when a visit earns it and the host records that it was given (migration 017). No points, no tiers,
+  nothing taken off the bill automatically.
 - **Booking reminders**: the Bookings tab lists tomorrow's bookings that nobody has reminded, each with a ready-written WhatsApp
   link; the host presses "I sent it" and the hub records that, and when (migration 016). The hub still sends nothing by itself.
 - **Remote owner view** (`owner.html`, `src/owner/`): sign in and see sales against the period before, the till, stock, guest
@@ -25,7 +28,7 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   queue with WhatsApp click-to-chat (migration 011).
 - **Role-scoped devices**: a `kitchen` device token reaches five routes only; the live feed now tells it the board and not the
   bill (`hub_server/lib/liveFeed.js`).
-- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–016, privileges, pairing, the owner's access, and
+- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–017, privileges, pairing, the owner's access, and
   the hub's own push and restore code round-tripped against the schema.
 - **Tests for every reception surface**: the frontend suite grew from none to 841 tests, including the whole Kitchen Display
   rendered against a fake hub and socket (`src/test/kitchen/`).
@@ -56,7 +59,7 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 - A queue file that would not parse was answered with an empty queue and overwritten; it is now salvaged and kept.
 
 ### Known gaps
-- Migrations 004–016 have not run against a hosted Supabase project (no credentials on the build machine).
+- Migrations 004–017 have not run against a hosted Supabase project (no credentials on the build machine).
 - The owner view is not deployed; the waiter's QR scanner needs a camera and is untested; nothing drives a real browser in CI.
 
 ## M4 — Customer surfaces (2026-10-16 → 2026-10-22)

@@ -207,7 +207,7 @@ test('the booking diary comes back from the real database: bookings in every sta
   const day = d => new Date(2026, 9, d, 13, 30).toISOString();
   const bookings = ['booked', 'seated', 'no_show', 'cancelled'].map((status, i) => ({
     id: `res_${i}`, guest_name: `Guest ${i}`, phone: '9198765432' + (10 + i), phone_key: String(i).repeat(64), party_size: 2 + i, at: day(22 + i), duration_mins: 90, status,
-    ...(status === 'booked' ? { overbooked: true, note: 'Window table', reminded_at: day(22), reminded_by: 'Asha' } : {}), created_at: day(21),
+    ...(status === 'booked' ? { overbooked: true, note: 'Window table', reminded_at: day(22), reminded_by: 'Asha', reward_given_at: day(22), reward_given_text: 'a free dessert', reward_visit: 5 } : {}), created_at: day(21),
     ...(status === 'seated' ? { seated_at: day(22) } : {}), ...(status === 'cancelled' ? { cancelled_at: day(21) } : {}), ...(status === 'no_show' ? { no_show_at: day(23) } : {})
   }));
   const walkins = ['waiting', 'notified', 'seated', 'left'].map((status, i) => ({ id: `wl_${i}`, guest_name: `Walk ${i}`, phone: '9198765511' + (10 + i), phone_key: String(9 - i).repeat(64), party_size: 1 + i, quoted_wait_mins: 10 * i, status, created_at: day(21),

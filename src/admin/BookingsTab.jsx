@@ -6,10 +6,11 @@ import { cn } from 'cn';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { explainError, hubGet, hubSend } from './api';
 import { Regulars } from './Regulars';
+import { RewardsPanel } from './RewardsPanel';
 import { EmptyState, Field, ListSkeleton, NativeSelect, Notice, TextInput } from './ui';
 import {
   RESERVATION_LABEL, RESERVATION_TONE, WAITLIST_LABEL, WAITLIST_TONE,
-  bookingTime, bookingsSummary, checkBooking, checkWalkIn, dayLabel, defaultBookingTime, formatWait, overdue, shiftDay, today, waitedMins
+  bookingTime, bookingsSummary, checkBooking, checkWalkIn, dayLabel, defaultBookingTime, formatWait, ordinal, overdue, shiftDay, today, waitedMins
 } from './lib/bookings';
 
 // The front-of-house diary (§4.6): tonight's bookings and who is waiting at the door.
@@ -233,6 +234,32 @@ export function BookingsTab({ notify }) {
       setBusy(false);
     }
   };
+  // The reward the restaurant gives on a guest's Nth visit (its own rule, set in the Rewards panel). The hub records that it was
+  // given; applying it on the bill is still a person's job.
+  const giveReward = async r => {
+    setBusy(true);
+    try {
+      await hubSend('POST', `/admin/bookings/${encodeURIComponent(r.id)}/reward`, {});
+      notify(`Reward recorded for ${r.guest_name}: ${r.reward_due.text}.`);
+      await load();
+    } catch (e) {
+      notify(explainError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const takeBackReward = async r => {
+    setBusy(true);
+    try {
+      await hubSend('DELETE', `/admin/bookings/${encodeURIComponent(r.id)}/reward`);
+      notify(`${r.guest_name}'s reward taken back.`);
+      await load();
+    } catch (e) {
+      notify(explainError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const unmarkReminded = async r => {
     setBusy(true);
     try {
@@ -376,12 +403,20 @@ export function BookingsTab({ notify }) {
                     <Badge variant="outline">{r.party_size}</Badge>
                     <Badge variant="outline" style={toneStyle(RESERVATION_TONE[r.status])}>{RESERVATION_LABEL[r.status]}</Badge>
                     {r.overbooked && <Badge variant="outline" style={toneStyle('rust')}>Overbooked</Badge>}
+                    {r.reward_due && <Badge variant="outline" style={toneStyle('green')}>{ordinal(r.reward_due.visit_number)} visit: {r.reward_due.text}</Badge>}
+                    {r.reward_given_at && <Badge variant="outline" style={toneStyle('muted')}>Reward given: {r.reward_given_text}</Badge>}
                     {r.reminded_at && <Badge variant="outline" style={toneStyle('green')}>Reminded {bookingTime(r.reminded_at)}{r.reminded_by ? ` · ${r.reminded_by}` : ''}</Badge>}
                   </div>
                   {r.note && <div className="text-sm text-muted-foreground">{r.note}</div>}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <ContactButtons row={r} label="their booking" />
+                  {r.reward_due && (
+                    <Button className="h-9" disabled={busy} onClick={() => giveReward(r)}>Reward given</Button>
+                  )}
+                  {r.reward_given_at && (
+                    <Button variant="outline" className="h-9" disabled={busy} onClick={() => takeBackReward(r)}>Take back</Button>
+                  )}
                   {r.status === 'booked' && r.reminded_at && (
                     <Button variant="outline" className="h-9" disabled={busy} onClick={() => unmarkReminded(r)}>Not sent</Button>
                   )}
@@ -400,6 +435,8 @@ export function BookingsTab({ notify }) {
       </section>
 
       <Regulars refreshKey={seatings} />
+
+      <RewardsPanel notify={notify} onChange={load} />
 
       {dialog?.type === 'booking' && (
         <BookingDialog

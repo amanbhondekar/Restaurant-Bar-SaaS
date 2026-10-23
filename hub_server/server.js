@@ -35,6 +35,7 @@ import { inventoryStore } from './lib/inventoryStore.js';
 import { reservationStore } from './lib/reservationStore.js';
 import { whatsappLink, telLink, formatPhone, normalizePhone } from './lib/guestContact.js';
 import { reminderMessage } from './lib/reservations.js';
+import { normalizeRewardScheme, MAX_VISITS_BETWEEN, REWARD_TEXT_MAX } from './lib/loyalty.js';
 import { guestByPhone, recognise, regulars, allVisits } from './lib/loyalty.js';
 import { windowFor, salesReport, monthlyCohorts, PRESET_IDS } from './lib/analytics.js';
 import { reportStore } from './lib/reportStore.js';
@@ -1562,7 +1563,9 @@ app.get('/admin/bookings', requireReception, (req, res) => {
     reservations: snap.reservations.map(r => ({
       ...withContact(r, bookingMessage(r, name)),
       // The same link with the reminder's words in it, for a booking that can still be reminded.
-      ...(r.phone && r.status === 'booked' ? { reminder_whatsapp: whatsappLink(r.phone, reminderMessage(r, name)) } : {})
+      ...(r.phone && r.status === 'booked' ? { reminder_whatsapp: whatsappLink(r.phone, reminderMessage(r, name)) } : {}),
+      // What this visit earns under the restaurant's own rule, if it has set one (lib/loyalty.js).
+      ...(() => { const earned = reservationStore.rewardDue(pairing.restaurant_id, r, rewardScheme()); return earned ? { reward_due: earned } : {}; })()
     })),
     waitlist: snap.waitlist.map(e => withContact(e, readyMessage(e, name)))
   });
@@ -1586,6 +1589,48 @@ app.post('/admin/bookings', requireReception, (req, res) => {
   const result = reservationStore.book(pairing.restaurant_id, req.body, { force: req.body?.force === true });
   if (!result.ok) return bookingRefusal(res, result);
   res.status(201).json({ success: true, revision: result.data.revision, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())), availability: result.meta.availability });
+});
+
+// The restaurant's own rule for rewarding a guest who comes back ("every 5th visit, a free dessert"), off until it sets one. The
+// product chooses nothing: how generous to be is the owner's decision. The hub only tells the host when a booking earns it and
+// records that it was given; applying it to the bill is a person's job (lib/loyalty.js).
+const rewardScheme = () => normalizeRewardScheme(hubConfig.getPairingInfo().rewards);
+
+app.get('/admin/rewards', requireReception, (req, res) => {
+  const scheme = rewardScheme();
+  res.json({ success: true, enabled: Boolean(scheme), ...(scheme ? { every_n_visits: scheme.every_n_visits, text: scheme.text } : {}), limits: { max_visits: MAX_VISITS_BETWEEN, max_text: REWARD_TEXT_MAX } });
+});
+
+app.put('/admin/rewards', requireReception, (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.enabled === false) {
+    hubConfig.saveConfig({ ...hubConfig.getPairingInfo(), rewards: null });
+    return res.json({ success: true, enabled: false });
+  }
+  const scheme = normalizeRewardScheme(body);
+  if (!scheme) {
+    return res.status(400).json({
+      success: false, code: 'INVALID_REWARD',
+      error: `Choose a number of visits from 2 to ${MAX_VISITS_BETWEEN}, and say what the guest gets (up to ${REWARD_TEXT_MAX} characters).`
+    });
+  }
+  hubConfig.saveConfig({ ...hubConfig.getPairingInfo(), rewards: { every_n_visits: scheme.every_n_visits, text: scheme.text } });
+  console.log(`🎁 Reward set: every ${scheme.every_n_visits} visits, "${scheme.text}".`);
+  res.json({ success: true, enabled: true, every_n_visits: scheme.every_n_visits, text: scheme.text });
+});
+
+app.post('/admin/bookings/:id/reward', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.giveReward(pairing.restaurant_id, req.params.id, pairing.rewards);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, already: result.meta.already === true, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())) });
+});
+
+app.delete('/admin/bookings/:id/reward', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.takeBackReward(pairing.restaurant_id, req.params.id);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())) });
 });
 
 // Who to remind of tomorrow's table. The hub sends nothing: it lists the bookings, builds the WhatsApp link with the words

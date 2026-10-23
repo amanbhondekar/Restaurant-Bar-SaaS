@@ -7,13 +7,54 @@ import { phoneKey } from './guestContact.js';
 // on `phone_key`, a hash salted with the restaurant's own id, so this never reads a number back and
 // one tenant's guest list cannot be joined against another's.
 //
-// What this is NOT. There is no reward scheme here: no points, no tiers, no discounts. Those are a
-// commercial decision nobody has made, and inventing one would be the wrong kind of guess. What it
-// does is answer the question a host actually asks -- "have we seen them before?" -- which is the
-// part that cannot be added later without the history, and the part that makes a guest feel known.
+// What this is NOT. There are no points, no tiers and no automatic discounts, and the product does
+// not choose any rule: how generous to be is a commercial decision for the owner. What it does is
+// answer the question a host actually asks -- "have we seen them before?" -- which is the part that
+// cannot be added later without the history, and the part that makes a guest feel known.
+//
+// The one thing built on top is a rule the RESTAURANT sets, off until it does (see normalizeRewardScheme):
+// "every Nth visit, <whatever we say>". The hub only remembers and reminds: it tells the host when a
+// booking is a guest's Nth visit, and records that the reward was given. Giving it on the bill is a
+// person's job, because the product does not know what a dessert costs.
 //
 // Visits are counted from what already happens: a booking that was SEATED, and a walk-in that was
 // SEATED. A booking nobody turned up to is not a visit, and neither is a party that gave up waiting.
+
+/** The most visits a restaurant can set between rewards, and the longest wording that fits the diary row. */
+export const MAX_VISITS_BETWEEN = 50;
+export const REWARD_TEXT_MAX = 80;
+
+/**
+ * The restaurant's rule, or null for "no scheme". It takes the number of visits between rewards (2 to 50: a reward on
+ * every visit is not a reward) and the words to say ("a free dessert", "10% off the bill"), and is off unless both are
+ * sensible. A number typed into a form arrives as text, so that is accepted; wording that will not fit is refused, not cut,
+ * because a half-sentence on a host's screen is worse than an error on the settings form.
+ */
+export function normalizeRewardScheme(raw) {
+  if (!raw || typeof raw !== 'object' || raw.enabled === false) return null;
+  const every = typeof raw.every_n_visits === 'string' && raw.every_n_visits.trim() !== '' ? Number(raw.every_n_visits) : raw.every_n_visits;
+  if (!Number.isInteger(every) || every < 2 || every > MAX_VISITS_BETWEEN) return null;
+  const text = typeof raw.text === 'string' ? raw.text.trim() : '';
+  if (!text || text.length > REWARD_TEXT_MAX) return null;
+  return { enabled: true, every_n_visits: every, text };
+}
+
+/**
+ * Whether this booking is a visit that earns the reward, as `{ visit_number, text }`, or null. It is when the guest has sat
+ * down a multiple of N minus one times before: the 5th, 10th and 15th visit of a "every 5th" rule. Only seated visits count
+ * (not cancellations, no-shows or other guests), the booking is not counted as its own earlier visit, and a reward already
+ * given for it is not offered again.
+ */
+export function rewardDue(state, reservation, scheme) {
+  const rule = normalizeRewardScheme(scheme);
+  if (!rule || !reservation || !reservation.phone_key || reservation.reward_given_at) return null;
+  if (reservation.status !== 'booked' && reservation.status !== 'seated') return null;
+  const others = { reservations: (state?.reservations || []).filter(r => r.id !== reservation.id), waitlist: state?.waitlist };
+  const prior = [...visitsFrom(others.reservations, 'reservations'), ...visitsFrom(others.waitlist, 'waitlist')]
+    .filter(v => v.phone_key === reservation.phone_key).length;
+  const visit = prior + 1;
+  return visit % rule.every_n_visits === 0 ? { visit_number: visit, text: rule.text } : null;
+}
 
 /** A visit is someone who actually sat down. */
 const SEATED_AT = { reservations: 'seated_at', waitlist: 'seated_at' };

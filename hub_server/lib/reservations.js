@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 
 import { guestContact, normalizePhone } from './guestContact.js';
+import { normalizeRewardScheme, rewardDue } from './loyalty.js';
 
 // Reservations and the walk-in waitlist (§4.6). Pure rules: every function takes the current state
 // and returns `{ ok: true, data, meta? }` or `{ ok: false, status, code, error }`, the same shape the
@@ -224,6 +225,41 @@ export function unmarkReminded(state, reservationId) {
 /** What staff send. Written here, with the other messages, so every screen says the same thing. */
 export const reminderMessage = (reservation, restaurantName) =>
   `Hello ${reservation.guest_name}, a reminder from ${restaurantName}: your table for ${reservation.party_size} is booked for ${new Date(reservation.at).toLocaleString()}. Please reply if your plans change.`;
+
+// --- the reward for coming back -------------------------------------------------------------------------------
+
+/**
+ * Record that a guest was given the reward their visit earned: when, the words that were promised and which visit it was, so
+ * changing the scheme later does not rewrite what a guest was told. It only happens on a visit that earns it, while a scheme
+ * is on: the host cannot hand it out at will. Giving it twice changes nothing.
+ */
+export function giveReward(state, reservationId, scheme, { now = new Date() } = {}) {
+  const found = state.reservations.find(r => r.id === reservationId);
+  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
+  if (!normalizeRewardScheme(scheme)) return fail(409, 'REWARDS_OFF', 'No reward is set up. Set one in the Rewards panel first.');
+  if (found.reward_given_at) return { ok: true, data: state, meta: { reservation: found, already: true } };
+  const earned = rewardDue(state, found, scheme);
+  if (!earned) return fail(409, 'NOT_DUE', `This is not a visit that earns a reward for ${found.guest_name}.`);
+  const updated = { ...found, reward_given_at: now.toISOString(), reward_given_text: earned.text, reward_visit: earned.visit_number };
+  return {
+    ok: true,
+    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? updated : r)) }),
+    meta: { reservation: updated }
+  };
+}
+
+/** Take it back (pressed by mistake): the visit is due the reward again. */
+export function takeBackReward(state, reservationId) {
+  const found = state.reservations.find(r => r.id === reservationId);
+  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
+  if (!found.reward_given_at) return { ok: true, data: state, meta: { reservation: found } };
+  const { reward_given_at, reward_given_text, reward_visit, ...rest } = found;
+  return {
+    ok: true,
+    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? rest : r)) }),
+    meta: { reservation: rest }
+  };
+}
 
 // --- the walk-in queue ---------------------------------------------------------------------------
 
