@@ -79,6 +79,21 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 
+describe('the page itself', () => {
+  // The suite runs with CSS switched off, so a page that stopped loading its stylesheet would still pass every other test
+  // here and come up as unstyled text on the reception laptop. This was found by looking at it in a browser, after the
+  // component was split into files and the import went with the code that had surrounded it.
+  it('still loads its stylesheet, and the kitchen\'s own components are the files it says they are', async () => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const source = readFileSync(resolve(__dirname, '../../kitchen_main.jsx'), 'utf8');
+    expect(source).toMatch(/^import '\.\/index\.css';$/m);
+    for (const [, file] of source.matchAll(/from '\.\/kitchen\/([A-Za-z]+)'/g)) {
+      expect(existsSync(resolve(__dirname, `../../kitchen/${file}.jsx`)) || existsSync(resolve(__dirname, `../../kitchen/${file}.js`)), file).toBe(true);
+    }
+  });
+});
+
 describe('the board', () => {
   it('shows who it is connected to, the pairing details and what is on the board', async () => {
     const hub = setup();
@@ -143,6 +158,39 @@ describe('the board', () => {
     expect(screen.getByRole('button', { name: /Mark Ready/ })).toBeEnabled();
     await u.click(screen.getByText('Chai'));
     expect(screen.getByRole('button', { name: 'Tick All' })).toBeDisabled();
+  });
+
+  it('a ticked line is struck through and an unticked one is not', async () => {
+    setup();
+    const u = user();
+    await screen.findByText('TICKET #101');
+    const row = name => screen.getByText(name).closest('div[style*="cursor"]');
+    expect(row('Dal').style.textDecoration).toBe('none');
+    await u.click(screen.getByText('Dal'));
+    expect(row('Dal').style.textDecoration).toBe('line-through');
+    expect(row('Chai').style.textDecoration).toBe('none');
+    await u.click(screen.getByText('Dal'));
+    expect(row('Dal').style.textDecoration).toBe('none');
+  });
+
+  it('shows no Ready to Serve section while nothing is ready', async () => {
+    setup();
+    await screen.findByText('TICKET #101');
+    expect(screen.queryByText(/Ready to Serve/)).not.toBeInTheDocument();
+  });
+
+  it('Refresh reads the board and the sync status again', async () => {
+    const hub = setup();
+    await screen.findByText('TICKET #101');
+    const tickets = hub.calls('GET /orders/active').length;
+    const syncs = hub.calls('GET /sync-status').length;
+    board = [T1(), ticket('t2', 102, [KHEER])];
+    sync = { queued: 4, online: true, isSyncing: false };
+    await user().click(screen.getByRole('button', { name: /Refresh/ }));
+    expect(await screen.findByText('TICKET #102')).toBeInTheDocument();
+    expect(await screen.findByText('Cloud Queue (4)')).toBeInTheDocument();
+    expect(hub.calls('GET /orders/active').length).toBe(tickets + 1);
+    expect(hub.calls('GET /sync-status').length).toBe(syncs + 1);
   });
 
   it('puts a ticket marked ready back on the board with Recall', async () => {
@@ -227,6 +275,18 @@ describe('courses', () => {
     await u.click(screen.getByRole('button', { name: /Fire course 2/ }));
     expect(hub.calls('POST /orders/t1/fire')).toHaveLength(1);
     await waitFor(() => expect(screen.queryByText(/On hold/)).not.toBeInTheDocument());
+  });
+
+  it('the next course can be fired from the Ready to Serve list too, and it is Fire and not Recall that is sent', async () => {
+    board = [{ ...STAGED(), status: 'ready' }];
+    const hub = setup({
+      'POST /orders/t1/fire': { body: { success: true, ticket: { ...STAGED(), status: 'in_progress', ...initCourseState([DAL, KHEER], { staged: false }, NOW) } } },
+      'POST /orders/t1/recall': { body: { success: true, ticket: STAGED() } }
+    });
+    await screen.findByText('Ready to Serve (1)');
+    await user().click(screen.getByRole('button', { name: /Fire course 2/ }));
+    await waitFor(() => expect(hub.calls('POST /orders/t1/fire')).toHaveLength(1));
+    expect(hub.calls('POST /orders/t1/recall')).toHaveLength(0);
   });
 
   it('when the hub refuses, says why and reads the board again so the screen is true', async () => {

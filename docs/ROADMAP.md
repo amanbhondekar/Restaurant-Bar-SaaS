@@ -58,9 +58,9 @@ project or Razorpay keys: migrations 004–015 have never run on a hosted projec
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1292 hub tests across 65 files** (pure rules plus live
+Automated coverage is **1297 hub tests across 65 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**841 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**851 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -222,8 +222,11 @@ drives a real browser in CI.
 - ✅ Kitchen KDS (`src/kitchen_main.jsx`, the page the hub serves at `/`): live
   ticket rail, pairing QR + enrollment code, connection badge grace states,
   Framer Motion ticket-printer moment, kitchen summary counters, station chips,
-  bill preview and settlement. It is one 1,953-line component mixing the socket,
-  the state and the rendering. Two pieces are out as pure functions: the billing
+  bill preview and settlement. It was one 1,950-line component; it is now a
+  360-line parent (the socket, the board state and the layout) and `src/kitchen/`:
+  `useBill` (the bill's state and everything done to it), `BillModal`,
+  `PrintPreview`, `TicketCard`, `ReadyTickets`, `KdsHeader`, `PairingPanel` and
+  `StationTabs`. Two pieces are also pure functions: the billing
   logic (turning the adjustment form into what the hub understands, seeding an
   equal split that adds up exactly, building the split requests, merging a
   ticket) in `src/lib/kitchenBill.js`, and the board (what each live message does
@@ -235,8 +238,9 @@ drives a real browser in CI.
   pressing Close Bill within about a fifth of a second let the delayed preview
   recalculation run after the bill was issued, get "no open tickets" from the hub,
   and wipe the issued invoice from the screen. An issued bill is no longer
-  recalculated. It is still one file; splitting it into components is now a
-  refactor with a net under it rather than a leap.
+  recalculated. The split itself was done by a script that moves the code
+  verbatim, and it dropped the stylesheet import: found only by opening the page in
+  a real browser (the tests run without CSS), now pinned by a test.
   (An earlier version of this line named `src/server_laptop/KitchenKdsView.jsx`;
   that is a smaller view in the old shell, not this.)
 - ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
@@ -266,7 +270,7 @@ drives a real browser in CI.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1292 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1297 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -594,12 +598,14 @@ milestones (§5) when a theme is pulled into a release.
   `kitchen` scope still heard every invoice, void, refund, cash-up and sync
   status, and every ticket it was sent (live or over HTTP) carried the order
   total and each line's price. Now `lib/liveFeed.js` decides, default-deny: a
-  kitchen connection is sent only the ticket and table-cleared events, with the
-  total, prices and bill numbers taken off, and a greeting without the menu,
-  table list or sync detail; `/orders/active` and the ready, fire and recall
-  answers strip prices for a kitchen token the same way. Handsets and the
-  reception laptop are unchanged. 13 tests (`liveFeed.test.mjs`), 19 mutations
-  all caught.
+  kitchen connection is sent only the ticket and table-cleared events, and a
+  greeting without the menu, table list or sync detail; `/orders/active` and the
+  ready, fire and recall answers are narrowed the same way. The narrowing is an
+  **allow-list at every level** (the event's keys, the ticket's fields, a line's and
+  an extra's fields), so a field added to tickets later (a guest's phone, a payment
+  reference) reaches a kitchen only when someone lists it; an earlier version
+  stripped money and let everything else through. Handsets and the reception
+  laptop are unchanged. 18 tests (`liveFeed.test.mjs`), 47 mutations all caught.
 - ✅ `POST /waiters` and `DELETE /waiters/:id` are reception-only. They were
   commented "reception / admin" but needed only a device token, so any enrolled
   handset could add a waiter with a PIN of its own or lock another waiter out

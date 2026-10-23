@@ -29,6 +29,10 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
+- The Kitchen Display is no longer one 1,950-line file: `src/kitchen_main.jsx` is 360 lines and the rest is in `src/kitchen/`
+  (a `useBill` hook and seven components), with 100+ tests behind it.
+- A kitchen token is sent only what a station screen draws: an allow-list of event keys, ticket fields and line fields, not a
+  list of the fields to hide.
 - Structured logging (`HUB_LOG_FORMAT=json`) and an optional OpenTelemetry export of logs (`OTEL_EXPORTER_OTLP_ENDPOINT`), both off by
   default; records are redacted at the source. See `docs/LOGGING.md`.
 - The sync queue's journal line is synced to disk before the snapshot is written, so a power cut no longer loses the newest unsent
