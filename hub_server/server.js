@@ -49,7 +49,11 @@ import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js'
 attachHubProcessHandlers();
 import { feedFor, connectedFor, kitchenTicket } from './lib/liveFeed.js';
 import { activeLogging, requestLogger } from './lib/log.js';
-import { createBillingClient } from './lib/billingClient.js';
+import { createBillingClient, normalizeOperatorUrl } from './lib/billingClient.js';
+import { requestMessages } from './lib/bookingRequests.js';
+import { pullInbox } from './lib/bookingInbox.js';
+import { createInboxRunner, withinMs } from './lib/bookingInboxRunner.js';
+import { bookingPageRoutes, pageMemory } from './lib/bookingPageRoutes.js';
 import { billingRoutes } from './lib/billingRoutes.js';
 import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
@@ -1668,6 +1672,21 @@ app.delete('/admin/bookings/:id/reminded', requireReception, (req, res) => {
   res.json({ success: true, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())) });
 });
 
+// Change a booking that is still to come. Only the fields a person may change are read from the body (lib/reservations.js), `force` among
+// them being a plain true that says the restaurant knows it is overbooking.
+app.put('/admin/bookings/:id', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.updateBooking(pairing.restaurant_id, req.params.id, req.body, { force: req.body?.force === true });
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({
+    success: true,
+    unchanged: result.meta.unchanged === true,
+    revision: result.data.revision,
+    reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())),
+    ...(result.meta.availability ? { availability: result.meta.availability } : {})
+  });
+});
+
 app.put('/admin/bookings/:id/status', requireReception, (req, res) => {
   const pairing = hubConfig.getPairingInfo();
   const result = reservationStore.setReservationStatus(pairing.restaurant_id, req.params.id, req.body?.status);
@@ -1695,6 +1714,86 @@ app.delete('/admin/waitlist/:id/reward', requireReception, (req, res) => {
   const result = reservationStore.takeBackWalkInReward(pairing.restaurant_id, req.params.id);
   if (!result.ok) return bookingRefusal(res, result);
   res.json({ success: true, entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName())) });
+});
+
+// ----- Guests' requests for a table, and the public page they come from (§4.6). ------------------------------
+//
+// A guest asks on a page served by the operator service; the request waits in the cloud until this hub collects it. It is only ever a
+// QUESTION: accepting it books the table through the same check as any booking, declining it books nothing, and a person tells the guest
+// from their own phone. The hub collects the inbox in the background and when asked, and clears from the cloud what staff have answered.
+const operatorUrl = () => normalizeOperatorUrl(process.env.OPERATOR_SERVICE_URL);
+const CLOUD_READ_MS = 4000;      // a read that has to wait for the internet must not hold up a screen
+
+/** The hub's own cloud session, or null while it has none (offline, or not set up). */
+const bookingCloud = async () => {
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const auth = await authenticateHubStaff(rid);   // answers "no" by itself when there is no restaurant yet or no cloud
+  return auth?.success ? { rid, client: supabase } : null;
+};
+
+/** Collect the inbox, now and on a timer: one at a time, and never throws (lib/bookingInboxRunner.js). */
+const inbox = createInboxRunner({ cloudSession: bookingCloud, pull: cloud => pullInbox(cloud.client, cloud.rid, reservationStore) });
+const pullBookingInbox = inbox.run;
+
+/** What a screen is shown of a request: nothing that identifies the guest to the cloud or to loyalty. */
+const publicRequest = ({ phone_key, cloud_id, ...request }) => request;
+
+app.get('/admin/booking-requests', requireReception, async (req, res) => {
+  if (req.query.refresh === '1') await withinMs(pullBookingInbox(), CLOUD_READ_MS);
+  const rid = hubConfig.getPairingInfo().restaurant_id;
+  const words = requestMessages(restaurantName());
+  res.json({
+    success: true,
+    requests: reservationStore.pendingRequests(rid).map(r => ({
+      ...withContact(publicRequest(r), words.asked(r)),
+      availability: reservationStore.availability(rid, { at: r.at, party_size: r.party_size })
+    })),
+    checked_at: inbox.last().at,
+    inbox_ok: inbox.last().ok
+  });
+});
+
+app.post('/admin/booking-requests/:id/accept', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.acceptRequest(pairing.restaurant_id, req.params.id, { force: req.body?.force === true });
+  if (!result.ok) return bookingRefusal(res, result);
+  setImmediate(() => pullBookingInbox());   // clears the answered request from the cloud without making anyone wait
+  const request = result.meta.request;
+  res.status(201).json({
+    success: true,
+    reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())),
+    availability: result.meta.availability,
+    request: publicRequest(request),
+    reply_whatsapp: whatsappLink(request.phone, requestMessages(restaurantName()).confirmed(request))
+  });
+});
+
+app.post('/admin/booking-requests/:id/decline', requireReception, (req, res) => {
+  const result = reservationStore.declineRequest(hubConfig.getPairingInfo().restaurant_id, req.params.id);
+  if (!result.ok) return bookingRefusal(res, result);
+  setImmediate(() => pullBookingInbox());
+  const request = result.meta.request;
+  res.json({ success: true, request: publicRequest(request), reply_whatsapp: whatsappLink(request.phone, requestMessages(restaurantName()).declined(request)) });
+});
+
+// The page itself: on or off, and its address (lib/bookingPageRoutes.js). The hub remembers what it last saw, so the screen still says
+// something with the internet down.
+app.use(bookingPageRoutes({
+  guard: requireReception,
+  cloudSession: bookingCloud,
+  operatorUrl,
+  memory: pageMemory(hubConfig)
+}));
+
+// Change someone still waiting: a new wait to tell them, a bigger party, a number they gave later. They keep their place.
+app.put('/admin/waitlist/:id', requireReception, (req, res) => {
+  const result = reservationStore.updateWalkIn(hubConfig.getPairingInfo().restaurant_id, req.params.id, req.body);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({
+    success: true,
+    unchanged: result.meta.unchanged === true,
+    entry: withContact(result.meta.entry, readyMessage(result.meta.entry, restaurantName()))
+  });
 });
 
 app.put('/admin/waitlist/:id/status', requireReception, (req, res) => {
@@ -2849,6 +2948,11 @@ server.listen(PORT, '0.0.0.0', () => {
     }).catch(() => {});
     syncPlan();
     setInterval(syncPlan, 15 * 60 * 1000).unref();
+
+    // Collect what guests have asked for through the public booking page, now and every two minutes. Fail-soft like the plan: with no
+    // internet the requests simply wait in the cloud, and nothing else on the hub is affected.
+    setTimeout(pullBookingInbox, Number(process.env.HUB_BOOKING_INBOX_FIRST_MS) || 5000).unref();
+    setInterval(pullBookingInbox, Number(process.env.HUB_BOOKING_INBOX_MS) || 2 * 60 * 1000).unref();
 
     // Restore first, then backfill. A hub with an empty ledger (a reinstalled or replaced
     // reception laptop) pulls its financial history back from the cloud; everything restored

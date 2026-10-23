@@ -2,15 +2,16 @@
 
 `signup_server/` is the one part of Kullina that is **not** installed at a restaurant. Whoever operates Kullina runs it, somewhere
 with a public address, because it holds the credentials a hub must never hold: the Supabase **service key** and the **Razorpay
-keys**. It is small, keeps no state of its own beyond a few-seconds rate limit, and every tenant's data lives in Supabase.
+keys**. It is small, keeps no state of its own beyond rate limits held in memory, and every tenant's data lives in Supabase.
 
-It does three jobs:
+It does four jobs:
 
 | Job | Route | Who may call it |
 | --- | --- | --- |
 | Create a restaurant | `POST /signup` | the operator (`Authorization: Bearer <SIGNUP_OPERATOR_TOKEN>`) |
 | Keep a restaurant's plan honest | `POST /webhooks/razorpay` | Razorpay, proved by a signature over the raw body |
 | Start, change and cancel a restaurant's subscription | `GET /subscriptions/current`, `POST /subscriptions`, `/subscriptions/change-plan`, `/subscriptions/cancel` | a restaurant's owner, a manager, or its own hub (the `kitchen` identity), proved by a Supabase access token |
+| Serve the public booking page, and take a guest's request for a table | `GET /book/:code`, `GET /public/booking/:code`, `POST /public/booking/:code/requests` | anyone, checked and rate-limited (below) |
 
 `GET /health` answers `{ ok, configured, billing }` and reveals no secret.
 
@@ -28,6 +29,7 @@ It does three jobs:
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | The API keys. Use the **test mode** pair first. Without them subscriptions cannot be started. |
 | `RAZORPAY_WEBHOOK_SECRET` | The secret set on the webhook in Razorpay's dashboard. Without it the webhook refuses everything. |
 | `RAZORPAY_PLAN_PRO`, `RAZORPAY_PLAN_ENTERPRISE` | The Razorpay **plan ids** (`plan_…`) behind our Pro and Enterprise. A plan with no id is simply not offered. |
+| `TRUST_PROXY` | Set it when the service sits behind a proxy or CDN, or every guest looks like one caller and is limited together. `true`, a number of hops (`1`), or a name (`loopback`). Unset means nobody's `X-Forwarded-For` is believed, which is right when nothing is in front of it. |
 
 On each hub, one variable: **`OPERATOR_SERVICE_URL`**, the service's address. It must be `https`, except for `localhost` while
 trying it out. Without it the hub's Plan tab says online billing is not connected and offers nothing.
@@ -42,9 +44,11 @@ Start it with `npm run signup`. It warns at start about every missing variable a
    `RAZORPAY_WEBHOOK_SECRET`), for these events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`,
    `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.cancelled`, `subscription.completed`.
    Any other event is acknowledged and ignored.
-3. **Apply migrations 001–019** to the hosted project. Migration 018 adds the columns and the unique index the subscription flow
+3. **Apply migrations 001–020** to the hosted project. Migration 018 adds the columns and the unique index the subscription flow
    writes to. Without it a new subscription is not recorded, and every webhook is answered `502` (Razorpay keeps retrying) because
-   the service cannot write what it received.
+   the service cannot write what it received. Migration 020 adds the two tables behind the booking page.
+4. **Build the page** where the service runs: `npm run build` puts `reserve.html` and its assets in `dist/`, and the service serves them
+   from there. Until it has been built, `/book/<code>` answers `503` and says so.
 
 ## What happens, step by step
 
@@ -59,6 +63,29 @@ Start it with `npm run signup`. It warns at start about every missing variable a
   without waiting for the next scheduled check.
 - **Switching plan and cancelling** both take effect at the end of the paid period. A cancelled subscription keeps working until
   then; the restaurant then falls back to Starter. Orders, billing and the kitchen display are never switched off.
+
+## The public booking page
+
+A restaurant can switch on a page where a guest asks for a table (Bookings tab → Online booking requests). The hub makes the page, gives it a
+random address, and shows it to copy: `https://<the service>/book/<code>`. The service serves that page and takes what the guest sends.
+
+- **A guest only asks.** The request waits in the cloud (`booking_requests`) until the restaurant's hub collects it, every two minutes or when
+  reception presses *Check for new requests*. Reception accepts (which books the table through the hub's usual check against the real
+  layout, and asks before overbooking) or declines, and tells the guest from their own phone by WhatsApp link. Nothing is sent by the product.
+- **The database stays closed to `anon`.** A guest never talks to Supabase: the service checks the request and writes it with the service key.
+  Page lookups and requests are answered identically for a page that does not exist, one that is switched off and a code that is not a code.
+- **What it does to stop abuse**, all in the service and all tested: a form field a person never sees (filling it looks like success and stores
+  nothing); at most 5 requests per address per 10 minutes (30 attempts counting mistakes); at most 3 per phone number per hour per restaurant;
+  at most 50 waiting in one restaurant's inbox (then it says the restaurant is not taking requests); a 4 KB body; requests for a time that went a
+  day ago are cleared out. The page is served with `no-referrer` (the code is in the address), `nosniff`, no inline script and a policy that
+  lets it talk only to the service that served it.
+- **What it does not do.** There is **no captcha and no email or phone verification**: a determined person with many addresses and numbers can
+  still fill a restaurant's inbox up to the cap, and a guest can give someone else's number. Put the service behind a proxy or CDN that rate
+  limits (and set `TRUST_PROXY`) before pointing the public at it, and decide whether a captcha is wanted: it is not built.
+- **What it keeps.** A guest's name, number, party, time and note, in the cloud, until the hub clears it when staff answer, or the service does
+  a day after the time asked for. The service stores no address and no browser details.
+- **A restaurant that is offline** simply sees its requests when it is next online. A request is not lost with the laptop: nothing is cleared
+  from the cloud until a person has answered it, so a replacement hub collects the same inbox.
 
 ## Limits worth knowing
 

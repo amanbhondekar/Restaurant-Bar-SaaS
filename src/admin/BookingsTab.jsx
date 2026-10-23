@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from 'cn';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { explainError, hubGet, hubSend } from './api';
+import { BookingRequests } from './BookingRequests';
+import { OnlineBookingPanel } from './OnlineBookingPanel';
 import { Regulars } from './Regulars';
 import { RewardsPanel } from './RewardsPanel';
 import { EmptyState, Field, ListSkeleton, NativeSelect, Notice, TextInput } from './ui';
@@ -198,6 +200,8 @@ export function BookingsTab({ notify }) {
   const [seatings, setSeatings] = useState(0);
   // Guests due a reminder of their table (the next day's bookings that nobody has reminded yet).
   const [reminders, setReminders] = useState([]);
+  // Bumped when reception asks to look for new requests from the booking page now.
+  const [checkKey, setCheckKey] = useState(0);
 
   const load = useCallback(async () => {
     // Asked together, and independently: the reminders are a convenience, so if they cannot be read the diary still stands.
@@ -316,6 +320,8 @@ export function BookingsTab({ notify }) {
           <Button className="h-10" onClick={() => setDialog({ type: 'booking' })}><Plus className="size-4" aria-hidden="true" />Take a booking</Button>
         </div>
       </div>
+
+      <BookingRequests notify={notify} onBooked={load} refreshKey={checkKey} />
 
       {reminders.length > 0 && (
         <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-labelledby="reminders-h">
@@ -442,6 +448,8 @@ export function BookingsTab({ notify }) {
       <Regulars refreshKey={seatings} />
 
       <RewardsPanel notify={notify} onChange={load} />
+
+      <OnlineBookingPanel notify={notify} onCheck={() => setCheckKey(k => k + 1)} />
 
       {dialog?.type === 'booking' && (
         <BookingDialog

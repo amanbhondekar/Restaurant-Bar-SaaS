@@ -43,6 +43,9 @@ early pilots:
 - **Diner menu** (`/diner`) — no sign-in, opened from a table code. Read-only
   unless reception switches guest ordering on, which lets a guest send an order
   to the kitchen (§4.5).
+- **Booking page** (`/book/<code>`, served by the operator service, not the hub) — no sign-in, opened
+  from an address a restaurant puts on a card or a screen. A guest asks for a table; it is a request,
+  and reception answers it from the Bookings tab (§4.6).
 - **Reception / server-laptop app** — the older shell. Its demo-era waitlist and
   sales views are retired: those tabs now point at the admin console's Bookings
   and Sales tabs.
@@ -56,16 +59,17 @@ is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup, Razorpay webhooks and the
 subscription itself (the owner starts, switches and cancels it from the Plan tab).
 What is left is everything that needs a real Supabase project or Razorpay keys:
-migrations 004–019 have never run on a hosted project, and the Razorpay calls have
+migrations 004–020 have never run on a hosted project, and the Razorpay calls have
 only ever been made against a stand-in, because there are no credentials on the
 machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition, reservations with staff-sent reminders,
-and a reward for coming back that the restaurant sets itself.
+a public page where a guest asks for a table, and a reward for coming back that the
+restaurant sets itself.
 
-Automated coverage is **1454 hub tests across 71 files** (pure rules plus live
+Automated coverage is **1647 hub tests across 81 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**916 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
-its basket, the station screens, device enrolment, every reception admin tab
+**1002 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+its basket, the booking page a guest asks for a table on, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
 the waiter app (login, floor grid, modifier sheet, menu grid, order drawer, and
@@ -282,7 +286,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1454 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1647 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -365,8 +369,8 @@ drives a real browser in CI.
   lost its refunds from the cash reconciliation. Fixed.
 - ✅ **Waitlist**: moved out of this section. The walk-in queue is on the hub,
   with "your table is ready" by WhatsApp click-to-chat, and time-slot
-  reservations are checked against the real layout (§4.6). A public booking page
-  is the part still open, and it needs hosting.
+  reservations are checked against the real layout, and a public page lets a guest ask
+  for one (§4.6).
 - ✅ **Analytics** (reception Sales tab): today, this week, this month or a
   chosen range, each set against the same stretch of the period before it --
   "today so far" against yesterday up to the same time, never against all of
@@ -569,9 +573,13 @@ milestones (§5) when a theme is pulled into a release.
   prices the order from its own menu, checks stock, and stamps the ticket
   "Guest (QR)" so the kitchen and the floor can see where it came from. One
   order per table per minute. The guest is told a ticket number, never a total.
-- ⬜ Paying from that menu is still open: it needs Razorpay keys and a public
-  address for the callback, neither of which exists yet. The bill is settled
-  with a member of staff, and the diner page says so.
+- ⬜ Paying from that menu is still open, and it needs a decision before it needs code:
+  **whose Razorpay account takes the money** (each restaurant's own, with its secret held
+  on its hub or by the operator service; or Kullina's, through a marketplace
+  arrangement), who handles refunds and settlement, and what a split bill or a tip
+  does to it. It also needs Razorpay keys and a public address for the callback, and
+  neither exists yet. The bill is settled with a member of staff, and the diner page
+  says so.
 - ✅ Repeat visits recognised by phone number, the one thing a guest gives up
   willingly. Reception sees "third visit, last here in March" while taking a
   booking, and a Regulars list. Stored hashed per tenant for matching, so two
@@ -631,8 +639,52 @@ milestones (§5) when a theme is pulled into a release.
   staff tap to send from their own phone. No Meta approval, no provider, no
   per-message fee, and it works with the line down.
 - ✅ Cloud copy (migration 011), as the fourth replicated catalog.
-- ⬜ A public reservation page per tenant. The model and the replication are in
-  place for one; the page itself needs hosting this product does not have.
+- ✅ A public page where a guest asks for a table (2026-10-23). A restaurant switches it on in
+  the Bookings tab (Online booking requests) and gets an address to put on a card or a
+  screen. **A guest only asks**: name, number, how many, when, an optional note, and the
+  page says it is a request and that the restaurant will answer by WhatsApp or phone. The
+  request waits in the cloud (migration 020, closed to `anon`) until the hub collects it;
+  reception accepts it, which books the table through the usual check against the real
+  layout (and asks before overbooking), or declines it, and tells the guest from their
+  own phone. It is served by the operator service, which must be public anyway for
+  Razorpay's webhooks, so there is no separate host to run. The service is the one place a
+  stranger can write, so it is where abuse is dealt with: a trap field, at most 5 requests
+  per address per 10 minutes and 3 per number per hour, at most 50 waiting per restaurant,
+  a 4 KB body, and no inline script. Nothing is cleared from the cloud until a person has
+  answered, so a replacement laptop collects the same inbox. 153 hub tests (against a
+  stand-in cloud and the real schema; the migration's grants and policies, the public
+  routes, the rules for a request, collecting the inbox, and the routes reception uses) and
+  86 on the screens (the guest's form, the request list, the on/off panel, the Bookings tab). The cloud, the
+  operator service and the hub were mutation-checked (several hundred mutants: the survivors
+  were real gaps, closed, a few redundant lines, removed, and a handful equivalent). See
+  `docs/OPERATOR_SERVICE.md`.
+- ⬜ **Still open on the page**: no captcha and no verification of the number (a determined
+  person can fill a restaurant's inbox up to its cap); put the service behind a proxy that
+  rate-limits it before publishing the address widely. **The page does not know a
+  restaurant's opening hours or closed days**, so a guest can ask for a table at a time the
+  restaurant is shut and staff have to decline it: opening hours and closed dates are not
+  built (they would need a setting, a copy of it in the cloud for the page to read, and a
+  check in the hub). Guests on one wifi or mobile network share an address and so the
+  limits, which are deliberately modest constants in `signup_server/lib/bookingPage.js`,
+  not settings. Migration 020 has not run on a hosted project, and nothing has been run
+  against the real cloud.
+- 🟡 Changing a booking, or someone in the queue (2026-10-23). Until now a booking could only
+  be cancelled and taken again, which loses what has happened to it (the reminder that was
+  sent, the reward that was given). The hub can now change a booking that is still to come
+  (time, party, stay, name, number, note) and someone still waiting (the wait they were
+  told, party, name, note, a number given later; they keep their place). A change that could
+  cost a table is checked exactly as taking the booking was, without counting the booking
+  against itself, and is refused unless the restaurant says it knows (then it is recorded as
+  an overbooking); a name or a note is never asked about tables; a guest who is running late
+  is not refused for being late; moving a booking forgets the reminder that was for the old
+  time and keeps the reward. `PUT /admin/bookings/:id` and `PUT /admin/waitlist/:id`,
+  reception only; 43 hub tests (the rules, the diary with walk-ins sitting down, a real
+  hub) and one that follows an edit into the cloud copy and back. Mutation-checked: 108
+  mutants, 15 survived the first pass (8 real gaps in the tests, closed; 4 redundant
+  lines, removed; 2 equivalent, kept; 1 my own whitespace edit). **The Bookings tab has no
+  "Change" buttons yet**: the rules and routes are built and tested, the screen does not
+  use them. A note on someone in the queue is not copied to the cloud (it never was: the
+  cloud's `walkins` table has no such column).
 - ✅ Booking reminders, staff-sent like the rest: the Bookings tab lists the next day's
   bookings that nobody has reminded ("Reminders to send"), each with a WhatsApp link
   that already carries the reminder and a number to ring. Opening the link is not
@@ -779,7 +831,8 @@ The product can onboard a new restaurant without engineering.
 - 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; the old
   browser-local Waitlist tab is retired. Reminders are staff-sent: the hub lists who
   to remind, builds the message and records that a person sent it (migration 016); it
-  sends nothing by itself. A public booking page is still open and needs hosting.
+  sends nothing by itself. A public page where a guest asks for a table shipped (a request the
+  restaurant answers; no captcha yet).
 
 ---
 

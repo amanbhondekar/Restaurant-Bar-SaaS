@@ -265,7 +265,8 @@ test('every column the hub names when reading the cloud exists', () => {
     ['guest_feedback', 'hub_ref, restaurant_id, table_label, rating, comment, invoice_number, invoice_ref, created_at'],
     ['restaurants', 'plan, plan_status, trial_ends_at, current_period_end'],
     ['restaurants', 'id, name, slug, city, pairing_code, plan, plan_status, trial_ends_at, current_period_end'],
-    ['staff_users', 'id, restaurant_id, role']
+    ['staff_users', 'id, restaurant_id, role'],
+    ['booking_pages', 'code, enabled']
   ];
   for (const [table, list] of named) {
     for (const col of list.split(',').map(s => s.trim())) assert.ok(SCHEMA[table]?.columns.has(col), `${table}.${col}`);
@@ -289,6 +290,8 @@ test('what the source asks the cloud for is what this test checks: no read goes 
     'inventorySync.js: hub_ref, name, unit, on_hand, low_at, par, unit_cost',
     'inventorySync.js: hub_ref, menu_item_ref, variant_ref, lines',
     'supabaseClient.js: id, restaurant_id, role',
+    // the booking page's address and whether it is on (the inbox itself is read whole, and is checked against migration 020 by its own tests)
+    'bookingInbox.js: code, enabled',
     'invoiceSync.js: id', 'reconciliationSync.js: id', 'syncQueue.js: id',
     // cloud:check's own probe asks whether its bill landed once
     'cloudCheck.js: hub_ref'

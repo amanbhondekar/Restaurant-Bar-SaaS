@@ -4,9 +4,11 @@ import { fileURLToPath } from 'url';
 
 import {
   emptyState, normalizeState, book, setReservationStatus, addWalkIn, setWaitlistStatus,
-  bookingsOn, queue, seatedWalkInCount, summarize, availability, remindersDue, markReminded, unmarkReminded, giveReward, takeBackReward, giveWalkInReward, takeBackWalkInReward
+  bookingsOn, queue, seatedWalkInCount, summarize, availability, remindersDue, markReminded, unmarkReminded, giveReward, takeBackReward, giveWalkInReward, takeBackWalkInReward,
+  updateBooking, updateWalkIn
 } from './reservations.js';
 import { rewardDue } from './loyalty.js';
+import { receiveRequests, pendingRequests, acceptRequest, declineRequest, settleLapsed, pruneDecided } from './bookingRequests.js';
 
 // Bookings and the walk-in queue on disk (hub_server/data/reservations.json), around the pure rules
 // in lib/reservations.js.
@@ -112,6 +114,13 @@ export class ReservationStore {
     }));
   }
 
+  /** Change a booking still to come, checked against the same tables and walk-ins as taking it was (lib/reservations.js). */
+  updateBooking(rid, id, patch, opts = {}) {
+    return this.commit(rid, s => updateBooking(s, id, patch, { tables: this.tables(), seatedWalkIns: seatedWalkInCount(s, { now: opts.now }), ...opts }));
+  }
+
+  updateWalkIn(rid, id, patch, opts) { return this.commit(rid, s => updateWalkIn(s, id, patch, opts)); }
+
   setReservationStatus(rid, id, status, opts) { return this.commit(rid, s => setReservationStatus(s, id, status, opts)); }
   markReminded(rid, id, opts) { return this.commit(rid, s => markReminded(s, id, opts)); }
   unmarkReminded(rid, id) { return this.commit(rid, s => unmarkReminded(s, id)); }
@@ -124,6 +133,17 @@ export class ReservationStore {
   /** Whether this booking or walk-in earns the reward under the scheme (lib/loyalty.js). */
   rewardDue(rid, reservation, scheme) { return rewardDue(this.stateFor(rid), reservation, scheme); }
   addWalkIn(rid, input, opts) { return this.commit(rid, s => addWalkIn(s, input, opts)); }
+
+  // Guests' requests for a table, collected from the cloud (lib/bookingRequests.js). Accepting one books it through the same check as any
+  // booking, against the same tables and the same walk-ins already sitting down.
+  receiveRequests(rid, rows, opts) { return this.commit(rid, s => receiveRequests(s, rows, opts)); }
+  settleLapsed(rid, opts) { return this.commit(rid, s => settleLapsed(s, opts)); }
+  pruneDecided(rid, opts) { return this.commit(rid, s => pruneDecided(s, opts)); }
+  declineRequest(rid, id, opts) { return this.commit(rid, s => declineRequest(s, id, opts)); }
+  acceptRequest(rid, id, opts = {}) {
+    return this.commit(rid, s => acceptRequest(s, id, { tables: this.tables(), seatedWalkIns: seatedWalkInCount(s, { now: opts.now }), ...opts }));
+  }
+  pendingRequests(rid, opts) { return pendingRequests(this.stateFor(rid), opts); }
   setWaitlistStatus(rid, id, status, opts) { return this.commit(rid, s => setWaitlistStatus(s, id, status, opts)); }
 
   /** Whether a time could be booked, without booking it. For the console's "is 8pm free?". */

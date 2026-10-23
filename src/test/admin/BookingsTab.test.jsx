@@ -86,6 +86,9 @@ const RAHUL = { id: 'wl_1', guest_name: 'Rahul', party_size: 3, status: 'waiting
 const NO_PHONE = { id: 'wl_2', guest_name: 'Quiet', party_size: 2, status: 'waiting', created_at: new Date().toISOString() };
 
 const REWARDS_OFF = { body: { success: true, enabled: false, limits: { max_visits: 50, max_text: 80 } } };
+// The booking page has its own tests; here the hub simply has no operator service and nobody has asked for anything.
+const NO_REQUESTS = { body: { success: true, requests: [], checked_at: null, inbox_ok: null } };
+const NO_PAGE = { body: { success: true, configured: false, enabled: false, code: null, url: null, reachable: true } };
 const NO_REMINDERS = { body: { success: true, window_hours: 24, reminders: [] } };
 const DUE = [
   { ...ASHA, id: 'res_1', whatsapp: 'https://wa.me/919876543210?text=A%20reminder%20from%20Mejwani', at: new Date(Date.now() + 3 * 3600000).toISOString() },
@@ -103,7 +106,7 @@ const answer = (over = {}) => ({
 });
 const setup = (routes = {}) => {
   const notify = vi.fn();
-  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/bookings/reminders': NO_REMINDERS, 'GET /admin/rewards': REWARDS_OFF, 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
+  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/bookings/reminders': NO_REMINDERS, 'GET /admin/rewards': REWARDS_OFF, 'GET /admin/booking-requests': NO_REQUESTS, 'GET /admin/booking-page': NO_PAGE, 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
   render(<BookingsTab notify={notify} />);
   return { hub, notify };
 };
@@ -365,6 +368,40 @@ describe('bookings tab', () => {
       expect(await screen.findByRole('listitem', { name: /Asha at/ })).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: /Reminders to send/ })).not.toBeInTheDocument();
       expect(screen.queryByText('Could not load the diary')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('requests from the booking page', () => {
+    const ASKED = {
+      id: 'rq_1', guest_name: 'Meera', party_size: 3, at: new Date(Date.now() + 5 * 3600000).toISOString(), status: 'pending', past: false,
+      availability: { ok: true, free: 2, fitting: 2, taken: 0 }, phone: '919876500000', whatsapp: 'https://wa.me/919876500000?text=hi', tel: 'tel:+919876500000'
+    };
+    const ON = { body: { success: true, configured: true, enabled: true, code: 'abcdefghij12', url: 'https://ops.example.com/book/abcdefghij12', reachable: true } };
+
+    it('are listed above the diary, and accepting one reads the diary again', async () => {
+      const { hub } = setup({
+        'GET /admin/booking-requests': ({ call }) => ({ body: { success: true, requests: call === 1 ? [ASKED] : [], checked_at: null, inbox_ok: null } }),
+        'POST /admin/booking-requests/rq_1/accept': { status: 201, body: { success: true, reservation: { id: 'res_9', guest_name: 'Meera', at: ASKED.at }, request: { id: 'rq_1' }, reply_whatsapp: 'https://wa.me/919876500000?text=ok' } }
+      });
+      const heading = await screen.findByRole('heading', { name: 'Requests from the booking page (1)' });
+      const diary = screen.getByRole('heading', { name: 'Bookings' });
+      expect(heading.compareDocumentPosition(diary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const before = hub.calls('GET /admin/bookings').length;
+      await userEvent.click(within(await screen.findByRole('listitem', { name: 'Request from Meera' })).getByRole('button', { name: 'Accept' }));
+      await vi.waitFor(() => expect(hub.calls('GET /admin/bookings').length).toBeGreaterThan(before));
+    });
+
+    it('pressing "Check for new requests" in the panel makes the list look in the cloud now', async () => {
+      const { hub } = setup({ 'GET /admin/booking-page': ON });
+      await userEvent.click(await screen.findByRole('button', { name: 'Check for new requests' }));
+      await vi.waitFor(() => expect(hub.calls('GET /admin/booking-requests').some(c => c.url.searchParams.get('refresh') === '1')).toBe(true));
+    });
+
+    it('with nothing asked and no page, the tab shows neither a list nor an error', async () => {
+      setup();
+      await screen.findByRole('heading', { name: 'Online booking requests' });
+      expect(screen.queryByRole('heading', { name: /Requests from the booking page/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 

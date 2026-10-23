@@ -20,13 +20,16 @@ export default defineConfig({
         diner: resolve(__dirname, 'diner.html'),
         station: resolve(__dirname, 'station.html'),
         owner: resolve(__dirname, 'owner.html'),
+        reserve: resolve(__dirname, 'reserve.html'),
       },
     },
   },
   server: {
     port: 3000,
     host: true,
-    allowedHosts: true
+    allowedHosts: true,
+    // The booking page talks to the operator service, which serves it in production; in development it is somewhere else.
+    proxy: { '/public/booking': process.env.OPERATOR_DEV_URL || 'http://localhost:4500' }
   }
 });
 

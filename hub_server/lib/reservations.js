@@ -13,6 +13,8 @@ import { normalizeRewardScheme, rewardDue } from './loyalty.js';
 
 export const RESERVATION_STATUSES = ['booked', 'seated', 'no_show', 'cancelled'];
 export const WAITLIST_STATUSES = ['waiting', 'notified', 'seated', 'left'];
+/** A guest's request for a table, once collected from the cloud: its rules are in lib/bookingRequests.js. */
+export const REQUEST_STATUSES = ['pending', 'accepted', 'declined', 'lapsed'];
 
 export const DEFAULT_DURATION_MINS = 90;
 /** How far ahead a reminder is due: a booking in the next day. Wider is the host's choice, capped at two weeks. */
@@ -28,7 +30,7 @@ const fail = (status, code, error) => ({ ok: false, status, code, error });
 const bump = (state, patch) => ({ ...state, ...patch, revision: (state.revision || 0) + 1 });
 
 export function emptyState(restaurantId = null) {
-  return { restaurant_id: restaurantId, revision: 0, reservations: [], waitlist: [] };
+  return { restaurant_id: restaurantId, revision: 0, reservations: [], waitlist: [], requests: [] };
 }
 
 /** A state read from disk made safe to use: every list present, nothing else trusted. */
@@ -41,13 +43,26 @@ export function normalizeState(raw, restaurantId = null) {
     restaurant_id: s.restaurant_id ?? restaurantId,
     revision: Number.isInteger(s.revision) && s.revision >= 0 ? s.revision : 0,
     reservations: list(s.reservations, RESERVATION_STATUSES),
-    waitlist: list(s.waitlist, WAITLIST_STATUSES)
+    waitlist: list(s.waitlist, WAITLIST_STATUSES),
+    // Guests' requests for a table, collected from the cloud and waiting for staff to answer (lib/bookingRequests.js).
+    requests: normalizeRequests(s.requests)
   };
+}
+
+/** Requests read from disk made safe to use: whole requests with a status we know, and nothing else. */
+export function normalizeRequests(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .filter(r => r && typeof r === 'object' && r.id && r.cloud_id && String(r.guest_name ?? '').trim() && REQUEST_STATUSES.includes(r.status))
+    .map(r => ({ ...r, id: String(r.id), cloud_id: String(r.cloud_id), party_size: Math.max(1, Math.floor(Number(r.party_size)) || 1) }));
 }
 
 // --- what a booking has to be ------------------------------------------------------------------
 
-function validateBooking(input, now) {
+/**
+ * `keepTime` is for changing a booking that is not being moved: its time has been accepted once, and a guest who is running late must not be
+ * refused a change of note for being late. Only a time that is being set has to be a real, future, not-too-far one.
+ */
+function validateBooking(input, now, { keepTime = false } = {}) {
   const errors = [];
   const out = {};
 
@@ -68,8 +83,8 @@ function validateBooking(input, now) {
 
   const at = Date.parse(input?.at);
   if (!Number.isFinite(at)) errors.push({ field: 'at', message: 'When is the booking for?' });
-  else if (at < now.getTime() - 5 * MIN) errors.push({ field: 'at', message: 'That time has already passed.' });
-  else if (at > now.getTime() + LIMITS.aheadDays * 24 * 60 * MIN) errors.push({ field: 'at', message: `Bookings can be made up to ${LIMITS.aheadDays} days ahead.` });
+  else if (!keepTime && at < now.getTime() - 5 * MIN) errors.push({ field: 'at', message: 'That time has already passed.' });
+  else if (!keepTime && at > now.getTime() + LIMITS.aheadDays * 24 * 60 * MIN) errors.push({ field: 'at', message: `Bookings can be made up to ${LIMITS.aheadDays} days ahead.` });
   else out.at = new Date(at).toISOString();
 
   const duration = input?.duration_mins === undefined ? DEFAULT_DURATION_MINS : Math.floor(Number(input.duration_mins));
@@ -172,6 +187,118 @@ export function setReservationStatus(state, reservationId, status, { now = new D
     data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? updated : r)) }),
     meta: { reservation: updated }
   };
+}
+
+// --- changing a booking, or someone in the queue ---------------------------------------------------------------------------
+
+/** The fields of `patch` that a person may change, and nothing else: not the status, the id, when it was made or seated, or the reward. */
+const pick = (patch, keys) => {
+  // Anything that is not an object (a string, a number, a list) has none of these keys of its own, so it says nothing either.
+  if (!patch) return {};
+  return Object.fromEntries(keys.filter(k => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined).map(k => [k, patch[k]]));
+};
+
+/**
+ * Change a booking that is still to come. A change that could cost a table (a different time, a bigger party, a longer stay) is checked
+ * exactly as taking the booking was, without counting the booking against itself, and refused if there is no table unless the restaurant
+ * says it knows (`force`); a change that cannot (a name, a note, a number) is never asked about tables, even on an overbooked evening.
+ * Moving it forgets that a reminder was sent for the old time. What was already recorded about it (a reward given, who it is) is kept.
+ * Changing a booking to what it already is changes nothing, not even the revision.
+ */
+export function updateBooking(state, reservationId, patch, { now = new Date(), tables = [], seatedWalkIns = 0, force = false } = {}) {
+  const found = state.reservations.find(r => r.id === reservationId);
+  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
+  if (found.status !== 'booked') return fail(409, 'NOT_BOOKED', `${found.guest_name}'s booking is no longer booked, so it cannot be changed.`);
+
+  const merged = {
+    guest_name: found.guest_name, phone: found.phone, party_size: found.party_size, at: found.at, duration_mins: found.duration_mins, note: found.note,
+    ...pick(patch, ['guest_name', 'phone', 'party_size', 'at', 'duration_mins', 'note'])
+  };
+  const timeChanged = Date.parse(merged.at) !== Date.parse(found.at);
+  const checked = validateBooking(merged, now, { keepTime: !timeChanged });
+  if (!checked.ok) return { ...fail(400, 'INVALID_BOOKING', checked.errors[0].message), errors: checked.errors };
+
+  const b = checked.booking;
+  const contact = guestContact(checked.phone, state.restaurant_id);
+  const stayChanged = b.duration_mins !== (found.duration_mins ?? DEFAULT_DURATION_MINS);
+  const partyChanged = b.party_size !== found.party_size;
+  if (!timeChanged && !stayChanged && !partyChanged && b.guest_name === found.guest_name && contact.phone === found.phone && (b.note ?? null) === (found.note ?? null)) {
+    return { ok: true, data: state, meta: { reservation: found, unchanged: true } };
+  }
+
+  let free = null;
+  if (timeChanged || stayChanged || partyChanged) {
+    free = availability(state, { at: b.at, duration_mins: b.duration_mins, party_size: b.party_size, tables, excludeId: found.id, seatedWalkIns });
+    if (!free.ok && !force) {
+      return {
+        ...fail(409, free.code, free.code === 'NO_TABLE_THAT_SIZE' ? `No table here seats ${b.party_size}.` : 'Every table that size is already booked then.'),
+        availability: free
+      };
+    }
+  }
+
+  const { note, overbooked, reminded_at, reminded_by, ...rest } = found;
+  const overbookedNow = free ? !free.ok : overbooked === true;
+  const updated = {
+    ...rest,
+    guest_name: b.guest_name, party_size: b.party_size, at: b.at, duration_mins: b.duration_mins,
+    ...(b.note ? { note: b.note } : {}),
+    ...contact,
+    ...(overbookedNow ? { overbooked: true } : {}),
+    // A reminder was for the old time: moved, the guest is due one again.
+    ...(!timeChanged && reminded_at ? { reminded_at } : {}),
+    ...(!timeChanged && reminded_by ? { reminded_by } : {}),
+    updated_at: now.toISOString()
+  };
+  return {
+    ok: true,
+    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? updated : r)) }),
+    meta: { reservation: updated, ...(free ? { availability: free } : {}) }
+  };
+}
+
+/**
+ * Change someone who is still waiting: their wait, their party, their name, a note, a number given later. They keep their place (when they
+ * joined is not touched). A number can be taken off, but not off someone who has already been messaged.
+ */
+export function updateWalkIn(state, entryId, patch, { now = new Date() } = {}) {
+  const found = state.waitlist.find(e => e.id === entryId);
+  if (!found) return fail(404, 'NOT_FOUND', 'That party is not in the queue.');
+  if (found.status !== 'waiting' && found.status !== 'notified') return fail(409, 'NOT_WAITING', `${found.guest_name} is no longer in the queue, so cannot be changed.`);
+
+  const wanted = pick(patch, ['guest_name', 'party_size', 'quoted_wait_mins', 'note', 'phone']);
+  // A wait taken back arrives as null or as nothing; `Number(null)` is 0, which would be a wait of no minutes, so it is said as nothing here.
+  const quoted = 'quoted_wait_mins' in wanted ? (wanted.quoted_wait_mins === null ? '' : wanted.quoted_wait_mins) : found.quoted_wait_mins ?? '';
+  const checked = validateWalkIn({
+    guest_name: found.guest_name, party_size: found.party_size, note: found.note,
+    ...pick(wanted, ['guest_name', 'party_size', 'note']),
+    quoted_wait_mins: quoted
+  });
+  const errors = checked.ok ? [] : [...checked.errors];
+
+  const touchesPhone = 'phone' in wanted;
+  const removing = touchesPhone && (wanted.phone === '' || wanted.phone === null);
+  const contact = touchesPhone && !removing ? guestContact(wanted.phone, state.restaurant_id) : null;
+  if (touchesPhone && !removing && !contact) errors.push({ field: 'phone', message: 'That does not look like a phone number.' });
+  if (errors.length) return { ...fail(400, 'INVALID_WALK_IN', errors[0].message), errors };
+  if (removing && found.status === 'notified') return fail(409, 'HAS_BEEN_MESSAGED', `${found.guest_name} has already been messaged, so their number cannot be taken off.`);
+
+  const e = checked.entry;
+  const phoneNow = removing ? null : (contact ? contact.phone : found.phone ?? null);
+  const unchanged = e.guest_name === found.guest_name && e.party_size === found.party_size && (e.quoted_wait_mins ?? null) === (found.quoted_wait_mins ?? null)
+    && (e.note ?? null) === (found.note ?? null) && phoneNow === (found.phone ?? null);
+  if (unchanged) return { ok: true, data: state, meta: { entry: found, unchanged: true } };
+
+  const { quoted_wait_mins, note, phone, phone_key, ...rest } = found;
+  const updated = {
+    ...rest,
+    guest_name: e.guest_name, party_size: e.party_size,
+    ...(e.quoted_wait_mins !== undefined ? { quoted_wait_mins: e.quoted_wait_mins } : {}),
+    ...(e.note ? { note: e.note } : {}),
+    ...(removing ? {} : contact ? contact : phone ? { phone, phone_key } : {}),
+    updated_at: now.toISOString()
+  };
+  return { ok: true, data: bump(state, { waitlist: state.waitlist.map(x => (x.id === entryId ? updated : x)) }), meta: { entry: updated } };
 }
 
 // --- reminding a guest ----------------------------------------------------------------------------------------

@@ -12,6 +12,17 @@ and what is not.
 Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 
 ### Added
+- **A public page where a guest asks for a table** (`/book/<code>`, served by the operator service). A restaurant switches it on in the
+  Bookings tab and gets an address for a card or a screen. The guest only *asks* (name, number, how many, when, an optional note); the
+  request waits in the cloud (migration 020, closed to `anon`) until the hub collects it, and reception accepts it (booked through the
+  usual check against the real layout, asking before overbooking) or declines it, then tells the guest from their own phone. The
+  service is where a stranger can write, so it is where abuse is dealt with: a trap field, limits per address and per number, a cap
+  per restaurant, a small body, no inline script. No captcha, no check that the number is the guest's, and no opening hours yet.
+  Runbook: `docs/OPERATOR_SERVICE.md`.
+- **Changing a booking, or someone in the queue** (rules and routes; no screen yet): a booking still to come can be moved, resized,
+  renamed or given a note without being cancelled and taken again, and someone waiting can be given a new wait. A change that could
+  cost a table is checked as taking the booking was (and refused unless reception says it knows); a name or a note never is; moving a
+  booking forgets the reminder that was for the old time and keeps the reward. `PUT /admin/bookings/:id`, `PUT /admin/waitlist/:id`.
 - **The reward for coming back, for a guest at the door**: a walk-in who left a number and has been here before is offered the same reward as a booking, under the same rule, in the queue ("3rd visit: a free lassi"); the host records that it was given, and can take it back (migration 019). A guest who gave no number cannot be recognised and is offered nothing.
 - **Subscribing from the Plan tab**: the owner starts a subscription (and is sent to Razorpay's page to authorise payment; nothing
   is charged until they do), switches plan or cancels, the last two after an "are you sure" and at the end of the paid period. The
@@ -35,9 +46,9 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   queue with WhatsApp click-to-chat (migration 011).
 - **Role-scoped devices**: a `kitchen` device token reaches five routes only; the live feed now tells it the board and not the
   bill (`hub_server/lib/liveFeed.js`).
-- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–019, privileges, pairing, the owner's access, and
+- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–020, privileges, pairing, the owner's access, and
   the hub's own push and restore code round-tripped against the schema.
-- **Tests for every reception surface**: the frontend suite grew from none to 916 tests, including the whole Kitchen Display
+- **Tests for every reception surface**: the frontend suite grew from none to 1,002 tests, including the whole Kitchen Display
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
@@ -67,7 +78,7 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 - A queue file that would not parse was answered with an empty queue and overwritten; it is now salvaged and kept.
 
 ### Known gaps
-- Migrations 004–019 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
+- Migrations 004–020 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
   have never been made against Razorpay itself (no keys). A subscription runs for 12 billing periods and then ends; whether that
   is the right length is undecided.
 - The owner view is not deployed; the waiter's QR scanner needs a camera and is untested; nothing drives a real browser in CI.

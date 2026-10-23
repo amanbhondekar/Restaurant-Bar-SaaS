@@ -1,5 +1,5 @@
 import React from 'react';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -12,6 +12,14 @@ beforeAll(() => {
   // jsdom has no matchMedia, which the theme toggle in the header asks for.
   window.matchMedia ??= query => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false });
 });
+
+// "Today's" figures are of the local day, and these fixtures put bills minutes and hours before "now": in the first half hour after midnight
+// that is yesterday, and the dashboard (rightly) shows nothing for today. So the clock is held at mid-afternoon on a fixed day.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 23, 15, 0, 0));
+});
+afterAll(() => { vi.useRealTimers(); });
 
 const now = () => new Date();
 const ago = mins => new Date(Date.now() - mins * 60000).toISOString();

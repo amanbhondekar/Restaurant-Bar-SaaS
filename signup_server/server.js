@@ -1,8 +1,11 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 
 import { validateSignup, provisionArgs, describeProvisioned, newProvisioningSecret, isOperator } from './lib/provision.js';
 import { createRazorpayApi } from './lib/razorpayApi.js';
+import { publicBookingRoutes, bookingPageRoutes, parseTrustProxy } from './lib/publicBooking.js';
 import { BILLABLE_PLANS, planIdFor, planForRazorpayPlanId, offeredPlans, validatePlan, isLive, canCancel, describeSubscription } from './lib/billing.js';
 import { verifyWebhookSignature, readSubscriptionEvent, subscriptionPayload } from '../hub_server/lib/razorpay.js';
 
@@ -22,6 +25,11 @@ import { verifyWebhookSignature, readSubscriptionEvent, subscriptionPayload } fr
 //   Razorpay. Nothing here moves money: creating a subscription only produces the page on which the
 //   owner authorises payment, and until they do nothing is charged.
 //
+//   THE PUBLIC BOOKING PAGE. A guest asks a restaurant for a table. This is the one place a stranger can
+//   write something that reaches a restaurant, so it is the one place that has to be able to say no: it
+//   checks and rate-limits the request and writes it with the service key on the guest's behalf, and the
+//   database stays closed to `anon`. It serves the page itself, so there is no separate host to run.
+//
 // It is deliberately small, keeps no state of its own beyond a rate limit, and is not part of the hub.
 // Run it where the operator runs things; it is not something a restaurant installs.
 
@@ -34,6 +42,8 @@ const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
 /** Who may start, change or cancel a restaurant's subscription: its owner, its managers, and its own hub (the `kitchen` identity). */
 const TENANT_ROLES = new Set(['owner', 'manager', 'kitchen']);
 
+const DEFAULT_DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
+
 const bearer = req => (String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i) ?? [])[1] ?? '';
 
 export function createApp({
@@ -43,13 +53,24 @@ export function createApp({
   env = process.env,
   razorpay = createRazorpayApi({ keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }),
   now = Date.now,
-  minGapMs = 5000
+  minGapMs = 5000,
+  distDir = DEFAULT_DIST,
+  trustProxy = env.TRUST_PROXY
 } = {}) {
   const app = express();
+
+  // Behind a proxy every guest would otherwise look like one caller, and be limited together. Only a proxy that is really there
+  // may be trusted: a header anyone can write must not choose which caller a request counts against.
+  app.set('trust proxy', parseTrustProxy(trustProxy));
 
   // Razorpay signs the RAW bytes, so the webhook route must see them before anything parses and
   // re-serialises the body. Everywhere else takes ordinary JSON.
   app.use('/webhooks/razorpay', express.raw({ type: '*/*', limit: '1mb' }));
+
+  // The public booking page's API (with a small body limit of its own, ahead of the general parser), and the page itself.
+  app.use('/public', publicBookingRoutes({ cloud, now }));
+  app.use(bookingPageRoutes({ distDir }));
+
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/health', (req, res) => res.json({ ok: true, configured: Boolean(cloud && operatorToken), billing: Boolean(cloud && razorpay.configured()) }));

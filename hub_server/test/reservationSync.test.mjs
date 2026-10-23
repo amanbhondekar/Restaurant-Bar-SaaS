@@ -19,7 +19,7 @@ fs.writeFileSync(path.join(dataDir, 'hub_config.json'), JSON.stringify({
 const { reservationRow, walkInRow, pushReservations, pullReservations } = await import('../lib/reservationSync.js');
 const { syncQueue } = await import('../lib/syncQueue.js');
 const { reservationStore } = await import('../lib/reservationStore.js');
-const { emptyState } = await import('../lib/reservations.js');
+const { emptyState, updateBooking, updateWalkIn } = await import('../lib/reservations.js');
 
 after(async () => {
   await reservationStore.flush();
@@ -145,6 +145,31 @@ test('push: a booking that changed updates in place rather than duplicating', as
   await pushReservations(cloud, RID, snapshot({ reservations: [{ ...BOOKING, status: 'seated', seated_at: '2026-10-22T13:35:00.000Z' }] }));
   assert.equal(cloud.tables.reservations.length, 1);
   assert.equal(cloud.tables.reservations[0].status, 'seated');
+});
+
+test('push: a booking or a place in the queue that was edited arrives in place, with only the columns the cloud has, and comes back as edited', async () => {
+  const cloud = fakeCloud();
+  await pushReservations(cloud, RID, snapshot());
+  const NOW = new Date('2026-10-22T09:00:00.000Z');
+  const state = { ...emptyState(RID), reservations: [BOOKING], waitlist: [WALKIN] };
+
+  const moved = updateBooking(state, 'res_1', { at: '2026-10-22T15:00:00.000Z', party_size: 2, note: '', guest_name: 'Asha Rao', phone: '98111 22233' }, { now: NOW, tables: [{ id: 1, name: 'T1', capacity: 4 }] });
+  const changed = updateWalkIn(state, 'wl_1', { quoted_wait_mins: null, phone: '', note: 'High chair' }, { now: NOW });
+  assert.equal(moved.ok && changed.ok, true, JSON.stringify([moved, changed]));
+  assert.ok(moved.meta.reservation.updated_at && changed.meta.entry.updated_at, 'both carry when they were changed');
+
+  await pushReservations(cloud, RID, snapshot({ reservations: [moved.meta.reservation], waitlist: [changed.meta.entry] }));
+  assert.equal(cloud.tables.reservations.length, 1, 'in place, not a second booking');
+  assert.equal(cloud.tables.walkins.length, 1);
+  const [row] = cloud.tables.reservations;
+  assert.deepEqual([row.booked_for, row.party_size, row.note, row.guest_name, row.phone], ['2026-10-22T15:00:00.000Z', 2, null, 'Asha Rao', '919811122233']);
+  assert.equal('updated_at' in row, false, 'the cloud has no such column, and a column it lacks is a push it refuses');
+  assert.equal('updated_at' in cloud.tables.walkins[0], false);
+  assert.deepEqual([cloud.tables.walkins[0].quoted_wait_mins, cloud.tables.walkins[0].phone, cloud.tables.walkins[0].phone_key], [null, null, null]);
+
+  const back = await pullReservations(cloud, RID);
+  assert.deepEqual([back.reservations[0].at, back.reservations[0].party_size, back.reservations[0].guest_name, 'note' in back.reservations[0]], ['2026-10-22T15:00:00.000Z', 2, 'Asha Rao', false]);
+  assert.deepEqual(['phone' in back.waitlist[0], 'quoted_wait_mins' in back.waitlist[0]], [false, false]);
 });
 
 test('push: a booking deleted on the hub is deleted in the cloud, and another tenant is untouched', async () => {

@@ -1,0 +1,83 @@
+/* The page where a guest asks for a table. Standalone on purpose, like the diner menu: a guest's phone loads this and nothing else, so it
+   does not pull in the design system or the app shell. It follows the phone's own light/dark setting rather than offering a toggle. */
+
+:root {
+  --r-bg: #fffdfa;
+  --r-card: #ffffff;
+  --r-ink: #1b1b1b;
+  --r-muted: #6b6b6b;
+  --r-line: #d9d2c8;
+  --r-accent: #ff5722;
+  --r-accent-ink: #ffffff;
+  --r-error: #b3261e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --r-bg: #16181a;
+    --r-card: #1e2124;
+    --r-ink: #f2f2f2;
+    --r-muted: #a3a3a3;
+    --r-line: #3a3f44;
+    --r-error: #ef6a60;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--r-bg);
+  color: var(--r-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap {
+  max-width: 30rem;
+  margin: 0 auto;
+  /* Clears the notch on a phone held in a hand, not a stand. */
+  padding: max(1rem, env(safe-area-inset-top)) 1rem calc(2rem + env(safe-area-inset-bottom));
+}
+
+.head { padding: 0.5rem 0 1rem; border-bottom: 2px solid var(--r-accent); margin-bottom: 1rem; }
+h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; line-height: 1.2; }
+.city { margin: 0.25rem 0 0; }
+.muted { color: var(--r-muted); }
+.explain { margin: 0 0 1.25rem; }
+
+.field { margin-bottom: 1rem; }
+label { display: block; margin-bottom: 0.3rem; font-weight: 600; font-size: 0.95rem; }
+
+/* 16px or more, or iOS zooms the page when a field is touched. 48px tall, for a thumb. */
+input, select, textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  color: var(--r-ink);
+  background: var(--r-card);
+  border: 1px solid var(--r-line);
+  border-radius: 10px;
+}
+textarea { min-height: 5.5rem; resize: vertical; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+  outline: 3px solid var(--r-accent);
+  outline-offset: 2px;
+}
+[aria-invalid="true"] { border-color: var(--r-error); }
+
+.hint { margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--r-muted); }
+.error { margin: 0.3rem 0 0; font-size: 0.9rem; color: var(--r-error); }
+.banner { margin: 0 0 1rem; padding: 0.7rem 0.8rem; border: 1px solid var(--r-error); border-radius: 10px; }
+.privacy { margin: 0.9rem 0 0; font-size: 0.85rem; text-align: center; }
+
+button { font: inherit; cursor: pointer; border-radius: 10px; min-height: 48px; padding: 0.6rem 1.1rem; }
+.primary { width: 100%; font-weight: 700; color: var(--r-accent-ink); background: var(--r-accent); border: 0; }
+.primary:disabled { opacity: 0.6; cursor: progress; }
+.secondary { color: var(--r-ink); background: transparent; border: 1px solid var(--r-line); }
+
+/* The trap for robots: off the page, but not display:none, which some of them skip. */
+.trap { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
