@@ -56,7 +56,8 @@ management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
 project or Razorpay keys: migrations 004–017 have never run on a hosted project, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
-guest ordering, repeat-visit recognition and reservations.
+guest ordering, repeat-visit recognition, reservations with staff-sent reminders,
+and a reward for coming back that the restaurant sets itself.
 
 Automated coverage is **1333 hub tests across 67 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
@@ -232,7 +233,7 @@ drives a real browser in CI.
   ticket) in `src/lib/kitchenBill.js`, and the board (what each live message does
   to the tickets on screen, marking a ticket ready, and when the connection light
   goes from connecting to disconnected) in `src/lib/kitchenBoard.js`. The whole
-  component is now also tested as it renders (`src/test/kitchen/`, 48 tests): the
+  component is now also tested as it renders (`src/test/kitchen/`, 58 tests): the
   page no longer mounts itself when there is no `#root`, and exports
   `KitchenHubApp`. Writing those tests found a real bug: typing a discount and
   pressing Close Bill within about a fifth of a second let the delayed preview
@@ -240,11 +241,13 @@ drives a real browser in CI.
   and wipe the issued invoice from the screen. An issued bill is no longer
   recalculated. The split itself was done by a script that moves the code
   verbatim, and it dropped the stylesheet import: found only by opening the page in
-  a real browser (the tests run without CSS), now pinned by a test.
+  a real browser (the tests run without CSS), now pinned by a test. A bill's
+  preview is asked for once when it opens (it used to be asked twice), and the
+  ticket card forwards its ref, which the rail's pop-layout animation needs.
   (An earlier version of this line named `src/server_laptop/KitchenKdsView.jsx`;
   that is a smaller view in the old shell, not this.)
-- ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
-  cash & payments, sales analytics, stock and recipes, kitchen performance and
+- ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue
+  (with reminders to send and the reward panel, §4.5 and §4.6), cash & payments, sales analytics, stock and recipes, kitchen performance and
   station screens, printers, staff and devices, guest feedback, plan.
 - ✅ Reception: the `ServerLaptopApp` shell. Its demo-era `WaitlistView` and
   `SalesAnalyticsView` are deleted; the Bookings and Sales tabs there link to the
@@ -267,7 +270,8 @@ drives a real browser in CI.
 
 ### Documentation & process
 - ✅ `docs/ARCHITECTURE.md`, `docs/API_SPECIFICATION.md`,
-  `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
+  `docs/DEPLOYMENT_GUIDE.md`, `docs/OWNER_VIEW.md`, `docs/LOGGING.md`, this roadmap;
+  `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
 - ✅ Hub regression suite (1333 tests at the last count, §1): fixtures on
@@ -399,7 +403,14 @@ drives a real browser in CI.
   that had never once been drawn, because it added up the lines' rows instead of
   their quantities, and in the connection handling a reconnect timer that opened a
   socket after the app had gone, floor reads that could land out of order, and a
-  new order that showed double its total until the next read.
+  new order that showed double its total until the next read, and in the Kitchen
+  Display a bill closed right after typing a discount that was then wiped from the
+  screen by the delayed recalculation, a split of the file that silently dropped the
+  stylesheet import (every test green, the page unstyled), and, from mutation
+  checking, a kitchen-feed payload that lost its `id` so the board would have
+  ignored new orders. Two flakes were root-caused rather than retried: a test
+  cleaning up a directory the sync queue was still writing into, and timestamps
+  compared across two Windows processes whose clocks differ by a tick.
 
 ---
 
@@ -724,11 +735,15 @@ The product can onboard a new restaurant without engineering.
   and returning, cohorts, and daily/weekly summaries sent by WhatsApp tap (§3).
 - 🟡 4.5 diner QR menu, guest ordering (opt-in), repeat-visit recognition and
   feedback (now replicated, migration 013) shipped. Open, and not for want of
-  code: paying from the phone needs Razorpay keys and a public callback address;
-  a reward scheme is a pricing decision.
+  code: paying from the phone needs Razorpay keys and a public callback address.
+  A reward for coming back shipped in the one form that needs no commercial
+  decision from the product: the restaurant sets "every Nth visit, <words>" and the
+  hub reminds and records (migration 017). Points, tiers and an automatic discount
+  are not built.
 - 🟡 4.6 reservations, the walk-in queue and WhatsApp click-to-chat; the old
-  browser-local Waitlist tab is retired. A public booking page is still open and
-  needs hosting.
+  browser-local Waitlist tab is retired. Reminders are staff-sent: the hub lists who
+  to remind, builds the message and records that a person sent it (migration 016); it
+  sends nothing by itself. A public booking page is still open and needs hosting.
 
 ---
 
