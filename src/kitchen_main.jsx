@@ -57,6 +57,9 @@ const KitchenHubApp = () => {
   const [billInvoice, setBillInvoice] = useState(null);
   // True once the bill on screen has been issued: from then on nothing recalculates it (see fetchBillPreview).
   const billIssuedRef = useRef(false);
+  // What the bill on screen was last asked for (table and adjustments), so the delayed recalculation does not ask again for
+  // what it was just given: opening a bill fetches it at once, and the effect below would fetch the same thing 220 ms later.
+  const previewKeyRef = useRef('');
   const [billLoading, setBillLoading] = useState(false);
   const [billError, setBillError] = useState('');
   const [billAdjustments, setBillAdjustments] = useState({
@@ -276,6 +279,7 @@ const KitchenHubApp = () => {
     // nothing to preview, and have the issued invoice wiped from the screen. (A preview already in flight cannot be
     // overtaken by a close: the Close button is disabled while one is.)
     if (billIssuedRef.current) return;
+    previewKeyRef.current = `${tableId}|${JSON.stringify(adj)}`;
     const body = buildAdjustmentBody(adj);
     const hasAdjustments = Object.keys(body).length > 0;
     setBillLoading(true);
@@ -325,6 +329,7 @@ const KitchenHubApp = () => {
   // Debounce recomputation while reception is typing amounts.
   useEffect(() => {
     if (billTableId === null) return;
+    if (previewKeyRef.current === `${billTableId}|${JSON.stringify(billAdjustments)}`) return;   // already showing this
     const t = setTimeout(() => fetchBillPreview(billTableId, billAdjustments), 220);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

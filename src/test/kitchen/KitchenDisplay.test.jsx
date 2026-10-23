@@ -446,6 +446,24 @@ describe('the bill', () => {
     expect(hub.calls('POST /tables/1/clear')).toHaveLength(1);
   });
 
+  it('opening a bill asks the hub for its preview once, not once on the click and again from the delayed recalculation', async () => {
+    const { hub } = await openBill();
+    await new Promise(r => setTimeout(r, 500));   // longer than the recalculation's delay
+    expect(hub.calls('GET /tables/1/invoice')).toHaveLength(1);
+    expect(hub.calls('POST /tables/1/invoice/preview')).toHaveLength(0);
+  });
+
+  it('changing an adjustment still asks again, once the typing has paused, and typing back to nothing asks for the plain bill', async () => {
+    const { hub, u } = await openBill({ 'POST /tables/1/invoice/preview': { body: { invoice: preview() } } });
+    const [discount] = screen.getAllByRole('spinbutton');
+    await u.type(discount, '7');
+    await waitFor(() => expect(hub.calls('POST /tables/1/invoice/preview')).toHaveLength(1));
+    await u.clear(discount);
+    await waitFor(() => expect(hub.calls('GET /tables/1/invoice')).toHaveLength(2));   // nothing adjusted: the plain bill
+    await new Promise(r => setTimeout(r, 400));
+    expect(hub.calls('POST /tables/1/invoice/preview')).toHaveLength(1);
+  });
+
   it('does not even ask for a preview once the bill is closed: nothing is recalculated after the close', async () => {
     let previews = 0;
     let atClose = -1;
