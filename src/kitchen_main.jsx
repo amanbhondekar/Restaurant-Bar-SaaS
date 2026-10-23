@@ -55,6 +55,8 @@ const KitchenHubApp = () => {
   // Bill preview modal state (M1 billing foundation + adjustments)
   const [billTableId, setBillTableId] = useState(null);
   const [billInvoice, setBillInvoice] = useState(null);
+  // True once the bill on screen has been issued: from then on nothing recalculates it (see fetchBillPreview).
+  const billIssuedRef = useRef(false);
   const [billLoading, setBillLoading] = useState(false);
   const [billError, setBillError] = useState('');
   const [billAdjustments, setBillAdjustments] = useState({
@@ -269,6 +271,11 @@ const KitchenHubApp = () => {
   // Fetch a preview for the current adjustments. Both the initial open and
   // any recalculation from the modal route through here.
   const fetchBillPreview = async (tableId, adj) => {
+    // An issued bill is never recalculated. The preview is asked for a moment after the last keystroke, so a bill
+    // closed straight after typing a discount would otherwise be asked about once it is gone, be told there is
+    // nothing to preview, and have the issued invoice wiped from the screen. (A preview already in flight cannot be
+    // overtaken by a close: the Close button is disabled while one is.)
+    if (billIssuedRef.current) return;
     const body = buildAdjustmentBody(adj);
     const hasAdjustments = Object.keys(body).length > 0;
     setBillLoading(true);
@@ -311,6 +318,9 @@ const KitchenHubApp = () => {
     setBillAdjustments(fresh);
     fetchBillPreview(tableId, fresh);
   };
+
+  // Whatever the screen is showing, an issued bill (it has an invoice number) is not to be recalculated.
+  useEffect(() => { billIssuedRef.current = Boolean(billInvoice?.invoice_number); }, [billInvoice]);
 
   // Debounce recomputation while reception is typing amounts.
   useEffect(() => {
@@ -1946,8 +1956,14 @@ const KitchenHubApp = () => {
   );
 };
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <KitchenHubApp />
-  </React.StrictMode>
-);
+export { KitchenHubApp };
+
+// The page mounts itself. Under test there is no #root: the tests render the component directly.
+const mountPoint = document.getElementById('root');
+if (mountPoint) {
+  ReactDOM.createRoot(mountPoint).render(
+    <React.StrictMode>
+      <KitchenHubApp />
+    </React.StrictMode>
+  );
+}

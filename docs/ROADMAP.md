@@ -60,16 +60,16 @@ guest ordering, repeat-visit recognition and reservations.
 
 Automated coverage is **1240 hub tests across 63 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**793 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**841 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
-except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
-Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
-repair, guest ordering), and the waiter app (login, floor grid, modifier sheet,
-menu grid, order drawer, and how it keeps hold of the hub), and the Kitchen
-Display's billing logic (adjustments, splits, ticket merging) and its board (what
-each live message does to the tickets, and the connection light). The rest of the
-Kitchen Display (its rendering and modals) and the waiter's QR scanner are still
-verified by hand.
+(Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
+Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
+the waiter app (login, floor grid, modifier sheet, menu grid, order drawer, and
+how it keeps hold of the hub), and the reception Kitchen Display itself: the
+board, station tabs, held courses, the connection light, and the bill from
+preview to paid, split, voided and refunded, against a fake hub and socket. Only
+the waiter's QR scanner (it needs a camera) is still verified by hand, and nothing
+drives a real browser in CI.
 
 ---
 
@@ -223,15 +223,20 @@ verified by hand.
   ticket rail, pairing QR + enrollment code, connection badge grace states,
   Framer Motion ticket-printer moment, kitchen summary counters, station chips,
   bill preview and settlement. It is one 1,953-line component mixing the socket,
-  the state and the rendering, which is why it is the one reception surface with
-  little automated testing (§3). Two pieces are out: the pure billing logic
-  (turning the adjustment form into what the hub understands, seeding an equal
-  split that adds up exactly, building the split requests, merging a ticket) in
-  `src/lib/kitchenBill.js`, and the board (what each live message does to the
-  tickets on screen, marking a ticket ready, and when the connection light goes
-  from connecting to disconnected) in `src/lib/kitchenBoard.js`, each with its own
-  tests and called by the component. The modals and the rendering still have to
-  be split before they can be tested in pieces.
+  the state and the rendering. Two pieces are out as pure functions: the billing
+  logic (turning the adjustment form into what the hub understands, seeding an
+  equal split that adds up exactly, building the split requests, merging a
+  ticket) in `src/lib/kitchenBill.js`, and the board (what each live message does
+  to the tickets on screen, marking a ticket ready, and when the connection light
+  goes from connecting to disconnected) in `src/lib/kitchenBoard.js`. The whole
+  component is now also tested as it renders (`src/test/kitchen/`, 48 tests): the
+  page no longer mounts itself when there is no `#root`, and exports
+  `KitchenHubApp`. Writing those tests found a real bug: typing a discount and
+  pressing Close Bill within about a fifth of a second let the delayed preview
+  recalculation run after the bill was issued, get "no open tickets" from the hub,
+  and wipe the issued invoice from the screen. An issued bill is no longer
+  recalculated. It is still one file; splitting it into components is now a
+  refactor with a net under it rather than a leap.
   (An earlier version of this line named `src/server_laptop/KitchenKdsView.jsx`;
   that is a smaller view in the old shell, not this.)
 - ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
@@ -372,16 +377,15 @@ verified by hand.
   with no console errors. Moved out of this section.
 - 🟡 **Test coverage**: the hub is well covered. A frontend runner covers the
   diner page and its basket, the station screens, device enrolment, every
-  reception admin tab except the Kitchen Display (including the Menu tab and its
+  reception admin tab (including the Menu tab and its
   item editor, Tables, Cash and Sales, which handle prices, the floor, the till
-  and the owner's figures, Printers, Plan and the menu importer), and the waiter
+  and the owner's figures, Printers, Plan and the menu importer), the waiter
   login, floor grid, modifier sheet, menu grid, order drawer and connection
-  handling. The reception Kitchen Display's billing logic and its board are covered
-  (`src/lib/kitchenBill.js`, `src/lib/kitchenBoard.js`); the rest of
-  `src/kitchen_main.jsx` (1,953 lines: the modals and the rendering, to be split
-  before they can be tested) and the waiter's QR scanner
-  (it needs a camera) are still verified by hand, and nothing drives a real
-  browser in CI. Things found only by looking past a passing build or by checking
+  handling, and the reception Kitchen Display (its billing logic and board as pure
+  functions, and the whole component as it renders: the board, station tabs, held
+  courses, the connection light, and the bill from preview to paid, split, voided
+  and refunded). The waiter's QR scanner (it needs a camera) is still verified by
+  hand, and nothing drives a real browser in CI. Things found only by looking past a passing build or by checking
   the tests themselves: a cross-page flow (the device-scope report), a
   screen-reader bug in the 86 switches (the admin-tab report), in the importer a
   Replace mode that stayed selected over a merge's numbers ("0 items will be
@@ -606,7 +610,7 @@ milestones (§5) when a theme is pulled into a release.
   modifier sheet, including a contract test that feeds the sheet's output to
   the hub's real `priceOrder`. Since extended to every reception admin tab
   (Printers, Plan and the menu importer included), and the waiter app (all of it
-  but the QR scanner). Still to do: the reception KDS, the QR scanner, and a
+  but the QR scanner) and the reception KDS. Still to do: the QR scanner, and a
   Playwright smoke run in a real browser.
 - ⬜ Structured logging + optional OpenTelemetry export from the hub.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
