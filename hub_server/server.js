@@ -44,6 +44,7 @@ import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
 attachHubProcessHandlers();
+import { feedFor, connectedFor, withoutMoney } from './lib/liveFeed.js';
 import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -115,6 +116,11 @@ let SERVER_URL = `http://${LAN_IP}:${PORT}`;
 // Those requests are not loopback but do come from this same machine.
 trustLocalAddress(LAN_IP);
 
+/** 'full' for the reception laptop and any full-scope handset, 'kitchen' for a station screen, null for a stranger. */
+const callerScope = (req, token = extractToken(req)) => (isLoopback(req) ? 'full' : deviceAuth.scopeFor(token));
+/** A ticket as the caller may see it: a kitchen screen is not shown what anything costs. */
+const ticketFor = (req, ticket) => (callerScope(req) === 'kitchen' ? withoutMoney(ticket) : ticket);
+
 // -------------------------------------------------------------
 // WebSocket Layer (Live Real-Time Push to Kitchen KDS & Waiter Handsets)
 // -------------------------------------------------------------
@@ -132,9 +138,10 @@ server.on('upgrade', (request, socket, head) => {
     return socket.destroy();
   }
 
-  // The live feed carries every ticket and table total, so it needs the same
-  // authorisation as the REST endpoints.
+  // The live feed carries tickets, bills and table totals, so it needs the same authorisation as the
+  // REST endpoints -- and the same scopes: a kitchen screen is sent the board and not the bill (lib/liveFeed.js).
   const token = url.searchParams.get('token');
+  request.feedScope = callerScope(request, token);
   if (!isLoopback(request) && !deviceAuth.verifyToken(token)) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     return socket.destroy();
@@ -151,17 +158,21 @@ const replicateInvoice = invoice => { if (invoice) syncQueue.enqueueInvoice(invo
 
 function broadcast(type, payload) {
   const pairing = hubConfig.getPairingInfo();
-  const message = JSON.stringify({
-    type,
-    payload,
-    restaurant_id: pairing.restaurant_id,
-    timestamp: Date.now()
-  });
+  const timestamp = Date.now();
+  // One message per scope, built once however many screens are connected.
+  const byScope = new Map();
+  const messageFor = scope => {
+    if (!byScope.has(scope)) {
+      const feed = feedFor(scope, type, payload);
+      byScope.set(scope, feed ? JSON.stringify({ type, payload: feed.payload, restaurant_id: pairing.restaurant_id, timestamp }) : null);
+    }
+    return byScope.get(scope);
+  };
 
   connectedClients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
+    if (client.readyState !== WebSocket.OPEN) return;
+    const message = messageFor(client.feedScope);
+    if (message) client.send(message);
   });
 }
 
@@ -180,6 +191,7 @@ setInterval(() => {
 }, WS_HEARTBEAT_MS).unref();
 
 wss.on('connection', (ws, req) => {
+  ws.feedScope = req.feedScope;
   connectedClients.add(ws);
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
@@ -199,13 +211,13 @@ wss.on('connection', (ws, req) => {
   };
   ws.send(JSON.stringify({
     type: 'CONNECTED',
-    payload: {
+    payload: connectedFor(ws.feedScope, {
       pairing: safePairing,
       sync: syncQueue.getStatus(),
       active_tickets_count: ticketStore.getActiveTickets(pairing.restaurant_id).length,
       menu: restaurantCache.getMenuCache(pairing.restaurant_id),
       tables_layout: restaurantCache.getTablesCache(pairing.restaurant_id)
-    }
+    })
   }));
 
   ws.on('message', (message) => {
@@ -554,7 +566,7 @@ app.get('/orders/active', requireKitchenDevice, (req, res) => {
   res.json({
     restaurant_id: pairing.restaurant_id,
     count: activeTickets.length,
-    tickets: activeTickets
+    tickets: activeTickets.map(t => ticketFor(req, t))
   });
 });
 
@@ -617,7 +629,7 @@ app.post('/orders/:id/ready', requireKitchenDevice, (req, res) => {
 
   res.json({
     success: true,
-    ticket: updatedTicket
+    ticket: ticketFor(req, updatedTicket)
   });
 });
 
@@ -665,7 +677,7 @@ app.post('/orders/:id/stations/:station/ready', requireKitchenDevice, (req, res)
     // The status has not changed, but which stations have finished has: send the course state.
     syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id, ticket);
   }
-  res.json({ success: true, ticket, ticket_ready: Boolean(result.ticket_ready), station });
+  res.json({ success: true, ticket: ticketFor(req, ticket), ticket_ready: Boolean(result.ticket_ready), station });
 });
 
 // 5c. POST /orders/:id/fire — send the next held course (or body.course) to the kitchen.
@@ -685,7 +697,7 @@ app.post('/orders/:id/fire', requireKitchenDevice, requireFeature(FEATURES.COURS
   // A ticket that had been marked ready is cooking again.
   syncQueue.enqueueStatusUpdate(ticket.ticket_number, 'in_progress', pairing.restaurant_id, ticket);
   autoPrintKot(ticket, pairing, { items: result.fired_items, course: result.fired_course }).catch(() => {});
-  res.json({ success: true, ticket, fired_course: result.fired_course, fired_items: result.fired_items.length });
+  res.json({ success: true, ticket: ticketFor(req, ticket), fired_course: result.fired_course, fired_items: result.fired_items.length });
 });
 
 // 5d. POST /orders/:id/recall — a ticket marked ready goes back on the board (marked by mistake, or remake).
@@ -706,7 +718,7 @@ app.post('/orders/:id/recall', requireKitchenDevice, (req, res) => {
     course: result.recalled_course,
     reprint: true
   }).catch(() => {});
-  res.json({ success: true, ticket, recalled_course: result.recalled_course });
+  res.json({ success: true, ticket: ticketFor(req, ticket), recalled_course: result.recalled_course });
 });
 
 // 5e. GET /telemetry/prep — how long the kitchen takes, per item and per station. Reception laptop only.

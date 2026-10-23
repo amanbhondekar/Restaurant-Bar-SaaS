@@ -58,7 +58,7 @@ project or Razorpay keys: migrations 004–015 have never run on a hosted projec
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1227 hub tests across 62 files** (pure rules plus live
+Automated coverage is **1240 hub tests across 63 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **772 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -258,7 +258,7 @@ verified by hand.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1227 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1240 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -576,8 +576,17 @@ milestones (§5) when a theme is pulled into a release.
   the narrower one. It limits what a mishandled tablet can do; the scope is the
   device's own choice at enrolment, so it is not a barrier against anyone who
   has the enrolment code.
-- ⬜ The live feed still carries table totals to a kitchen token: read-only, but
-  more than a screen at the pass needs.
+- ✅ A kitchen token is told the board and not the bill. The live feed used to
+  send every event to every connection, so a screen enrolled with the narrow
+  `kitchen` scope still heard every invoice, void, refund, cash-up and sync
+  status, and every ticket it was sent (live or over HTTP) carried the order
+  total and each line's price. Now `lib/liveFeed.js` decides, default-deny: a
+  kitchen connection is sent only the ticket and table-cleared events, with the
+  total, prices and bill numbers taken off, and a greeting without the menu,
+  table list or sync detail; `/orders/active` and the ready, fire and recall
+  answers strip prices for a kitchen token the same way. Handsets and the
+  reception laptop are unchanged. 13 tests (`liveFeed.test.mjs`), 19 mutations
+  all caught.
 - ✅ `POST /waiters` and `DELETE /waiters/:id` are reception-only. They were
   commented "reception / admin" but needed only a device token, so any enrolled
   handset could add a waiter with a PIN of its own or lock another waiter out
