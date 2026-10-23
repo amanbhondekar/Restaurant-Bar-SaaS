@@ -2,7 +2,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 
-import { feedFor, connectedFor, withoutMoney, KITCHEN_EVENTS } from '../lib/liveFeed.js';
+import { feedFor, connectedFor, kitchenTicket, TICKET_FIELDS, KITCHEN_EVENTS } from '../lib/liveFeed.js';
 import { startHub, call, RESTAURANT_ID } from './helpers/spawnHub.mjs';
 
 // What a kitchen screen is told. It needs the board -- tickets, courses, who is cooking what -- and has no use for
@@ -12,27 +12,56 @@ import { startHub, call, RESTAURANT_ID } from './helpers/spawnHub.mjs';
 
 const TICKET = {
   id: 't_1', ticket_number: 7, table_id: 1, table_name: 'T1', status: 'in_progress', total_amount: 230, note: 'no onion',
-  items: [{ id: 'm1', name: 'Dal', qty: 2, price: 115, station: 'hot', modifiers: [{ group_id: 'g', option_id: 'cheese', label: 'Cheese', price_delta: 15 }] }]
+  items: [{ id: 'm1', name: 'Dal', qty: 2, price: 115, station: 'hot', modifiers: [{ group_id: 'g', option_id: 'cheese', group_label: 'Extras', option_label: 'Cheese', price_delta: 15 }] }]
 };
 
 // --- the rule ------------------------------------------------------------------------------------------
 
-test('money is taken off a ticket: the total, each line\'s price, each extra\'s price -- and nothing else changes', () => {
-  const t = withoutMoney(TICKET);
+test('a ticket is shown to a kitchen as what it needs to cook it: no total, no prices, and nothing that was not listed', () => {
+  const t = kitchenTicket(TICKET);
   assert.equal(t.total_amount, undefined);
   assert.equal(t.items[0].price, undefined);
   assert.equal(t.items[0].modifiers[0].price_delta, undefined);
-  assert.deepEqual([t.id, t.ticket_number, t.table_name, t.note, t.items[0].name, t.items[0].qty, t.items[0].station, t.items[0].modifiers[0].label],
-    ['t_1', 7, 'T1', 'no onion', 'Dal', 2, 'hot', 'Cheese']);
-  assert.equal(TICKET.total_amount, 230, 'the hub\'s own ticket is not touched');
+  assert.deepEqual([t.id, t.ticket_number, t.table_name, t.note, t.items[0].name, t.items[0].qty, t.items[0].station, t.items[0].modifiers[0].option_label, t.items[0].modifiers[0].group_label],
+    ['t_1', 7, 'T1', 'no onion', 'Dal', 2, 'hot', 'Cheese', 'Extras']);
+  assert.equal(TICKET.total_amount, 230, "the hub's own ticket is not touched");
   assert.equal(TICKET.items[0].price, 115);
 });
 
-test('a ticket with nothing odd about it, or no ticket at all, passes through', () => {
-  assert.equal(withoutMoney(null), null);
-  assert.equal(withoutMoney(undefined), undefined);
-  assert.deepEqual(withoutMoney({ id: 'x' }), { id: 'x' });
-  assert.deepEqual(withoutMoney({ id: 'x', items: 'nonsense' }).items, 'nonsense');
+test('a field nobody listed never reaches a kitchen, so one added to tickets later cannot leak by default', () => {
+  const rich = {
+    ...TICKET,
+    restaurant_id: 'r-1', order_request_id: 'req-9', synced_to_cloud: false,
+    stock_used: [{ inventory_item_id: 'rice', qty: 0.6 }],
+    guest_phone: '919876543210', payment_ref: 'TXN42', discount_total: 20, customer_name: 'Asha K',
+    items: [{ ...TICKET.items[0], cost: 31, margin: 0.4, internal_note: 'comp', recipe_id: 'r1' }]
+  };
+  const t = kitchenTicket(rich);
+  for (const k of ['restaurant_id', 'order_request_id', 'synced_to_cloud', 'stock_used', 'guest_phone', 'payment_ref', 'discount_total', 'customer_name']) {
+    assert.equal(k in t, false, k);
+  }
+  for (const k of ['cost', 'margin', 'internal_note', 'recipe_id']) assert.equal(k in t.items[0], false, k);
+  assert.doesNotMatch(JSON.stringify(t), /9876543210|TXN42|Asha K|req-9/);
+});
+
+test('what a screen draws is kept: the course state, the cancellation, the waiter, the times and every line detail', () => {
+  const full = {
+    ...TICKET, status: 'cancelled', staged: true, fired_courses: [1, 2], course_log: { 1: { fired_at: 'x', stations_ready: { hot: 'y' }, ready_at: 'z' } },
+    created_by_waiter: 'Asha', created_at: 'a', updated_at: 'b', cancelled_at: 'c', cancel_reason: 'guest left', cancel_cooked: false,
+    items: [{ id: 'm1', name: 'Dal', qty: 2, station: 'hot', course: 2, variant_id: 'half', variant_label: 'Half', day_part_label: 'Lunch', modifiers: [] }]
+  };
+  const t = kitchenTicket(full);
+  for (const k of ['status', 'staged', 'fired_courses', 'course_log', 'created_by_waiter', 'created_at', 'updated_at', 'cancelled_at', 'cancel_reason', 'cancel_cooked']) assert.deepEqual(t[k], full[k], k);
+  assert.deepEqual(t.items[0], full.items[0]);
+  assert.deepEqual(Object.keys(t).sort(), Object.keys(full).filter(k => TICKET_FIELDS.includes(k)).sort());
+});
+
+test('nothing, or something that is not a ticket, comes back as it was; items that are not a list are dropped', () => {
+  assert.equal(kitchenTicket(null), null);
+  assert.equal(kitchenTicket(undefined), undefined);
+  assert.deepEqual(kitchenTicket({ id: 'x' }), { id: 'x' });
+  assert.equal('items' in kitchenTicket({ id: 'x', items: 'nonsense' }), false);
+  assert.deepEqual(kitchenTicket({ id: 'x', items: [null, 'str', { name: 'A', qty: 1, price: 5 }] }).items, [null, 'str', { name: 'A', qty: 1 }]);
 });
 
 test('a full-scope connection is sent everything, untouched', () => {
@@ -55,11 +84,41 @@ test('a kitchen connection is sent the board events with the money taken off, an
   ].sort());
 });
 
-test('NEW_ORDER carries the ticket itself as its payload, and that is stripped too', () => {
-  const r = feedFor('kitchen', 'NEW_ORDER', TICKET);
+test('NEW_ORDER carries the ticket itself as its payload, and that is narrowed too', () => {
+  const r = feedFor('kitchen', 'NEW_ORDER', { ...TICKET, stock_used: [{ qty: 1 }], restaurant_id: 'r-1' });
   assert.equal(r.payload.total_amount, undefined);
   assert.equal(r.payload.items[0].price, undefined);
   assert.equal(r.payload.items[0].name, 'Dal');
+  assert.equal('stock_used' in r.payload, false);
+  assert.equal('restaurant_id' in r.payload, false);
+  // The board finds the ticket by its own id, number and table: a payload that lost them would be ignored as no ticket at all.
+  assert.deepEqual([r.payload.id, r.payload.ticket_number, r.payload.table_name, r.payload.status], ['t_1', 7, 'T1', 'in_progress']);
+});
+
+test('a payload that has an id and lines AND a ticket inside is an event around a ticket, not a ticket', () => {
+  const r = feedFor('kitchen', 'order_created', { id: 'evt', items: TICKET.items, ticket: TICKET, extra: 1 });
+  assert.equal('id' in r.payload, false, 'event keys only');
+  assert.equal(r.payload.ticket.id, 't_1');
+  assert.equal('extra' in r.payload, false);
+});
+
+test('lines that are not a list are dropped from an event, not passed through', () => {
+  const r = feedFor('kitchen', 'order_created', { ticket_id: 't_1', items: 'nonsense', ticket: { ...TICKET, items: 'nonsense' } });
+  assert.equal('items' in r.payload, false);
+  assert.equal('items' in r.payload.ticket, false);
+});
+
+test('the event around a ticket is narrowed as well: a key nobody listed does not get through', () => {
+  const r = feedFor('kitchen', 'order_created', {
+    order_id: 't_1', ticket_id: 't_1', ticket_number: 7, table_id: 1, table_name: 'T1', status: 'in_progress', created_at: 'a',
+    items: TICKET.items, total_amount: 230, ticket: { ...TICKET, guest_phone: '919876543210' }, guest_phone: '919876543210', payment_ref: 'TXN42'
+  });
+  assert.deepEqual(Object.keys(r.payload).sort(), ['created_at', 'items', 'order_id', 'status', 'table_id', 'table_name', 'ticket', 'ticket_id', 'ticket_number'].sort());
+  assert.equal('guest_phone' in r.payload.ticket, false);
+  assert.equal(r.payload.items[0].price, undefined);
+  assert.doesNotMatch(JSON.stringify(r), /9876543210|TXN42/);
+  const fired = feedFor('kitchen', 'COURSE_FIRED', { ticket_id: 't_1', course: 2, station: 'hot', ticket: TICKET, secret: 'x' });
+  assert.deepEqual(Object.keys(fired.payload).sort(), ['course', 'station', 'ticket', 'ticket_id']);
 });
 
 test('when a table is cleared the screen is told which, and not what it came to', () => {
@@ -172,6 +231,7 @@ test('hub: what a kitchen screen reads over HTTP has no prices either, though it
   assert.equal(t.items[0].qty, 3);
   assert.equal(t.total_amount, undefined);
   assert.equal(t.items[0].price, undefined);
+  for (const k of ['restaurant_id', 'order_request_id', 'synced_to_cloud', 'stock_used']) assert.equal(k in t, false, `${k} reached a kitchen token`);
 
   const marked = await json(await call(remote, `/orders/${ticketId}/stations/hot/ready`, { method: 'POST', token: screen }));
   assert.equal(marked.ticket.total_amount, undefined);
@@ -188,6 +248,7 @@ test('hub: what a kitchen screen reads over HTTP has no prices either, though it
   const asHandset = (await json(await call(remote, '/orders/active', { token: handset }))).tickets.find(x => x.id === ticketId);
   assert.equal(asHandset.total_amount, 300);
   assert.equal(asHandset.items[0].price, 100);
+  assert.equal(asHandset.restaurant_id, RESTAURANT_ID, 'and the rest of the ticket');
 });
 
 test('hub: firing the next course answers a kitchen screen without prices too', async () => {

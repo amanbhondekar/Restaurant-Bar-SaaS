@@ -45,7 +45,7 @@ import { checkLimit, featureRefusal, hasFeature, FEATURES } from './lib/plans.js
 import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js';
 
 attachHubProcessHandlers();
-import { feedFor, connectedFor, withoutMoney } from './lib/liveFeed.js';
+import { feedFor, connectedFor, kitchenTicket } from './lib/liveFeed.js';
 import { activeLogging, requestLogger } from './lib/log.js';
 import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
@@ -123,7 +123,7 @@ trustLocalAddress(LAN_IP);
 /** 'full' for the reception laptop and any full-scope handset, 'kitchen' for a station screen, null for a stranger. */
 const callerScope = (req, token = extractToken(req)) => (isLoopback(req) ? 'full' : deviceAuth.scopeFor(token));
 /** A ticket as the caller may see it: a kitchen screen is not shown what anything costs. */
-const ticketFor = (req, ticket) => (callerScope(req) === 'kitchen' ? withoutMoney(ticket) : ticket);
+const ticketFor = (req, ticket) => (callerScope(req) === 'kitchen' ? kitchenTicket(ticket) : ticket);
 
 // -------------------------------------------------------------
 // WebSocket Layer (Live Real-Time Push to Kitchen KDS & Waiter Handsets)

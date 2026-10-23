@@ -5,8 +5,13 @@
 // event to every connection, so a screen enrolled with the narrow `kitchen` scope still heard every bill. Here the
 // decision is one pure function, so it can be pinned by tests and read in one place.
 //
-// The rule is default-deny for a narrow connection: an event is sent to a kitchen screen only if it is named below,
-// so a new event type added to the hub tells a kitchen nothing until someone decides it should.
+// The rule is default-deny at every level, for a narrow connection:
+//   - an event reaches a kitchen screen only if it is named in KITCHEN_EVENTS;
+//   - within an event, only the keys in EVENT_FIELDS;
+//   - within a ticket, only the fields in TICKET_FIELDS, and within a line or an extra only ITEM_FIELDS / MODIFIER_FIELDS.
+// So a new event, a new key on an event, or a new field on a ticket (a guest's phone number, a payment reference, a
+// discount) tells a kitchen nothing until someone decides it should. The earlier version stripped money and let
+// everything else through, which protects against the fields we thought of.
 
 /** Events a kitchen screen is sent. Everything on the board, and the notice that a table was cleared. */
 export const KITCHEN_EVENTS = new Set([
@@ -16,35 +21,59 @@ export const KITCHEN_EVENTS = new Set([
   'CLEAR_TABLE', 'bill_cleared', 'order_cleared'
 ]);
 
-const LINE_MONEY = ['price', 'line_total'];
-const EXTRA_MONEY = ['price', 'price_delta'];
+/** What the station screens and the board read of a ticket. */
+export const TICKET_FIELDS = [
+  'id', 'ticket_number', 'table_id', 'table_name', 'status', 'note', 'created_by_waiter', 'items',
+  'staged', 'fired_courses', 'course_log',
+  'created_at', 'updated_at', 'cancelled_at', 'cancel_reason', 'cancel_cooked'
+];
+export const ITEM_FIELDS = ['id', 'name', 'qty', 'station', 'course', 'variant_id', 'variant_label', 'day_part_label', 'modifiers'];
+export const MODIFIER_FIELDS = ['group_id', 'option_id', 'group_label', 'option_label'];
+/** The keys an event may carry to a kitchen: which ticket and table, what happened, and the ticket itself. */
+export const EVENT_FIELDS = [
+  'ticket_id', 'order_id', 'ticket_number', 'table_id', 'table_name', 'status', 'course', 'station', 'cleared_count', 'created_at', 'items', 'ticket'
+];
 
-function withoutKeys(object, keys) {
-  const copy = { ...object };
-  for (const key of keys) delete copy[key];
-  return copy;
+function pick(object, keys) {
+  const out = {};
+  for (const key of keys) if (Object.prototype.hasOwnProperty.call(object, key)) out[key] = object[key];
+  return out;
+}
+
+const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function kitchenItems(items) {
+  return items.map(line => {
+    if (!isObject(line)) return line;
+    const out = pick(line, ITEM_FIELDS);
+    if (Array.isArray(out.modifiers)) out.modifiers = out.modifiers.map(m => (isObject(m) ? pick(m, MODIFIER_FIELDS) : m));
+    return out;
+  });
 }
 
 /**
- * A ticket as a kitchen screen is allowed to see it: the same lines, quantities, notes and course state, without
- * the total, each line's price, or each extra's price. Returns a copy; the hub's own ticket is never touched.
- * Anything that is not an object comes back as it was, so a half-formed payload cannot throw in the middle of a
- * broadcast.
+ * A ticket as a kitchen screen is allowed to see it: the lines, quantities, notes and course state it draws, and nothing
+ * else (no total, no prices, no stock used, no tenant or request ids, nothing added later). Returns a copy; the hub's own
+ * ticket is never touched. Anything that is not an object comes back as it was, so a half-formed payload cannot throw in
+ * the middle of a broadcast.
  */
-export function withoutMoney(ticket) {
-  if (!ticket || typeof ticket !== 'object') return ticket;
-  const copy = withoutKeys(ticket, ['total_amount']);
-  if (Array.isArray(copy.items)) {
-    copy.items = copy.items.map(line => {
-      if (!line || typeof line !== 'object') return line;
-      const stripped = withoutKeys(line, LINE_MONEY);
-      if (Array.isArray(stripped.modifiers)) {
-        stripped.modifiers = stripped.modifiers.map(m => (m && typeof m === 'object' ? withoutKeys(m, EXTRA_MONEY) : m));
-      }
-      return stripped;
-    });
+export function kitchenTicket(ticket) {
+  if (!isObject(ticket)) return ticket;
+  const out = pick(ticket, TICKET_FIELDS);
+  if ('items' in out) {
+    if (Array.isArray(out.items)) out.items = kitchenItems(out.items);
+    else delete out.items;
   }
-  return copy;
+  return out;
+}
+
+/** An event's payload narrowed for a kitchen. A payload that IS a ticket (NEW_ORDER sends one) is narrowed as a ticket. */
+function kitchenPayload(payload) {
+  if (typeof payload.id === 'string' && payload.ticket === undefined && Array.isArray(payload.items)) return kitchenTicket(payload);
+  const out = pick(payload, EVENT_FIELDS);
+  if (Array.isArray(out.items)) out.items = kitchenItems(out.items); else delete out.items;
+  if ('ticket' in out) out.ticket = kitchenTicket(out.ticket);
+  return out;
 }
 
 /**
@@ -54,11 +83,8 @@ export function withoutMoney(ticket) {
 export function feedFor(scope, type, payload) {
   if (scope === 'full') return { payload };
   if (scope !== 'kitchen' || !KITCHEN_EVENTS.has(type)) return null;
-
-  if (!payload || typeof payload !== 'object') return { payload };
-  const stripped = withoutKeys(withoutMoney(payload), ['grand_total', 'invoice_number']);
-  if (stripped.ticket) stripped.ticket = withoutMoney(stripped.ticket);
-  return { payload: stripped };
+  if (!isObject(payload)) return { payload };
+  return { payload: kitchenPayload(payload) };
 }
 
 /** The greeting sent on connecting. A kitchen screen gets who it is connected to and how many tickets are open: no menu prices, no sync detail, no table list. */
