@@ -58,7 +58,7 @@ project or Razorpay keys: migrations 004–015 have never run on a hosted projec
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1255 hub tests across 64 files** (pure rules plus live
+Automated coverage is **1292 hub tests across 65 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **841 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -266,7 +266,7 @@ drives a real browser in CI.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1255 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1292 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -617,7 +617,14 @@ milestones (§5) when a theme is pulled into a release.
   (Printers, Plan and the menu importer included), and the waiter app (all of it
   but the QR scanner) and the reception KDS. Still to do: the QR scanner, and a
   Playwright smoke run in a real browser.
-- ⬜ Structured logging + optional OpenTelemetry export from the hub.
+- ✅ Structured logging and an optional OpenTelemetry export (`docs/LOGGING.md`):
+  `HUB_LOG_FORMAT=json` turns every log line into one JSON line, and
+  `OTEL_EXPORTER_OTLP_ENDPOINT` also ships them to a collector as OTLP/HTTP JSON. Off
+  unless asked for, no call site edited (the console is wrapped). Records are
+  redacted as they are made (tokens, enrolment codes, PINs, JWTs), the request log
+  never records a query string, and the exporter is bounded and cannot hurt the hub
+  when the collector is down. Logs only: no gRPC or protobuf exporter, no traces, no
+  metrics. 37 tests, 55 mutations all caught.
 - ✅ Stable fixture ports: the hub binds `:0` and reports the port it got, so
   there is no window between choosing a port and holding it. Runner
   concurrency capped so the suite stops oversubscribing the machine.

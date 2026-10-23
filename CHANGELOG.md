@@ -29,6 +29,8 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
+- Structured logging (`HUB_LOG_FORMAT=json`) and an optional OpenTelemetry export of logs (`OTEL_EXPORTER_OTLP_ENDPOINT`), both off by
+  default; records are redacted at the source. See `docs/LOGGING.md`.
 - The sync queue's journal line is synced to disk before the snapshot is written, so a power cut no longer loses the newest unsent
   takings (`HUB_QUEUE_FSYNC=0` turns it off).
 - **Money decisions are reception's alone.** Void, refund, mark-paid, the three splits, undo split and settle share, and closing

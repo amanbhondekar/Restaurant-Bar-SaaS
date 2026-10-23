@@ -99,7 +99,8 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
   // it has the port). A hub that dies while a test is using it otherwise shows up only as an
   // ECONNRESET and then a string of ECONNREFUSED, with nothing to say why.
   let stdoutTail = '';
-  child.stdout.on('data', chunk => { stdoutTail = (stdoutTail + chunk).slice(-3000); });
+  let stdoutAll = '';
+  child.stdout.on('data', chunk => { stdoutTail = (stdoutTail + chunk).slice(-3000); stdoutAll = (stdoutAll + chunk).slice(-400000); });
   let stopping = false;
   child.once('exit', (code, signal) => {
     if (stopping) return;
@@ -160,6 +161,8 @@ async function bootHub({ port, trustLoopback, menu, tables, enrollmentCode = 'TE
     dataDir,
     // The per-start name in hub_config.json, for tests that assert on what /pairing-info serves.
     name: hubName,
+    /** Everything the hub has printed to stdout so far (the last 400 KB), for tests about its logging. */
+    output: () => stdoutAll,
     stop() {
       stopping = true;
       child.kill();

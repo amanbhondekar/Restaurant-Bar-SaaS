@@ -1,3 +1,4 @@
+import './lib/logInstall.js';   // first: wraps the console before anything else prints (a no-op unless asked for)
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
@@ -45,6 +46,7 @@ import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js'
 
 attachHubProcessHandlers();
 import { feedFor, connectedFor, withoutMoney } from './lib/liveFeed.js';
+import { activeLogging, requestLogger } from './lib/log.js';
 import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +59,8 @@ const __dirname = path.dirname(__filename);
 let PORT = Number(process.env.PORT ?? 4000);
 const app = express();
 const server = http.createServer(app);
+// One record per answered request, when structured logging or a collector is on (lib/log.js). Before everything else, so it sees every answer.
+if (activeLogging()?.requests) app.use(requestLogger());
 
 // CORS is restricted to LAN/loopback origins. A wildcard here let any website a
 // staff phone opened silently POST to the POS (e.g. /tables/1/clear).
