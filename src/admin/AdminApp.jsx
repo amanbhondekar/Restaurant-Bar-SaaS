@@ -284,7 +284,7 @@ export const AdminApp = () => {
             <FeedbackTab />
           </TabsContent>
           <TabsContent value="plan" className="pt-2">
-            <PlanTab />
+            <PlanTab notify={notify} />
           </TabsContent>
         </Tabs>
       </main>

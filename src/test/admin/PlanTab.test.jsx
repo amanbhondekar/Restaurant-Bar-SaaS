@@ -115,9 +115,12 @@ describe('plan lib — limits and features', () => {
   });
 });
 
+// These tests are about the plan. The subscription panel under it has its own file; here the hub simply has no billing service.
+const NO_BILLING = { 'GET /admin/billing': { body: { success: true, configured: false } } };
+
 describe('plan tab', () => {
   it('shows the plan, its limits and its features', async () => {
-    const hub = fakeHub({ 'GET /plan': { body: PLAN } });
+    const hub = fakeHub({ ...NO_BILLING, 'GET /plan': { body: PLAN } });
     render(<PlanTab />);
     expect(await screen.findByText('Pro')).toBeInTheDocument();
     expect(screen.getByText('active')).toBeInTheDocument();
@@ -135,21 +138,21 @@ describe('plan tab', () => {
   });
 
   it('a grace period is a warning, not an alarm', async () => {
-    fakeHub({ 'GET /plan': { body: { ...PLAN, in_grace: true, grace_ends_at: '2026-10-30T00:00:00.000Z' } } });
+    fakeHub({ ...NO_BILLING, 'GET /plan': { body: { ...PLAN, in_grace: true, grace_ends_at: '2026-10-30T00:00:00.000Z' } } });
     render(<PlanTab />);
     expect(await screen.findByRole('status')).toHaveTextContent('Payment overdue');
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('says a count is not kept on this hub rather than showing a zero', async () => {
-    fakeHub({ 'GET /plan': { body: PLAN } });
+    fakeHub({ ...NO_BILLING, 'GET /plan': { body: PLAN } });
     render(<PlanTab />);
     const row = (await screen.findByText('Tables')).closest('div.rounded-xl');
     expect(within(row).getByText('Checked when the restaurant is set up, not on this hub.')).toBeInTheDocument();
   });
 
   it('shows the degradation banner above everything when the plan has dropped', async () => {
-    fakeHub({ 'GET /plan': { body: { ...PLAN, plan: 'starter', requested_plan: 'pro', degraded: true, degraded_reason: 'PAYMENT_OVERDUE' } } });
+    fakeHub({ ...NO_BILLING, 'GET /plan': { body: { ...PLAN, plan: 'starter', requested_plan: 'pro', degraded: true, degraded_reason: 'PAYMENT_OVERDUE' } } });
     render(<PlanTab />);
     const banner = await screen.findByRole('alert');   // a dropped plan is an error-toned notice, announced at once
     expect(banner).toHaveTextContent('Running on Starter, not Pro');
@@ -157,7 +160,7 @@ describe('plan tab', () => {
   });
 
   it('the usage bars are decoration: the numbers beside them carry the meaning', async () => {
-    fakeHub({ 'GET /plan': { body: PLAN } });
+    fakeHub({ ...NO_BILLING, 'GET /plan': { body: PLAN } });
     const { container } = render(<PlanTab />);
     await screen.findByText('Pro');
     const bars = container.querySelectorAll('[aria-hidden="true"]');
@@ -166,7 +169,7 @@ describe('plan tab', () => {
 
   it('an unreachable hub is explained, with a way to try again', async () => {
     let up = false;
-    fakeHub({ 'GET /plan': () => (up ? { body: PLAN } : new TypeError('fetch failed')) });
+    fakeHub({ ...NO_BILLING, 'GET /plan': () => (up ? { body: PLAN } : new TypeError('fetch failed')) });
     render(<PlanTab />);
     expect(await screen.findByText('Could not load the subscription')).toBeInTheDocument();
     up = true;
@@ -176,7 +179,7 @@ describe('plan tab', () => {
 
   it('a refresh that fails keeps the last answer on screen and says so', async () => {
     let calls = 0;
-    fakeHub({ 'GET /plan': () => (++calls === 1 ? { body: PLAN } : new TypeError('fetch failed')) });
+    fakeHub({ ...NO_BILLING, 'GET /plan': () => (++calls === 1 ? { body: PLAN } : new TypeError('fetch failed')) });
     render(<PlanTab />);
     await screen.findByText('Pro');
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));

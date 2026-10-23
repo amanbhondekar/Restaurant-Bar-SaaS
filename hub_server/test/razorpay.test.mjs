@@ -172,3 +172,27 @@ test('a plan with no Razorpay plan behind it, or no tenant, is refused with a re
   assert.equal(subscriptionPayload({ restaurantId: 'rest-1' }).code, 'NO_PLAN');
   assert.equal(subscriptionPayload({ razorpayPlanId: 'plan_abc' }).code, 'NO_TENANT');
 });
+
+// --- what the subscription flow needs to carry ------------------------------------------------------
+
+test('a subscription can name the plan it is for in its notes, so a webhook can say which plan was paid for', () => {
+  const { payload } = subscriptionPayload({ razorpayPlanId: 'plan_abc', restaurantId: 'rest-1', plan: 'pro' });
+  assert.deepEqual(payload.notes, { restaurant_id: 'rest-1', plan: 'pro' });
+});
+
+test('a webhook says which Razorpay plan, which of our plans (from notes), when the period began, and when the event happened', () => {
+  const read = readSubscriptionEvent({
+    event: 'subscription.charged',
+    created_at: 1793000500,
+    payload: { subscription: { entity: { id: 'sub_1', plan_id: 'plan_ent', current_start: 1792000000, current_end: 1793000000, notes: { restaurant_id: 'r1', plan: 'pro' } } } }
+  });
+  assert.equal(read.razorpay_plan_id, 'plan_ent');
+  assert.equal(read.plan, 'pro');
+  assert.equal(read.current_period_start, new Date(1792000000 * 1000).toISOString());
+  assert.equal(read.event_at, new Date(1793000500 * 1000).toISOString());
+});
+
+test('what a webhook does not say is null, not invented', () => {
+  const read = readSubscriptionEvent({ event: 'subscription.charged', payload: { subscription: { entity: { id: 'sub_1', notes: { restaurant_id: 'r1' } } } } });
+  assert.deepEqual([read.razorpay_plan_id, read.plan, read.current_period_start, read.event_at], [null, null, null, null]);
+});

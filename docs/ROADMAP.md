@@ -47,21 +47,24 @@ early pilots:
   sales views are retired: those tabs now point at the admin console's Bookings
   and Sales tabs.
 - **Operator service** (`signup_server/`) — not part of a restaurant's
-  installation. Holds the Supabase service key and the Razorpay webhook
-  secret: creates tenants, and keeps `plan_status` honest.
+  installation. Holds the Supabase service key and the Razorpay keys and
+  webhook secret: creates tenants, starts, switches and cancels their
+  subscriptions, and keeps `plan_status` honest (`docs/OPERATOR_SERVICE.md`).
 
 M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant —
 is mostly built: plan enforcement, the owner console, staff and device
-management, and an operator service for signup and Razorpay webhooks. What is
-left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–017 have never run on a hosted project, because there are
-no credentials on the machine this was built on. M4 — customer surfaces — has
+management, and an operator service for signup, Razorpay webhooks and the
+subscription itself (the owner starts, switches and cancels it from the Plan tab).
+What is left is everything that needs a real Supabase project or Razorpay keys:
+migrations 004–018 have never run on a hosted project, and the Razorpay calls have
+only ever been made against a stand-in, because there are no credentials on the
+machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition, reservations with staff-sent reminders,
 and a reward for coming back that the restaurant sets itself.
 
-Automated coverage is **1333 hub tests across 67 files** (pure rules plus live
+Automated coverage is **1444 hub tests across 71 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**875 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**911 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -218,6 +221,11 @@ drives a real browser in CI.
 - ✅ Operator service (`signup_server/`): creates tenants and applies Razorpay
   subscription events to `plan_status`; a payment problem is `past_due`, never
   `suspended` (§4.4).
+- ✅ Subscribing from the Plan tab (§4.4): the owner starts a subscription and is
+  sent to Razorpay's page to authorise payment (nothing is charged until they do),
+  switches plan or cancels, each at the end of the paid period and each after an
+  "are you sure". The hub only forwards; the operator service decides and calls
+  Razorpay. Built against stand-ins, never run against Razorpay.
 
 ### Frontend surfaces
 - ✅ Kitchen KDS (`src/kitchen_main.jsx`, the page the hub serves at `/`): live
@@ -274,7 +282,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1333 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1444 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -521,15 +529,33 @@ milestones (§5) when a theme is pulled into a release.
   do, so they cannot sign in with anything. A single device can be revoked and
   is refused on its next request, instead of rotating the code and making every
   handset in the restaurant re-enrol mid-service.
-- 🟡 Razorpay subscriptions (M3 · PR 19): migration 010 records which
-  subscription belongs to which tenant and logs every applied event, and the
-  operator service verifies Razorpay's webhooks against the raw body and keeps
-  `plan_status` honest. A payment problem becomes `past_due`, never
-  `suspended`, so a card that expires on a Friday night does not take the till
-  down mid-service.
-- ⬜ Nothing CREATES a subscription yet: the payload is built and tested, the
-  HTTP call and the owner-facing flow are not written, and a tenant's plan is
-  still set by hand.
+- 🟡 Razorpay subscriptions (M3 · PR 19): the operator service verifies
+  Razorpay's webhooks against the raw body and keeps `plan_status` honest. A
+  payment problem becomes `past_due`, never `suspended`, so a card that expires
+  on a Friday night does not take the till down mid-service. Migration 010
+  created the `subscriptions` and `subscription_events` tables, but **nothing
+  wrote to them until migration 018 and this flow**: they now record which
+  subscription belongs to which tenant, and log every applied event once (a
+  redelivery of the same event id is acknowledged, not logged twice; an event
+  older than the last applied is logged and left alone, so a late "payment
+  failed" cannot put a restaurant back to past_due after it paid).
+- ✅ The owner can start, switch and cancel a subscription (2026-10-23). Plan tab →
+  Subscription panel → hub (`/admin/billing…`, reception only) → operator service
+  → Razorpay. The restaurant is read from the hub's own cloud sign-in, never from a
+  request. Only an `active` subscription sets `restaurants.plan`. Starting needs no
+  confirmation (it only opens Razorpay's page); switching and cancelling ask first
+  and take effect at the end of the paid period. See `docs/OPERATOR_SERVICE.md`.
+- ⬜ **Still open here, and why.** Razorpay has never been called for real: the
+  requests follow its published Subscriptions API and are tested against a stand-in,
+  so the first run in test mode will probably find something. No keys or plan ids
+  exist. Migrations 010–018 have not run on a hosted project. A subscription is
+  created for 12 billing periods, then completes and the restaurant falls back to
+  Starter: the length is a commercial decision nobody has made. A payment page that
+  was never used cannot be cancelled (nothing was authorised); it lapses. A plan can
+  be switched only once the first payment has gone through. Anyone at the reception
+  laptop can start or cancel, because the hub speaks as the restaurant's `kitchen`
+  identity and there is no manager PIN in front of it. There is no public signup page
+  (needs a captcha, email verification and a host).
 
 ### 4.5 Customer-facing surfaces  🟡
 - ✅ Diner QR menu, view-only: a table code opens a read-only menu served
@@ -725,8 +751,9 @@ The product can onboard a new restaurant without engineering.
 - 🟡 PR 17 — provisioning (007) and the operator service that calls it are built
   and tested; there is no public signup page in front of it, and none of it has
   run against a real project.
-- 🟡 PR 19 — Razorpay chosen; the webhooks and plan status are built and tested.
-  Nothing creates a subscription yet, and there are no keys.
+- 🟡 PR 19 — Razorpay chosen; the webhooks, plan status and the owner's start /
+  switch / cancel flow are built and tested against stand-ins (2026-10-23). There
+  are no keys, and Razorpay has never been called for real.
 - ⬜ PR 20 — Windows installer + fleet view.
 - 🟡 4.10 CHANGELOG and CONTRIBUTING are written; LICENSE is the owner's call.
 

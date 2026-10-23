@@ -13,7 +13,7 @@ import fs from 'fs';
 import { hubConfig } from './lib/hubConfig.js';
 import { ticketStore, ticketMatchesTable } from './lib/ticketStore.js';
 import { syncQueue } from './lib/syncQueue.js';
-import { authenticateHubStaff } from './lib/supabaseClient.js';
+import { authenticateHubStaff, supabase } from './lib/supabaseClient.js';
 import { restaurantCache } from './lib/restaurantCache.js';
 import { priceOrder } from './lib/pricing.js';
 import { resolveEffectivePrice } from './lib/dayParts.js';
@@ -49,6 +49,8 @@ import { crashReporter, attachHubProcessHandlers } from './lib/crashReporter.js'
 attachHubProcessHandlers();
 import { feedFor, connectedFor, kitchenTicket } from './lib/liveFeed.js';
 import { activeLogging, requestLogger } from './lib/log.js';
+import { createBillingClient } from './lib/billingClient.js';
+import { billingRoutes } from './lib/billingRoutes.js';
 import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -2200,6 +2202,24 @@ app.post('/orders/:id/clear', requireDevice, (req, res) => {
 
 // 8. GET /sync-status — Check cloud sync queue & online status
 // GET /plan — effective entitlements and current usage (feeds the owner console).
+// Starting, changing and cancelling the subscription (§4.4). Reception only; the hub forwards to the operator service, which is
+// the only thing that holds the Razorpay keys, and proves who it is with its own cloud sign-in. Unconfigured unless
+// OPERATOR_SERVICE_URL names the service.
+const billingClient = createBillingClient({
+  baseUrl: process.env.OPERATOR_SERVICE_URL,
+  getToken: async () => {
+    const auth = await authenticateHubStaff(hubConfig.getPairingInfo().restaurant_id);
+    if (!auth?.success) return null;
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token ?? null;
+  }
+});
+app.use(billingRoutes({
+  client: billingClient,
+  guard: requireReceptionFor('Billing'),
+  refreshPlan: () => hubConfig.syncPlanFromCloud()
+}));
+
 app.get('/plan', requireDevice, (req, res) => {
   const eff = hubConfig.getEffectivePlan();
   const info = hubConfig.getPairingInfo();

@@ -149,11 +149,21 @@ export function readSubscriptionEvent(body) {
   const planStatus = planStatusFor(state);
   if (!planStatus) return null;
 
+  const seconds = value => (value ? new Date(Number(value) * 1000).toISOString() : null);
+
   return {
     event,
     subscription_id: String(sub.id),
     subscription_status: state,
     plan_status: planStatus,
+    // Which Razorpay plan the subscription is on NOW (it changes when a plan change takes effect), and which of ours it was
+    // created for. The first is what a webhook can be trusted to say; the second is what we put in its notes.
+    razorpay_plan_id: sub.plan_id ? String(sub.plan_id) : null,
+    plan: sub.notes?.plan ? String(sub.notes.plan) : null,
+    current_period_start: seconds(sub.current_start),
+    // When Razorpay says the event happened. Webhooks can arrive late and out of order, so this is what lets an old one be
+    // recognised and left alone.
+    event_at: seconds(body.created_at),
     // Seconds in Razorpay, milliseconds everywhere here. `current_end` is what the grace window in
     // lib/plans.js measures from, so getting the unit wrong would put every past-due tenant either
     // instantly out of grace or in it for fifty thousand years.
@@ -163,7 +173,7 @@ export function readSubscriptionEvent(body) {
 }
 
 /** The body for creating a subscription for a tenant on a plan. */
-export function subscriptionPayload({ razorpayPlanId, restaurantId, totalCount = 12, customerNotify = true }) {
+export function subscriptionPayload({ razorpayPlanId, restaurantId, plan, totalCount = 12, customerNotify = true }) {
   if (!razorpayPlanId) return { ok: false, code: 'NO_PLAN', error: 'That plan has no Razorpay plan behind it yet.' };
   if (!restaurantId) return { ok: false, code: 'NO_TENANT', error: 'A subscription must belong to a restaurant.' };
   return {
@@ -174,7 +184,7 @@ export function subscriptionPayload({ razorpayPlanId, restaurantId, totalCount =
       customer_notify: customerNotify ? 1 : 0,
       // Carried through every webhook, so an event can be matched to a tenant without a lookup
       // table that could drift.
-      notes: { restaurant_id: String(restaurantId) }
+      notes: { restaurant_id: String(restaurantId), ...(plan ? { plan: String(plan) } : {}) }
     }
   };
 }

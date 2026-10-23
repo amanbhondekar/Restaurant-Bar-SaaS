@@ -86,7 +86,7 @@ export function CloseButton({ onClick, disabled }) {
 }
 
 /** A "are you sure" dialog. Render it inside another dialog or sheet to stack on top of it. */
-export function ConfirmDialog({ open, title, children, confirmLabel = 'Delete', destructive = true, busy = false, onConfirm, onCancel }) {
+export function ConfirmDialog({ open, title, children, confirmLabel = 'Delete', cancelLabel = 'Cancel', destructive = true, busy = false, onConfirm, onCancel }) {
   return (
     <Dialog open={open} onOpenChange={next => { if (!next && !busy) onCancel(); }}>
       <DialogContent showCloseButton={false}>
@@ -95,7 +95,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel = 'Delete', 
           <DialogDescription>{children}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" className="h-10" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="outline" className="h-10" onClick={onCancel} disabled={busy}>{cancelLabel}</Button>
           <Button variant={destructive ? 'destructive' : 'default'} className="h-10" onClick={onConfirm} disabled={busy}>
             {busy && <Loader2 className="spin" aria-hidden="true" />}
             {confirmLabel}

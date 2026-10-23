@@ -3,7 +3,7 @@
 A read-only page for an owner to see how the restaurant is doing from anywhere: sales, the till, stock, what guests said.
 It reads the cloud copy the hub keeps and **changes nothing**; the database enforces that, not the page (migration 015).
 
-**Not deployed anywhere yet.** It needs a hosted Supabase project (with migrations 001-017 applied) and a static host. The
+**Not deployed anywhere yet.** It needs a hosted Supabase project (with migrations 001-018 applied) and a static host. The
 page builds with the rest of the app (`npm run build` produces `dist/owner.html`).
 
 ## What the page can and cannot do

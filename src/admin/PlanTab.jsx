@@ -3,11 +3,17 @@ import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { explainError, hubGet } from './api';
 import { featureRows, formatWhen, limitRows, planBanner, planLabel } from './lib/plan';
+import { describeBilling } from './lib/subscription';
+import { SubscriptionPanel } from './SubscriptionPanel';
 import { ListSkeleton, Notice } from './ui';
 
-// The owner's view of the subscription (M3 · PR 18). Read-only, and served from GET /plan, which the
-// hub answers out of its own config -- so this page keeps working during an internet outage and
-// simply reports how stale the plan is. All the wording and the arithmetic live in ./lib/plan.
+// The owner's view of the plan (M3 · PR 18), served from GET /plan, which the hub answers out of its
+// own config -- so this page keeps working during an internet outage and simply reports how stale the
+// plan is. All the wording and the arithmetic live in ./lib/plan.
+//
+// Under it, the subscription (§4.4): where it stands, and the buttons to start, switch or cancel it.
+// That comes from the billing service through the hub, so it can be unreachable while the plan above
+// is perfectly readable; the panel says so and the rest of the page carries on.
 
 function LimitRow({ row }) {
   return (
@@ -42,13 +48,25 @@ function FeatureRow({ row }) {
   );
 }
 
-export function PlanTab() {
+export function PlanTab({ notify = () => {} }) {
   const [plan, setPlan] = useState(null);
+  const [billing, setBilling] = useState(null);
+  const [billingError, setBillingError] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  // The billing is read first: with `refresh`, that is what makes the hub re-read the plan from the cloud, and the plan
+  // read after it is then the one the cloud now holds (after the owner has paid, say). A billing read that fails never
+  // stops the plan from showing.
+  const load = useCallback(async ({ refresh = false } = {}) => {
     setLoading(true);
+    try {
+      setBilling(await hubGet(refresh ? '/admin/billing?refresh=1' : '/admin/billing'));
+      setBillingError(null);
+    } catch (e) {
+      setBilling(null);
+      setBillingError(e);
+    }
     try {
       setPlan(await hubGet('/plan'));
       setError(null);
@@ -63,7 +81,7 @@ export function PlanTab() {
 
   if (error && !plan) {
     return (
-      <Notice tone="error" title="Could not load the subscription" action={<Button className="h-10" onClick={load}>Try again</Button>}>
+      <Notice tone="error" title="Could not load the subscription" action={<Button className="h-10" onClick={() => load()}>Try again</Button>}>
         {explainError(error)}
       </Notice>
     );
@@ -86,12 +104,14 @@ export function PlanTab() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-muted-foreground">Checked with the cloud: {formatWhen(plan.synced_at)}</span>
-          <Button variant="outline" className="h-10" onClick={load} disabled={loading}>
+          <Button variant="outline" className="h-10" onClick={() => load({ refresh: true })} disabled={loading}>
             <RefreshCw className={loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
             Refresh
           </Button>
         </div>
       </div>
+
+      <SubscriptionPanel view={describeBilling({ billing, billingError, plan })} onChanged={() => load()} notify={notify} />
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">What this plan allows</h2>

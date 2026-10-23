@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 
 import { createApp } from '../../signup_server/server.js';
+import { memoryCloud } from './helpers/memoryCloud.mjs';
 import { validateSignup, provisionArgs, describeProvisioned, newProvisioningSecret, isOperator } from '../../signup_server/lib/provision.js';
 
 // The operator service (§4.4): creating tenants, and reacting to Razorpay. It is the one place in
@@ -69,24 +70,12 @@ test('a service with no operator token configured refuses everyone, rather than 
 
 // --- the service ---------------------------------------------------------------------------------
 
-/** A Supabase stand-in that records what it was asked to do. */
+/**
+ * A Supabase stand-in that records what it was asked to do. It is the shared in-memory cloud, so the webhook can read, upsert and
+ * log as well as update; the assertions in this file are about `calls.rpc` and `calls.updates`, which it records as before.
+ */
 function fakeCloud({ rpcResult, rpcError = null, updateError = null } = {}) {
-  const calls = { rpc: [], updates: [] };
-  return {
-    calls,
-    rpc: async (fn, args) => {
-      calls.rpc.push({ fn, args });
-      return rpcError ? { data: null, error: rpcError } : { data: rpcResult, error: null };
-    },
-    from: table => ({
-      update: patch => ({
-        eq: async (col, val) => {
-          calls.updates.push({ table, patch, col, val });
-          return { error: updateError };
-        }
-      })
-    })
-  };
+  return memoryCloud({ rpcResult, rpcError, failures: updateError ? { update: { restaurants: updateError } } : {} });
 }
 
 const PROVISIONED = [{ restaurant_id: 'r-uuid', pairing_code: 'SPI-4821', slug: 'spice-garden', trial_ends_at: '2026-11-04T00:00:00.000Z' }];

@@ -12,6 +12,12 @@ and what is not.
 Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 
 ### Added
+- **Subscribing from the Plan tab**: the owner starts a subscription (and is sent to Razorpay's page to authorise payment; nothing
+  is charged until they do), switches plan or cancels, the last two after an "are you sure" and at the end of the paid period. The
+  hub only forwards (`/admin/billing…`, reception only); the operator service decides and calls Razorpay, and the restaurant comes
+  from the hub's own cloud sign-in, never from a request. Webhooks are now applied in order and once (migration 018), and the
+  `subscriptions` and `subscription_events` tables from migration 010 are finally written to. Runbook: `docs/OPERATOR_SERVICE.md`.
+  Built against stand-ins; Razorpay has never been called for real.
 - **A reward for coming back**, set by the restaurant: "every Nth visit, <what the guest gets>", off until set (Rewards panel in the
   Bookings tab). The booking says when a visit earns it and the host records that it was given (migration 017). No points, no tiers,
   nothing taken off the bill automatically.
@@ -28,9 +34,9 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   queue with WhatsApp click-to-chat (migration 011).
 - **Role-scoped devices**: a `kitchen` device token reaches five routes only; the live feed now tells it the board and not the
   bill (`hub_server/lib/liveFeed.js`).
-- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–017, privileges, pairing, the owner's access, and
+- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–018, privileges, pairing, the owner's access, and
   the hub's own push and restore code round-tripped against the schema.
-- **Tests for every reception surface**: the frontend suite grew from none to 841 tests, including the whole Kitchen Display
+- **Tests for every reception surface**: the frontend suite grew from none to 911 tests, including the whole Kitchen Display
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
@@ -59,7 +65,9 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 - A queue file that would not parse was answered with an empty queue and overwritten; it is now salvaged and kept.
 
 ### Known gaps
-- Migrations 004–017 have not run against a hosted Supabase project (no credentials on the build machine).
+- Migrations 004–018 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
+  have never been made against Razorpay itself (no keys). A subscription runs for 12 billing periods and then ends; whether that
+  is the right length is undecided.
 - The owner view is not deployed; the waiter's QR scanner needs a camera and is untested; nothing drives a real browser in CI.
 
 ## M4 — Customer surfaces (2026-10-16 → 2026-10-22)
