@@ -60,14 +60,15 @@ guest ordering, repeat-visit recognition and reservations.
 
 Automated coverage is **1240 hub tests across 63 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**772 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**793 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 except the Kitchen Display (Menu and its item editor, the menu importer, Tables,
 Bookings, Cash, Sales, Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger
 repair, guest ordering), and the waiter app (login, floor grid, modifier sheet,
 menu grid, order drawer, and how it keeps hold of the hub), and the Kitchen
-Display's billing logic (adjustments, splits, ticket merging). The rest of the
-Kitchen Display (its rendering and socket) and the waiter's QR scanner are still
+Display's billing logic (adjustments, splits, ticket merging) and its board (what
+each live message does to the tickets, and the connection light). The rest of the
+Kitchen Display (its rendering and modals) and the waiter's QR scanner are still
 verified by hand.
 
 ---
@@ -221,14 +222,16 @@ verified by hand.
 - ✅ Kitchen KDS (`src/kitchen_main.jsx`, the page the hub serves at `/`): live
   ticket rail, pairing QR + enrollment code, connection badge grace states,
   Framer Motion ticket-printer moment, kitchen summary counters, station chips,
-  bill preview and settlement. It is one 1,991-line component mixing the socket,
+  bill preview and settlement. It is one 1,953-line component mixing the socket,
   the state and the rendering, which is why it is the one reception surface with
-  almost no automated tests (§3). The first piece is out: the pure billing logic
+  little automated testing (§3). Two pieces are out: the pure billing logic
   (turning the adjustment form into what the hub understands, seeding an equal
-  split that adds up exactly, building the split requests, merging a ticket) now
-  lives in `src/lib/kitchenBill.js` with its own tests, and the component calls it.
-  The socket, the board and the modals still have to be split before they can be
-  tested in pieces.
+  split that adds up exactly, building the split requests, merging a ticket) in
+  `src/lib/kitchenBill.js`, and the board (what each live message does to the
+  tickets on screen, marking a ticket ready, and when the connection light goes
+  from connecting to disconnected) in `src/lib/kitchenBoard.js`, each with its own
+  tests and called by the component. The modals and the rendering still have to
+  be split before they can be tested in pieces.
   (An earlier version of this line named `src/server_laptop/KitchenKdsView.jsx`;
   that is a smaller view in the old shell, not this.)
 - ✅ Admin console (`src/admin/`): menu, tables, bookings and the walk-in queue,
@@ -373,9 +376,10 @@ verified by hand.
   item editor, Tables, Cash and Sales, which handle prices, the floor, the till
   and the owner's figures, Printers, Plan and the menu importer), and the waiter
   login, floor grid, modifier sheet, menu grid, order drawer and connection
-  handling. The reception Kitchen Display's billing logic is covered
-  (`src/lib/kitchenBill.js`); the rest of `src/kitchen_main.jsx` (1,991 lines in
-  one component, to be split before it can be tested) and the waiter's QR scanner
+  handling. The reception Kitchen Display's billing logic and its board are covered
+  (`src/lib/kitchenBill.js`, `src/lib/kitchenBoard.js`); the rest of
+  `src/kitchen_main.jsx` (1,953 lines: the modals and the rendering, to be split
+  before they can be tested) and the waiter's QR scanner
   (it needs a camera) are still verified by hand, and nothing drives a real
   browser in CI. Things found only by looking past a passing build or by checking
   the tests themselves: a cross-page flow (the device-scope report), a

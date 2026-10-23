@@ -10,6 +10,7 @@ import { STATIONS, STATION_LABEL, visibleLines, heldGroups, stationStates, onSta
 import {
   amountSplitPayload, buildAdjustmentBody, equalSplitRows, initialItemAssignments, itemSplitPayload, mergeTicketInto, ticketKey
 } from './lib/kitchenBill';
+import { applyLiveMessage, markedReady, statusAfterClose, statusAfterGrace } from './lib/kitchenBoard';
 
 installCrashReporter({ source: 'kds' });
 
@@ -17,7 +18,13 @@ const KitchenHubApp = () => {
   const [pairingInfo, setPairingInfo] = useState(null);
   const [qrCodeUrl, setQrCodeUrl] = useState(null);
   const [enrollmentCode, setEnrollmentCode] = useState(null);
-  const [tickets, setTickets] = useState([]);
+  const [tickets, setTicketsState] = useState([]);
+  // The socket handler outlives any one render, so it reads the board from here rather than from a closure.
+  const ticketsRef = useRef([]);
+  const setTickets = next => {
+    ticketsRef.current = typeof next === 'function' ? next(ticketsRef.current) : next;
+    setTicketsState(ticketsRef.current);
+  };
   const [syncStatus, setSyncStatus] = useState({ queued: 0, online: true, isSyncing: false });
   const [wsConnStatus, setWsConnStatus] = useState('connecting'); // 'connecting' | 'connected' | 'disconnected'
   const wsConnected = wsConnStatus === 'connected';
@@ -142,9 +149,7 @@ const KitchenHubApp = () => {
     isGracePeriodRef.current = true;
     const graceTimer = setTimeout(() => {
       isGracePeriodRef.current = false;
-      if (missedWsFailuresRef.current >= 2) {
-        setWsConnStatus('disconnected');
-      }
+      setWsConnStatus(current => statusAfterGrace({ failures: missedWsFailuresRef.current, current }));
     }, 3000);
 
     fetchPairing();
@@ -170,44 +175,10 @@ const KitchenHubApp = () => {
 
         ws.onmessage = (event) => {
           try {
-            const msg = JSON.parse(event.data);
-            const type = msg.type;
-            const payload = msg.payload || {};
-
-            if (type === 'NEW_ORDER' || type === 'order_created') {
-              const newTicket = payload.ticket || payload;
-              if (newTicket && (newTicket.id || newTicket.ticket_number)) {
-                setTickets(prev => {
-                  const exists = prev.some(t => t.id === newTicket.id || String(t.ticket_number) === String(newTicket.ticket_number));
-                  if (exists) return prev;
-                  return [newTicket, ...prev];
-                });
-              }
-            } else if (type === 'TICKET_READY' || type === 'order_ready') {
-              const readyTicket = payload.ticket || payload;
-              const readyId = readyTicket.ticket_id || readyTicket.id || readyTicket.ticket_number;
-              if (readyId) {
-                setTickets(prev => prev.map(t => {
-                  if (t.id === readyId || String(t.ticket_number) === String(readyId)) {
-                    // Take the hub's whole ticket when it sent one, so the course and station state is current.
-                    return { ...t, ...(payload.ticket || {}), status: 'ready' };
-                  }
-                  return t;
-                }));
-              }
-            } else if (type === 'TICKET_UPDATED' && payload.ticket) {
-              // Station ready, course fired, ticket recalled: the hub sends the ticket as it now stands.
-              mergeTicket(payload.ticket);
-            } else if (type === 'TICKET_CANCELLED') {
-              const gone = payload.ticket_id || payload.ticket?.id;
-              if (gone) setTickets(prev => prev.filter(t => t.id !== gone));
-              fetchActiveTickets();
-            } else if (type === 'CLEAR_TABLE' || type === 'bill_cleared' || type === 'order_cleared') {
-              fetchActiveTickets();
-            } else if (type === 'SYNC_STATUS_CHANGE') {
-              setSyncStatus(payload);
-              fetchActiveTickets();
-            }
+            const result = applyLiveMessage(ticketsRef.current, JSON.parse(event.data));
+            if (result.tickets !== ticketsRef.current) setTickets(result.tickets);
+            if (result.sync) setSyncStatus(result.sync);
+            if (result.refetch) fetchActiveTickets();
           } catch (err) {
             console.warn('Malformed WS message:', err);
           }
@@ -215,11 +186,7 @@ const KitchenHubApp = () => {
 
         ws.onclose = () => {
           missedWsFailuresRef.current += 1;
-          if (!isGracePeriodRef.current || missedWsFailuresRef.current >= 2) {
-            setWsConnStatus('disconnected');
-          } else {
-            setWsConnStatus('connecting');
-          }
+          setWsConnStatus(statusAfterClose({ failures: missedWsFailuresRef.current, inGracePeriod: isGracePeriodRef.current }));
           setTimeout(connectWs, 3000);
         };
 
@@ -266,12 +233,7 @@ const KitchenHubApp = () => {
       });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        setTickets(prev => prev.map(t => {
-          if (t.id === ticket.id || t.ticket_number === ticket.ticket_number) {
-            return { ...t, ...(data.ticket || {}), status: 'ready' };
-          }
-          return t;
-        }));
+        setTickets(prev => markedReady(prev, ticket, data));
       }
     } catch (err) {
       console.error('Failed to mark ticket ready:', err);
