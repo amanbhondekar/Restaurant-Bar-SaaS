@@ -85,6 +85,13 @@ const ASHA = {
 const RAHUL = { id: 'wl_1', guest_name: 'Rahul', party_size: 3, status: 'waiting', created_at: new Date(Date.now() - 25 * 60000).toISOString(), quoted_wait_mins: 20, phone: '919876511111', phone_display: '+91 98765 11111', whatsapp: 'https://wa.me/919876511111?text=ready', tel: 'tel:+919876511111' };
 const NO_PHONE = { id: 'wl_2', guest_name: 'Quiet', party_size: 2, status: 'waiting', created_at: new Date().toISOString() };
 
+const NO_REMINDERS = { body: { success: true, window_hours: 24, reminders: [] } };
+const DUE = [
+  { ...ASHA, id: 'res_1', whatsapp: 'https://wa.me/919876543210?text=A%20reminder%20from%20Mejwani', at: new Date(Date.now() + 3 * 3600000).toISOString() },
+  { ...ASHA, id: 'res_2', guest_name: 'Ravi', phone: '919811122233', whatsapp: 'https://wa.me/919811122233?text=reminder', tel: 'tel:+919811122233', at: new Date(Date.now() + 20 * 3600000).toISOString() }
+];
+const reminders = list => ({ body: { success: true, window_hours: 24, reminders: list } });
+
 const answer = (over = {}) => ({
   body: {
     success: true, day: today(), revision: 3,
@@ -95,7 +102,7 @@ const answer = (over = {}) => ({
 });
 const setup = (routes = {}) => {
   const notify = vi.fn();
-  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
+  const hub = fakeHub({ 'GET /admin/bookings': answer(), 'GET /admin/bookings/reminders': NO_REMINDERS, 'GET /admin/guests': { body: { success: true, guests: [] } }, ...routes });
   render(<BookingsTab notify={notify} />);
   return { hub, notify };
 };
@@ -261,6 +268,81 @@ describe('bookings tab', () => {
     setup({ 'GET /admin/bookings': answer({ reservations: [], waitlist: [], summary: { booked: 0, seated: 0, no_show: 0, covers: 0, waiting: 0 } }) });
     expect(await screen.findByText('Nothing booked for today')).toBeInTheDocument();
     expect(screen.getByText('Nobody waiting.')).toBeInTheDocument();
+  });
+
+  describe('reminders', () => {
+    it('shows no reminder section when nobody is due, rather than an empty box', async () => {
+      setup();
+      await screen.findByRole('listitem', { name: /Asha at/ });
+      expect(screen.queryByRole('heading', { name: /Reminders to send/ })).not.toBeInTheDocument();
+    });
+
+    it('lists who is due a reminder with a link that already carries the reminder, and a way to ring', async () => {
+      setup({ 'GET /admin/bookings/reminders': reminders(DUE) });
+      expect(await screen.findByRole('heading', { name: 'Reminders to send (2)' })).toBeInTheDocument();
+      const asha = screen.getByRole('listitem', { name: 'Remind Asha' });
+      expect(within(asha).getByRole('link', { name: 'Remind Asha on WhatsApp' })).toHaveAttribute('href', 'https://wa.me/919876543210?text=A%20reminder%20from%20Mejwani');
+      expect(within(asha).getByRole('link', { name: 'Remind Asha on WhatsApp' })).toHaveAttribute('target', '_blank');
+      expect(within(asha).getByRole('link', { name: 'Call Asha' })).toHaveAttribute('href', 'tel:+919876543210');
+      expect(within(asha).getByText(/Today|Tomorrow/)).toBeInTheDocument();
+      expect(screen.getByRole('listitem', { name: 'Remind Ravi' })).toBeInTheDocument();
+    });
+
+    it('opening the link does not count as sending: a person says "I sent it", and the hub is told', async () => {
+      const { hub, notify } = setup({
+        'GET /admin/bookings/reminders': ({ call }) => (call === 1 ? reminders(DUE) : reminders([DUE[1]])),
+        'POST /admin/bookings/res_1/reminded': { body: { success: true, reservation: { ...ASHA, reminded_at: new Date().toISOString() } } }
+      });
+      const asha = await screen.findByRole('listitem', { name: 'Remind Asha' });
+      await userEvent.click(within(asha).getByRole('link', { name: 'Remind Asha on WhatsApp' }));
+      expect(hub.calls('POST /admin/bookings/res_1/reminded')).toHaveLength(0);
+
+      await userEvent.click(within(asha).getByRole('button', { name: 'I sent it' }));
+      expect(hub.calls('POST /admin/bookings/res_1/reminded')).toHaveLength(1);
+      expect(notify).toHaveBeenCalledWith('Asha marked as reminded.');
+      expect(await screen.findByRole('heading', { name: 'Reminders to send (1)' })).toBeInTheDocument();
+      expect(screen.queryByRole('listitem', { name: 'Remind Asha' })).not.toBeInTheDocument();
+    });
+
+    it("a mark the hub refuses is said in the hub's words, and the reminder stays on the list", async () => {
+      const { notify } = setup({
+        'GET /admin/bookings/reminders': reminders(DUE),
+        'POST /admin/bookings/res_1/reminded': { status: 409, body: { success: false, code: 'NOT_BOOKED', error: "Asha's booking is no longer booked, so there is nothing to remind them of." } }
+      });
+      const asha = await screen.findByRole('listitem', { name: 'Remind Asha' });
+      await userEvent.click(within(asha).getByRole('button', { name: 'I sent it' }));
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining('no longer booked')));
+      expect(screen.getByRole('listitem', { name: 'Remind Asha' })).toBeInTheDocument();
+    });
+
+    it('a booking already reminded says so on its row, and the mark can be taken back', async () => {
+      const reminded = { ...ASHA, reminded_at: new Date(2026, 9, 21, 10, 5).toISOString(), reminded_by: 'Meera' };
+      const { hub, notify } = setup({
+        'GET /admin/bookings': answer({ reservations: [reminded] }),
+        'DELETE /admin/bookings/res_1/reminded': { body: { success: true, reservation: ASHA } }
+      });
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      expect(within(row).getByText(/Reminded 10:05/)).toBeInTheDocument();
+      expect(within(row).getByText(/Meera/)).toBeInTheDocument();
+      await userEvent.click(within(row).getByRole('button', { name: 'Not sent' }));
+      expect(hub.calls('DELETE /admin/bookings/res_1/reminded')).toHaveLength(1);
+      expect(notify).toHaveBeenCalledWith("Asha's reminder mark taken back.");
+    });
+
+    it('a booking that has not been reminded shows no reminded badge, and a cancelled one offers no undo', async () => {
+      setup({ 'GET /admin/bookings': answer({ reservations: [ASHA, { ...ASHA, id: 'res_9', guest_name: 'Gone', status: 'cancelled', reminded_at: new Date().toISOString() }] }) });
+      const row = await screen.findByRole('listitem', { name: /Asha at/ });
+      expect(within(row).queryByText(/Reminded/)).not.toBeInTheDocument();
+      const gone = screen.getByRole('listitem', { name: /Gone at/ });
+      expect(within(gone).queryByRole('button', { name: 'Not sent' })).not.toBeInTheDocument();
+    });
+
+    it('if the reminders cannot be read the diary is still there, and the reminders are simply not offered', async () => {
+      setup({ 'GET /admin/bookings/reminders': new TypeError('Failed to fetch') });
+      expect(await screen.findByRole('listitem', { name: /Asha at/ })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: /Reminders to send/ })).not.toBeInTheDocument();
+      expect(screen.queryByText('Could not load the diary')).not.toBeInTheDocument();
+    });
   });
 
   it('an unreachable hub says so rather than showing an empty diary', async () => {

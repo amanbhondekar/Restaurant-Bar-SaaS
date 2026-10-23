@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 import {
   emptyState, normalizeState, book, setReservationStatus, addWalkIn, setWaitlistStatus,
-  bookingsOn, queue, seatedWalkInCount, summarize, availability
+  bookingsOn, queue, seatedWalkInCount, summarize, availability, remindersDue, markReminded, unmarkReminded
 } from './reservations.js';
 
 // Bookings and the walk-in queue on disk (hub_server/data/reservations.json), around the pure rules
@@ -112,6 +112,10 @@ export class ReservationStore {
   }
 
   setReservationStatus(rid, id, status, opts) { return this.commit(rid, s => setReservationStatus(s, id, status, opts)); }
+  markReminded(rid, id, opts) { return this.commit(rid, s => markReminded(s, id, opts)); }
+  unmarkReminded(rid, id) { return this.commit(rid, s => unmarkReminded(s, id)); }
+  /** Bookings whose guest should be reminded now (lib/reservations.js). */
+  remindersDue(rid, opts) { return remindersDue(this.stateFor(rid), opts); }
   addWalkIn(rid, input, opts) { return this.commit(rid, s => addWalkIn(s, input, opts)); }
   setWaitlistStatus(rid, id, status, opts) { return this.commit(rid, s => setWaitlistStatus(s, id, status, opts)); }
 

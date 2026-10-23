@@ -34,6 +34,7 @@ import { publicMenu } from './lib/dinerMenu.js';
 import { inventoryStore } from './lib/inventoryStore.js';
 import { reservationStore } from './lib/reservationStore.js';
 import { whatsappLink, telLink, formatPhone, normalizePhone } from './lib/guestContact.js';
+import { reminderMessage } from './lib/reservations.js';
 import { guestByPhone, recognise, regulars, allVisits } from './lib/loyalty.js';
 import { windowFor, salesReport, monthlyCohorts, PRESET_IDS } from './lib/analytics.js';
 import { reportStore } from './lib/reportStore.js';
@@ -1558,7 +1559,11 @@ app.get('/admin/bookings', requireReception, (req, res) => {
   res.json({
     success: true,
     ...snap,
-    reservations: snap.reservations.map(r => withContact(r, bookingMessage(r, name))),
+    reservations: snap.reservations.map(r => ({
+      ...withContact(r, bookingMessage(r, name)),
+      // The same link with the reminder's words in it, for a booking that can still be reminded.
+      ...(r.phone && r.status === 'booked' ? { reminder_whatsapp: whatsappLink(r.phone, reminderMessage(r, name)) } : {})
+    })),
     waitlist: snap.waitlist.map(e => withContact(e, readyMessage(e, name)))
   });
 });
@@ -1581,6 +1586,34 @@ app.post('/admin/bookings', requireReception, (req, res) => {
   const result = reservationStore.book(pairing.restaurant_id, req.body, { force: req.body?.force === true });
   if (!result.ok) return bookingRefusal(res, result);
   res.status(201).json({ success: true, revision: result.data.revision, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())), availability: result.meta.availability });
+});
+
+// Who to remind of tomorrow's table. The hub sends nothing: it lists the bookings, builds the WhatsApp link with the words
+// in it, and records that a person says they sent it (when, and who), so two people do not ring the same guest.
+app.get('/admin/bookings/reminders', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const asked = req.query.hours === undefined ? undefined : Number(req.query.hours);
+  const due = reservationStore.remindersDue(pairing.restaurant_id, { withinHours: asked });
+  const name = restaurantName();
+  res.json({
+    success: true,
+    window_hours: Number.isFinite(asked) && asked > 0 ? Math.min(asked, 24 * 14) : 24,
+    reminders: due.map(r => withContact(r, reminderMessage(r, name)))
+  });
+});
+
+app.post('/admin/bookings/:id/reminded', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.markReminded(pairing.restaurant_id, req.params.id, { by: req.body?.by });
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, already: result.meta.already === true, reservation: withContact(result.meta.reservation, reminderMessage(result.meta.reservation, restaurantName())) });
+});
+
+app.delete('/admin/bookings/:id/reminded', requireReception, (req, res) => {
+  const pairing = hubConfig.getPairingInfo();
+  const result = reservationStore.unmarkReminded(pairing.restaurant_id, req.params.id);
+  if (!result.ok) return bookingRefusal(res, result);
+  res.json({ success: true, reservation: withContact(result.meta.reservation, bookingMessage(result.meta.reservation, restaurantName())) });
 });
 
 app.put('/admin/bookings/:id/status', requireReception, (req, res) => {

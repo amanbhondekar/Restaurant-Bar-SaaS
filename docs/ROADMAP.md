@@ -54,13 +54,13 @@ M1 (payments-ready) and M2 (menu depth) are complete. M3 — self-serve tenant �
 is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup and Razorpay webhooks. What is
 left is creating a subscription, and everything that needs a real Supabase
-project or Razorpay keys: migrations 004–015 have never run on a hosted project, because there are
+project or Razorpay keys: migrations 004–016 have never run on a hosted project, because there are
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1297 hub tests across 65 files** (pure rules plus live
+Automated coverage is **1315 hub tests across 66 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**851 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**858 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -270,7 +270,7 @@ drives a real browser in CI.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1297 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1315 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -573,8 +573,19 @@ milestones (§5) when a theme is pulled into a release.
 - ✅ Cloud copy (migration 011), as the fourth replicated catalog.
 - ⬜ A public reservation page per tenant. The model and the replication are in
   place for one; the page itself needs hosting this product does not have.
-- ⬜ Sending anything automatically: no reminder the morning of a booking, and
-  nothing records whether a message was really sent.
+- ✅ Booking reminders, staff-sent like the rest: the Bookings tab lists the next day's
+  bookings that nobody has reminded ("Reminders to send"), each with a WhatsApp link
+  that already carries the reminder and a number to ring. Opening the link is not
+  sending, so the host presses "I sent it", and the hub records **that a person said
+  they sent it, and when** (and who, if told), which stops two people ringing the
+  same guest. It is a person's word, not a delivery receipt: nothing here knows the
+  message arrived. A mark can be taken back. The mark replicates (migration 016: two
+  nullable columns on `reservations`) and is restored with the diary. 18 hub tests,
+  7 on the tab, a row of the real-database round trip; 53 mutations, the survivors
+  closed.
+- ⬜ Sending anything *automatically*: still nothing goes out by itself. The hub has no
+  messaging provider, by design (no approval, no per-message fee, works with the line
+  down), so a message always needs a person to press send.
 
 ### 4.7 Auth & access control  🟡
 - ✅ Waiter PIN login wired into the PWA, session bound to a device token.

@@ -23,7 +23,9 @@ export function reservationRow(restaurantId, r) {
     created_at: r.created_at,
     seated_at: r.seated_at ?? null,
     cancelled_at: r.cancelled_at ?? null,
-    no_show_at: r.no_show_at ?? null
+    no_show_at: r.no_show_at ?? null,
+    reminded_at: r.reminded_at ?? null,
+    reminded_by: r.reminded_by ?? null
   };
 }
 
@@ -83,7 +85,9 @@ export async function pullReservations(client, restaurantId) {
       created_at: r.created_at,
       ...(r.seated_at ? { seated_at: r.seated_at } : {}),
       ...(r.cancelled_at ? { cancelled_at: r.cancelled_at } : {}),
-      ...(r.no_show_at ? { no_show_at: r.no_show_at } : {})
+      ...(r.no_show_at ? { no_show_at: r.no_show_at } : {}),
+      ...(r.reminded_at ? { reminded_at: r.reminded_at } : {}),
+      ...(r.reminded_by ? { reminded_by: r.reminded_by } : {})
     })),
     waitlist: back(walkinRows, e => ({
       id: String(e.hub_ref),

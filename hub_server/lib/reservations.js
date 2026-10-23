@@ -14,6 +14,10 @@ export const RESERVATION_STATUSES = ['booked', 'seated', 'no_show', 'cancelled']
 export const WAITLIST_STATUSES = ['waiting', 'notified', 'seated', 'left'];
 
 export const DEFAULT_DURATION_MINS = 90;
+/** How far ahead a reminder is due: a booking in the next day. Wider is the host's choice, capped at two weeks. */
+export const REMINDER_WINDOW_HOURS = 24;
+const MAX_REMINDER_WINDOW_HOURS = 24 * 14;
+
 export const LIMITS = { name: 80, note: 200, party: 40, aheadDays: 180, durationMins: 480 };
 
 const MIN = 60 * 1000;
@@ -168,6 +172,58 @@ export function setReservationStatus(state, reservationId, status, { now = new D
     meta: { reservation: updated }
   };
 }
+
+// --- reminding a guest ----------------------------------------------------------------------------------------
+
+/**
+ * Bookings whose guest should be reminded now: still booked, with a number, not yet reminded, and starting within the
+ * window but not already under way. Earliest first. A bad window falls back to the default rather than hiding the list.
+ */
+export function remindersDue(state, { now = new Date(), withinHours = REMINDER_WINDOW_HOURS } = {}) {
+  const asked = Number(withinHours);
+  const hours = Number.isFinite(asked) && asked > 0 ? Math.min(asked, MAX_REMINDER_WINDOW_HOURS) : REMINDER_WINDOW_HOURS;
+  const from = now.getTime();
+  const to = from + hours * 60 * MIN;
+  return (state.reservations || [])
+    .filter(r => r.status === 'booked' && r.phone && !r.reminded_at && Date.parse(r.at) > from && Date.parse(r.at) <= to)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+/**
+ * Record that a member of staff sent this guest a reminder: when, and who. The hub sends nothing itself (staff tap a
+ * WhatsApp link and send from their own phone), so this is a person's word that it went, not a delivery receipt. Marking
+ * twice keeps the first time and changes nothing.
+ */
+export function markReminded(state, reservationId, { by, now = new Date() } = {}) {
+  const found = state.reservations.find(r => r.id === reservationId);
+  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
+  if (found.status !== 'booked') return fail(409, 'NOT_BOOKED', `${found.guest_name}'s booking is no longer booked, so there is nothing to remind them of.`);
+  if (found.reminded_at) return { ok: true, data: state, meta: { reservation: found, already: true } };
+  const who = typeof by === 'string' ? by.trim().slice(0, 60) : '';
+  const updated = { ...found, reminded_at: now.toISOString(), ...(who ? { reminded_by: who } : {}) };
+  return {
+    ok: true,
+    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? updated : r)) }),
+    meta: { reservation: updated }
+  };
+}
+
+/** Take a reminder mark back (pressed by mistake): the booking is due again. */
+export function unmarkReminded(state, reservationId) {
+  const found = state.reservations.find(r => r.id === reservationId);
+  if (!found) return fail(404, 'NOT_FOUND', 'That booking is not in the book.');
+  if (!found.reminded_at && !found.reminded_by) return { ok: true, data: state, meta: { reservation: found } };
+  const { reminded_at, reminded_by, ...rest } = found;
+  return {
+    ok: true,
+    data: bump(state, { reservations: state.reservations.map(r => (r.id === reservationId ? rest : r)) }),
+    meta: { reservation: rest }
+  };
+}
+
+/** What staff send. Written here, with the other messages, so every screen says the same thing. */
+export const reminderMessage = (reservation, restaurantName) =>
+  `Hello ${reservation.guest_name}, a reminder from ${restaurantName}: your table for ${reservation.party_size} is booked for ${new Date(reservation.at).toLocaleString()}. Please reply if your plans change.`;
 
 // --- the walk-in queue ---------------------------------------------------------------------------
 

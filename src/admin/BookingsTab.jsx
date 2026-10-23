@@ -195,14 +195,19 @@ export function BookingsTab({ notify }) {
   const [now, setNow] = useState(() => new Date());
   // Bumped after anything is sent, so the regulars list below is not left behind by a seating.
   const [seatings, setSeatings] = useState(0);
+  // Guests due a reminder of their table (the next day's bookings that nobody has reminded yet).
+  const [reminders, setReminders] = useState([]);
 
   const load = useCallback(async () => {
+    // Asked together, and independently: the reminders are a convenience, so if they cannot be read the diary still stands.
+    const remindersRead = hubGet('/admin/bookings/reminders').then(r => r.reminders || []).catch(() => []);
     try {
       setData(await hubGet(`/admin/bookings?day=${encodeURIComponent(day)}`));
       setError(null);
     } catch (e) {
       setError(e);
     }
+    setReminders(await remindersRead);
   }, [day]);
   useEffect(() => { load(); }, [load]);
 
@@ -213,6 +218,33 @@ export function BookingsTab({ notify }) {
   }, []);
 
   const close = () => { setDialog(null); setServerError(null); setConflict(null); };
+
+  // Opening the WhatsApp link does not mean the message was sent, so the host says so: "I sent it" records that a person sent
+  // it (the hub sends nothing itself), which is what stops two people ringing the same guest.
+  const markReminded = async r => {
+    setBusy(true);
+    try {
+      await hubSend('POST', `/admin/bookings/${encodeURIComponent(r.id)}/reminded`, {});
+      notify(`${r.guest_name} marked as reminded.`);
+      await load();
+    } catch (e) {
+      notify(explainError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const unmarkReminded = async r => {
+    setBusy(true);
+    try {
+      await hubSend('DELETE', `/admin/bookings/${encodeURIComponent(r.id)}/reminded`);
+      notify(`${r.guest_name}'s reminder mark taken back.`);
+      await load();
+    } catch (e) {
+      notify(explainError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = async (send, done) => {
     setBusy(true);
@@ -256,6 +288,38 @@ export function BookingsTab({ notify }) {
           <Button className="h-10" onClick={() => setDialog({ type: 'booking' })}><Plus className="size-4" aria-hidden="true" />Take a booking</Button>
         </div>
       </div>
+
+      {reminders.length > 0 && (
+        <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-labelledby="reminders-h">
+          <div>
+            <h2 id="reminders-h" className="typography-title-md">Reminders to send ({reminders.length})</h2>
+            <p className="text-sm text-muted-foreground">Bookings in the next day that nobody has reminded. Send it from your phone, then say you did.</p>
+          </div>
+          <ul className="flex flex-col divide-y divide-border">
+            {reminders.map(r => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5" aria-label={`Remind ${r.guest_name}`}>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold tabular-nums">{dayLabel(today(new Date(r.at)))} {bookingTime(r.at)}</span>
+                    <span className="truncate font-semibold">{r.guest_name}</span>
+                    <Badge variant="outline">{r.party_size}</Badge>
+                  </div>
+                  {r.note && <div className="text-sm text-muted-foreground">{r.note}</div>}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <a href={r.whatsapp} target="_blank" rel="noreferrer" className={cn(buttonVariants({ variant: 'outline' }), 'h-9')} aria-label={`Remind ${r.guest_name} on WhatsApp`}>
+                    <MessageCircle className="size-4" aria-hidden="true" />WhatsApp
+                  </a>
+                  <a href={r.tel} className={cn(buttonVariants({ variant: 'outline' }), 'h-9')} aria-label={`Call ${r.guest_name}`}>
+                    <Phone className="size-4" aria-hidden="true" />
+                  </a>
+                  <Button className="h-9" disabled={busy} onClick={() => markReminded(r)}>I sent it</Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-labelledby="queue-h">
         <h2 id="queue-h" className="typography-title-md">At the door</h2>
@@ -312,11 +376,15 @@ export function BookingsTab({ notify }) {
                     <Badge variant="outline">{r.party_size}</Badge>
                     <Badge variant="outline" style={toneStyle(RESERVATION_TONE[r.status])}>{RESERVATION_LABEL[r.status]}</Badge>
                     {r.overbooked && <Badge variant="outline" style={toneStyle('rust')}>Overbooked</Badge>}
+                    {r.reminded_at && <Badge variant="outline" style={toneStyle('green')}>Reminded {bookingTime(r.reminded_at)}{r.reminded_by ? ` · ${r.reminded_by}` : ''}</Badge>}
                   </div>
                   {r.note && <div className="text-sm text-muted-foreground">{r.note}</div>}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <ContactButtons row={r} label="their booking" />
+                  {r.status === 'booked' && r.reminded_at && (
+                    <Button variant="outline" className="h-9" disabled={busy} onClick={() => unmarkReminded(r)}>Not sent</Button>
+                  )}
                   {r.status === 'booked' && (
                     <>
                       <Button className="h-9" disabled={busy} onClick={() => run(() => hubSend('PUT', `/admin/bookings/${encodeURIComponent(r.id)}/status`, { status: 'seated' }), () => `${r.guest_name} seated.`)}>Seat</Button>
