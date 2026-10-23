@@ -9,6 +9,8 @@
 //
 // Writing to a temp file and renaming was tried and reverted (see the git history): `fsync` cost
 // seconds on a path that runs on every order, and on Windows the rename contends with readers.
+// The journal line IS synced (see appendRecord): it is a few kilobytes, the write chain is not on the order
+// path, and it is what turns "survives the program crashing" into "survives the power going".
 //
 // So instead of trying to make one overwrite atomic, the state is first APPENDED to a journal. An
 // append never touches bytes that are already on disk, so a crash can only ever damage the line
@@ -30,6 +32,45 @@
 // Crash between (2) and (3): both agree.
 //
 // The journal is emptied after every successful snapshot, so in the normal case it holds one line.
+
+import fs from 'node:fs';
+
+/** A sync slower than this is worth telling someone about: the disk, not the program, is the bottleneck. */
+export const SLOW_SYNC_MS = 250;
+
+/** Syncing the journal is on unless HUB_QUEUE_FSYNC is 0, false or off (a disk where it is genuinely too slow). */
+export function fsyncEnabled(env = process.env) {
+  return !['0', 'false', 'off'].includes(String(env.HUB_QUEUE_FSYNC ?? '').trim().toLowerCase());
+}
+
+/**
+ * Append one record to the journal and, unless told not to, make the operating system write it to the disk
+ * before returning. Without the sync an append can sit in the OS's cache, so a power cut loses the newest unsent
+ * takings even though the program never crashed. Resolves to `{ syncMs }`: how long the sync took, or null when
+ * there was none.
+ *
+ * A filesystem that refuses to sync (some network and virtual drives answer EINVAL or EPERM) must not cost the
+ * write: the record is already appended, so the error is passed to `onSyncError` and swallowed.
+ */
+export async function appendRecord(file, record, { fsync = true, fsp = fs.promises, onSyncError } = {}) {
+  if (!fsync) {
+    await fsp.appendFile(file, record, 'utf-8');
+    return { syncMs: null };
+  }
+  const handle = await fsp.open(file, 'a');
+  try {
+    await handle.appendFile(record, 'utf-8');
+    const started = process.hrtime.bigint();
+    try {
+      await handle.sync();
+    } catch (err) {
+      onSyncError?.(err);
+    }
+    return { syncMs: Number(process.hrtime.bigint() - started) / 1e6 };
+  } finally {
+    await handle.close();
+  }
+}
 
 /** One line per state. `\n` is the record separator, so no state may contain a raw newline. */
 export const RECORD_SEPARATOR = '\n';

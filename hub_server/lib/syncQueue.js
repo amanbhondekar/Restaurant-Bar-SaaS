@@ -17,7 +17,7 @@ import { reconciliationStore } from './reconciliationStore.js';
 import { pushFeedback, pullFeedback } from './feedbackSync.js';
 import { feedbackStore } from './feedbackStore.js';
 import { orderCourseColumns, itemCourseColumns, isMissingCourseColumn, withoutCourseColumns } from './courseSync.js';
-import { encodeRecord, lastCompleteRecord } from './queueJournal.js';
+import { appendRecord, encodeRecord, fsyncEnabled, lastCompleteRecord, SLOW_SYNC_MS } from './queueJournal.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -218,6 +218,26 @@ class SyncQueue {
     return salvaged || [];
   }
 
+  /**
+   * Append to the journal and sync it to disk (lib/queueJournal.js). A disk that refuses to sync, or one that is
+   * slow at it, is said once a minute rather than on every save, so the log shows the cause without drowning in it.
+   */
+  async appendToJournal(record) {
+    const say = message => {
+      const now = Date.now();
+      if (this._lastJournalWarning && now - this._lastJournalWarning < 60000) return;
+      this._lastJournalWarning = now;
+      console.warn(message);
+    };
+    const { syncMs } = await appendRecord(QUEUE_JOURNAL, record, {
+      fsync: fsyncEnabled(),
+      onSyncError: err => say(`⚠️ Could not sync ${path.basename(QUEUE_JOURNAL)} to disk (${err.code || err.message}); a power cut could lose the newest unsent takings.`)
+    });
+    if (syncMs !== null && syncMs > SLOW_SYNC_MS) {
+      say(`⚠️ Syncing ${path.basename(QUEUE_JOURNAL)} took ${Math.round(syncMs)} ms. Set HUB_QUEUE_FSYNC=0 to turn it off if this disk is too slow.`);
+    }
+  }
+
   saveQueue(queueList) {
     this.queue = queueList;
     this.notifyStatusChange();
@@ -234,7 +254,7 @@ class SyncQueue {
     const record = encodeRecord(queueList);
     const snapshot = JSON.stringify(queueList, null, 2);
     this._writeChain = this._writeChain
-      .then(() => fs.promises.appendFile(QUEUE_JOURNAL, record, 'utf-8'))
+      .then(() => this.appendToJournal(record))
       .then(() => fs.promises.writeFile(QUEUE_FILE, snapshot, 'utf-8'))
       // Only now is the snapshot known to hold this state, so the journal has nothing left to
       // protect. Truncating rather than deleting keeps one file for the life of the hub.

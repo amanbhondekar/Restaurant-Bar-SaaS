@@ -58,7 +58,7 @@ project or Razorpay keys: migrations 004–015 have never run on a hosted projec
 no credentials on the machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition and reservations.
 
-Automated coverage is **1240 hub tests across 63 files** (pure rules plus live
+Automated coverage is **1255 hub tests across 64 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **841 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the station screens, device enrolment, every reception admin tab
@@ -266,7 +266,7 @@ drives a real browser in CI.
   `docs/DEPLOYMENT_GUIDE.md`, this roadmap.
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1240 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1255 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -429,8 +429,13 @@ milestones (§5) when a theme is pulled into a release.
   before the snapshot is touched, so a torn snapshot no longer loses the
   newest unsent takings. An append cannot damage what is already on disk,
   which is why this works where a rename was reverted on measurement.
-- ⬜ Nothing calls `fsync`, so a power cut can still lose an append the OS
-  had buffered. That is the cost the earlier measurement rejected.
+- ✅ The journal line is synced to disk (`fsync`) before the snapshot is touched, so
+  a power cut no longer loses the newest unsent takings. The earlier refusal was
+  about syncing the big snapshot on the order path; this is a few-kilobyte append
+  in the background write chain, measured at about 0.3 ms plain and 0.8 ms synced
+  on an SSD. A disk that refuses to sync, or is slow at it, is said once a minute;
+  `HUB_QUEUE_FSYNC=0` turns it off. Not measured on a spinning disk: the test
+  prints the cost on whatever it runs on, and the log warns past 250 ms.
 
 ### 4.2 Inventory & menu depth  🟡
 - ✅ `menu_item_variants`, modifiers and day-part scheduling, surfaced in

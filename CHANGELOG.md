@@ -29,6 +29,8 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
+- The sync queue's journal line is synced to disk before the snapshot is written, so a power cut no longer loses the newest unsent
+  takings (`HUB_QUEUE_FSYNC=0` turns it off).
 - **Money decisions are reception's alone.** Void, refund, mark-paid, the three splits, undo split and settle share, and closing
   a table with a discount or service-charge override, are refused (`403 RECEPTION_ONLY`) from a waiter's handset.
 - The Kitchen Display's billing logic and board are plain functions (`src/lib/kitchenBill.js`, `src/lib/kitchenBoard.js`).
