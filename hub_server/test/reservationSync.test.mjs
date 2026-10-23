@@ -23,6 +23,9 @@ const { emptyState } = await import('../lib/reservations.js');
 
 after(async () => {
   await reservationStore.flush();
+  // The sync queue writes its journal and snapshot into this directory in the background; remove the
+  // directory under it and the write fails, or lands mid-removal (ENOTEMPTY).
+  await syncQueue._writeChain;
   fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
