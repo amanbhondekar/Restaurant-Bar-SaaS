@@ -12,6 +12,7 @@ and what is not.
 Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 
 ### Added
+- **The plan for the super admin console** (`docs/SUPER_ADMIN_BUILD_SHEET.md`, summarised in ROADMAP §4.9a and milestone M5): named MFA access, an append-only event spine, push alerting, attributed and reasoned tenant writes, hub commands with acknowledgement, billing operations, onboarding and a compliance desk, in phases, with invariants and a never-build list. **Nothing is built yet.** It keeps the product's fonts (Cabinet Grotesk, Instrument Sans) and `lucide-react`.
 - **The operator console, read-only** (`/ops` on the operator service, `src/ops/`): where the person running Kullina looks at every
   restaurant at once. Counts (active, on trial, overdue or suspended, hubs live), a list of who to look at and why (ten rules: payment
   overdue, suspended, trial ended or ending, asked to cancel, hub never reported, hub silent for 36 hours and for a week, orders shelved, a

@@ -5,9 +5,9 @@ commit and the work planned beyond it. This is a **multi-tenant SaaS product** �
 pilot restaurants are validation partners, not the product itself. Nothing in
 this roadmap is scoped to any single tenant.
 
-Legend: ✅ shipped · 🟡 partial · ⬜ not started
+Legend: ✅ shipped · 🟡 partial · ⬜ not started · 🚧 planned and specified · 🔬 R&D, only on sign-off · ❌ blocked on a person or an outside party
 
-**Last reconciled against the code:** 2026-10-23 (M1 and M2 complete, M3 mostly
+**Last reconciled against the code:** 2026-10-25 for §4.9 (the super admin plan below); the rest 2026-10-24 (M1 and M2 complete, M3 mostly
 built, M4 mostly built). Between 2026-09-19 and 2026-10-13 the file lived on an
 unmerged `docs/roadmap` branch, so §6's maintenance rule could not be followed and
 the document fell a full two milestones behind. It is on the working line now, and
@@ -783,10 +783,73 @@ milestones (§5) when a theme is pulled into a release.
   looked. It shows at most 1,000 restaurants. It shows the figures the hub reports and the bills that reached
   the cloud, not revenue; a restaurant's money is its own. No alerting: it tells you when you look. It has not run
   against a hosted Supabase project or a public address, and migration 021 has not run on one. On a phone the
-  table scrolls sideways.
+  table scrolls sideways. **The plan to close all of this is the super admin console below.**
 - ⬜ One-click hub installer for Windows (auto-start service, firewall rule,
   update channel) — M3 · PR 20.
 - ⬜ Signed auto-updates for the hub binary.
+
+#### 4.9a Super admin console: the plan  🚧
+
+Plan of record: [`docs/SUPER_ADMIN_BUILD_SHEET.md`](./SUPER_ADMIN_BUILD_SHEET.md) (drafted 2026-10-24 by Aman and Darshil for an
+AI coding agent). **None of it is built.** What exists is the read-only console above; this is the back-office for the two founders to
+run Kullina as a business: named secure access, an immutable event spine, push alerting, safe tenant writes, hub commands with
+acknowledgement, billing operations, onboarding tooling and a compliance desk. Once Phase 1 starts, a living `docs/SUPER_ADMIN.md` is
+split off and the sheet stays the plan.
+
+**Invariants** (a violation is a bug, each pinned by a test): **I1** no admin path touches a tenant's bills, invoices, cash-ups, guests,
+menu or orders; **I2** the service key never leaves the operator service; **I3** every admin action is attributed (`actor_id` not null,
+by CHECK); **I4** every admin write carries a reason of at least 10 characters and writes its event in the same transaction; **I5**
+events are append-only (UPDATE and DELETE revoked and blocked by trigger); **I6** the cloud cannot reach a hub, so every action on a hub is
+a *request* shown as `requested → delivered → acked` (or failed or expired), never as applied before the hub says so; **I7** the console
+can degrade a tenant to Starter at most and can never stop orders, billing or the KDS; **I8** every figure says "as of HH:MM" and a failed
+read shows an error, not the last value; **I9** counts and times only (no PIN hashes, secrets, pairing codes, guest phones or bill contents);
+**I10** the admin surface is a separate deploy with separate credentials, MFA-gated.
+
+**Shape:** founders sign in with Supabase Auth and TOTP (an email allowlist, optionally an IP allowlist) to a static `admin_web`; a new
+small `admin_api` talks to Postgres as a dedicated role through `SECURITY DEFINER` RPCs only (not the service key; decision D1); Razorpay stays
+in the operator service, reached by an internal signed route. The spine is `tenant_events`, a per-restaurant hash chain; the existing
+`subscription_events` and the heartbeat are ingested into it, not rewritten. The existing ten `/ops` rules and their constants are reused
+from one shared module, not forked. New tables (expected from migration 022): `admin_users`, `tenant_events`, `admin_commands`, `alerts`,
+`plan_overrides`, `tenant_admin_meta`, `tenant_notes`, `tenant_onboarding_steps`.
+
+| Phase | What | Status |
+| --- | --- | --- |
+| 0 Gates | Run migrations 004-021 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | ❌ G0-1, G0-2, G0-5 wait on people; G0-3, G0-4 are 🚧 and agent-doable |
+| 1 Foundation | `admin_users` and the spine with its hash chain; TOTP and `aal2` in every RPC; `admin_api` and `admin_web` skeletons; ingest of existing events; audit-log viewer; port of the `/ops` views, then retire `OPS_TOKEN` (keeping a documented break-glass) | 🚧 |
+| 2 Alerting and timeline | Per-tenant timeline over the spine; alert engine (dedupe, state machine, escalation); a push adapter with signed one-tap acknowledge links (Telegram or ntfy first); an inbox; a watcher of the watcher | 🚧 |
+| 3 Safe cloud writes | Extend a trial, set `plan_status`, grant or revoke a comp plan (mandatory expiry), notes; the expiry job and the webhook-race test; the write-dialog pattern (reason, when and how it takes effect, type the restaurant's name to suspend) | 🚧 |
+| 4 Hub commands | `admin_commands` and acknowledgement carried on the heartbeat; a hub-local default-deny allowlist (`force_resync`, `request_diagnostics`); a redacted diagnostics bundle; a command centre with an honest "hub silent since…" banner; `rotate_pairing_code` stays 🔬 (every handset would re-enrol) | 🚧 (4-5 is 🔬) |
+| 5 Billing ops | MRR, churn and trial-to-paid with their formulas shown; a dunning queue; an internal signed route for admin-initiated subscription actions; **Kullina's own GST invoicing to restaurants** | 🚧; the invoicing is ❌ until a CA answers D5 (entity GSTIN, SAC, rate, place of supply, e-invoicing, number series: no guesses) |
+| 6 Onboarding | A provisioning screen replacing signup-by-script; a go-live checklist per tenant; a KOT-routing diagnostic (wrong-kitchen mapping is a known failure); a `referred_by` field | 🚧 |
+| 7 Compliance desk | A guest-data request log (the tenant's hub executes; the console tracks status), an authority-request register, a quarterly access review, backup and restore status | 🚧 (scope and legal basis need counsel) |
+
+**Alerting, as specified:** the ten `/ops` rules plus webhook signature failures, operator-service and alert-worker liveness, admin login
+anomalies and migration drift. A P2 never pages overnight; `hub_silent_service` (three missed heartbeats, 15 minutes) fires only inside the
+tenant's service hours, and a tenant without service hours is flagged "service hours missing" instead of guessed. Default escalation: both
+founders at once, re-notified every 10 minutes up to three times. **Honest limit:** with a five-minute heartbeat a dead hub is detected in
+15 minutes at best. Alerts never carry secrets or guest data.
+
+**Decisions waiting on a person:** D1 a dedicated DB role rather than the service key (default yes); D2 what a hub may report (default counts,
+times and versions); D3 the alert channel (default Telegram or ntfy first; WhatsApp and SMS need provider approval); D4 who is paged; **D5
+Kullina's GST facts (no default; blocks Phase 5 invoicing)**; D6 whether `rotate_pairing_code` is worth building (default no); D7 the
+subscription length (out of scope for the console); D8 the tamper-evident-ledger positioning (out of scope).
+
+**Never built without a new written decision:** anything that edits, voids or reissues a tenant's bills, invoices, cash-ups or guests;
+impersonation; tenant revenue dashboards or benchmarking; bulk operations on tenant financial data; shared admin accounts or static tokens
+as the long-term auth; auto-suspension that blocks service; a CRM, ticket inbox or status page; fleet-wide hub release rollout (it waits
+on the installer and auto-update above).
+
+**Checked against the repo on 2026-10-25, before anything is built (the sheet's own §14 list is still to be answered in full):**
+- *Next free migration is 022* (the last is `021_ops_console.sql`), as the sheet expects.
+- *Tax:* `hub_server/lib/tax.js` defaults to **CGST 2.5% + SGST 2.5%** and takes a per-tenant tax config; invoice numbers are `INV-000001`
+  (a per-tenant sequence, not financial-year aware). A search found **no GSTIN or HSN/SAC** anywhere in the hub library, so the sheet's
+  suspicion that they are missing stands until G0-3 is done properly. There is no IGST path in `tax.js` either.
+- *Settled 2026-10-25 (Aman):* the console keeps the product's **Cabinet Grotesk + Instrument Sans** and the repo's **`lucide-react`** (^0.475); the
+  sheet's "Fraunces + DM Sans, Lucide v0.263.1" is superseded (the sheet now says so). *Still to settle before Phase 1:* the sheet's "ten existing rules" are in `signup_server/lib/ops.js` (`OPS_LIMITS`, pinned in
+  `hub_server/test/opsLib.test.mjs`), which is the module to share; it currently lives in the operator service, not a common lib.
+- *Already true, and the sheet's assumptions rest on it:* the heartbeat is five minutes and carries counts and times only (migration 021);
+  the cloud copy of an invoice is a full-snapshot upsert, so G0-4's worry (the cloud cannot show what a bill said before an edit) is
+  plausible and unverified.
 
 ### 4.10 Documentation  🟡
 - ✅ `CHANGELOG.md` following Keep a Changelog: no releases are tagged, so it is grouped by milestone, with the unmerged work under Unreleased.
@@ -854,6 +917,16 @@ The product can onboard a new restaurant without engineering.
   to remind, builds the message and records that a person sent it (migration 016); it
   sends nothing by itself. A public page where a guest asks for a table shipped (a request the
   restaurant answers; no captcha yet).
+
+### M5 — Run it as a business (the super admin console)  🚧
+Specified in [`docs/SUPER_ADMIN_BUILD_SHEET.md`](./SUPER_ADMIN_BUILD_SHEET.md) and summarised in §4.9a. Entry condition: Gates G0-1 and G0-2 (the
+migrations and Razorpay have never met a hosted project) are the honest prerequisite for **deploying** any phase; Phases 1-4 can be built and
+tested locally against PGlite and stand-ins. Definition of done: two named founders sign in with MFA; a dead hub at a pilot restaurant reaches
+both phones within about 15 minutes and can be acknowledged; every plan change, note and command is in an immutable, attributed, hash-chained
+timeline; no code path lets an admin alter a tenant's bills; every number shows how fresh it is; and every claim in the docs says whether it was
+proven against a hosted project or only a stand-in.
+- ❌ Phase 0 gates (hosted migrations, Razorpay test mode, decisions D1-D5); 🚧 the GST audit and the ledger analysis (read-only).
+- 🚧 Phases 1-7 as in the table in §4.9a; Phase 5 invoicing is ❌ on a CA's answer.
 
 ---
 
