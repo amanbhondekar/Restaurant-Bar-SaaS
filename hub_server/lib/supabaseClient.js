@@ -1,7 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { WebSocket as NodeWebSocket } from 'ws';
 
 dotenv.config();
+
+// supabase-js needs a global WebSocket for Realtime and throws at construction without one
+// ("Node.js detected but native WebSocket not found"). Node 22 has it; Node 20 does not, and the
+// README promises Node 18 or higher. `ws` is already a dependency -- the hub's own LAN gateway
+// runs on it -- so hand that over rather than quietly dropping the Node versions we claim to
+// support. On any runtime that has its own WebSocket this is a no-op.
+if (typeof globalThis.WebSocket === 'undefined') {
+  globalThis.WebSocket = NodeWebSocket;
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://example.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy';

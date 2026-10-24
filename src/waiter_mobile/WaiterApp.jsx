@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FloorGrid } from './FloorGrid';
 import { RapidOrderBuilder } from './RapidOrderBuilder';
 import { OrderDraftDrawer } from './OrderDraftDrawer';
-import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw, AlertTriangle, LogOut, UserCircle2 } from 'lucide-react';
+import { WifiOff, LayoutGrid, Utensils, ShoppingBag, ShieldCheck, Server, RefreshCw, AlertTriangle, LogOut, UserCircle2, Key, QrCode, Download } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { usePos } from '../context/PosContext';
 import { Badge } from '../components/ui/badge';
@@ -10,10 +10,15 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { ThemeToggle } from '../components/ThemeToggle';
-import { authFetch, captureTokenFromUrl, enrollWithCode, hasToken } from '../services/hubAuth';
+import { authFetch, authWsUrl, captureTokenFromUrl, consumePendingEnrollmentCode, enrollWithCode, hasToken } from '../services/hubAuth';
+import { heldGroups } from '../lib/ticketView';
+import { QrScannerModal } from './QrScannerModal';
 import { WaiterLogin } from './WaiterLogin';
+import { SentOrders } from './SentOrders';
+import { cancelledMessage } from '../admin/lib/openOrders';
 
 const WAITER_SESSION_KEY = 'kullina_waiter_session';
+
 
 export const WaiterApp = () => {
   const { currentRestaurant, isMenuUninitialized: posMenuUninitialized } = usePos() || {};
@@ -28,15 +33,30 @@ export const WaiterApp = () => {
     : 'http://localhost:4000';
 
   const [hubUrl, setHubUrl] = useState(() => {
-    return localStorage.getItem('mejwani_hub_url') || defaultHub;
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('mejwani_hub_url');
+      if (saved) {
+        // If saved URL is pointing to localhost but current page was opened on mobile via IP address, adapt to LAN IP
+        if (saved.includes('localhost') && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          return `${window.location.protocol}//${window.location.hostname}:4000`;
+        }
+        return saved;
+      }
+      return defaultHub;
+    }
+    return 'http://localhost:4000';
   });
 
   const [hubInfo, setHubInfo] = useState(null);
-  const [connStatus, setConnStatus] = useState('connecting');
+  const [connStatus, setConnStatus] = useState('connecting'); // 'connecting' | 'connected' | 'unauthorized' | 'disconnected'
   const hubConnected = connStatus === 'connected';
   const [showPairModal, setShowPairModal] = useState(false);
+  const [showScannerModal, setShowScannerModal] = useState(false);
   const [manualIpInput, setManualIpInput] = useState('');
   const [enrollCodeInput, setEnrollCodeInput] = useState('');
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
   // A QR scan drops the device token straight into the URL, so capture it before
   // the first render decides whether this handset still needs to enrol.
   const [isEnrolled, setIsEnrolled] = useState(() => {
@@ -63,12 +83,23 @@ export const WaiterApp = () => {
   };
 
   const [liveTables, setLiveTables] = useState([]);
+  const [liveSections, setLiveSections] = useState([]);
   const [activeOrders, setActiveOrders] = useState([]);
   const wasConnectedRef = useRef(false);
   const isGracePeriodRef = useRef(true);
+  // Which read of the floor started last. Every socket event starts a fresh read, so two can be on their way at
+  // once, and nothing says they land in the order they left: an older one arriving last would put the screen back
+  // as it was. Only the most recently STARTED read is applied.
+  const readSeqRef = useRef(0);
+  // Orders already counted into a table's total. The hub announces every new order twice (NEW_ORDER and
+  // order_created) and both arrive within the same moment, so a total added on each would show double until the
+  // next read of the floor corrected it.
+  const countedOrdersRef = useRef(new Set());
+  const orderKey = ticket => String(ticket?.id ?? ticket?.ticket_number);
 
   const fetchLiveState = useCallback(async (targetUrl = hubUrl) => {
     const cleanUrl = targetUrl.replace(/\/+$/, '');
+    const seq = ++readSeqRef.current;
     try {
       const [tablesRes, ordersRes, menuRes] = await Promise.all([
         authFetch(`${cleanUrl}/tables`).catch(() => null),
@@ -76,20 +107,34 @@ export const WaiterApp = () => {
         authFetch(`${cleanUrl}/menu`).catch(() => null)
       ]);
 
-      if (menuRes && menuRes.ok) {
-        const menuData = await menuRes.json();
-        setHubMenuUninitialized(!!menuData.uninitialized);
+      // 403 as well as 401: a tablet that was set up as a kitchen screen shares this browser's storage, so
+      // it arrives here holding a token the hub refuses for the till. /tables and /menu answer 403 only for
+      // that, and the cure is the same as for no token -- enrol as a handset, which replaces it.
+      const turnedAway = r => r?.status === 401 || r?.status === 403;
+      if (turnedAway(tablesRes) || turnedAway(menuRes) || ordersRes?.status === 401) {
+        console.warn('Hub refused this device: handset requires enrollment');
+        setIsEnrolled(false);
+        setConnStatus('unauthorized');
+        return;
       }
 
-      if (tablesRes && tablesRes.ok) {
-        const data = await tablesRes.json();
-        if (data.uninitialized) setHubMenuUninitialized(true);
-        if (data.tables && Array.isArray(data.tables)) setLiveTables(data.tables);
+      // Read the bodies first, then decide: reading is itself asynchronous, and a newer read may land meanwhile.
+      const menuData = menuRes && menuRes.ok ? await menuRes.json() : null;
+      const tablesData = tablesRes && tablesRes.ok ? await tablesRes.json() : null;
+      const ordersData = ordersRes && ordersRes.ok ? await ordersRes.json() : null;
+      if (seq !== readSeqRef.current) return;   // a newer read has started since; this answer is the older one
+
+      if (menuData) setHubMenuUninitialized(!!menuData.uninitialized);
+
+      if (tablesData) {
+        if (tablesData.uninitialized) setHubMenuUninitialized(true);
+        if (tablesData.tables && Array.isArray(tablesData.tables)) setLiveTables(tablesData.tables);
+        if (Array.isArray(tablesData.sections)) setLiveSections(tablesData.sections);
       }
 
-      if (ordersRes && ordersRes.ok) {
-        const data = await ordersRes.json();
-        if (data.tickets && Array.isArray(data.tickets)) setActiveOrders(data.tickets);
+      if (ordersData && ordersData.tickets && Array.isArray(ordersData.tickets)) {
+        setActiveOrders(ordersData.tickets);
+        countedOrdersRef.current = new Set(ordersData.tickets.map(orderKey));   // what the read says is already in the totals
       }
     } catch (err) {
       console.warn('Could not fetch live state from hub:', err);
@@ -111,8 +156,33 @@ export const WaiterApp = () => {
       if (res.ok) {
         const data = await res.json();
         setHubInfo(data);
-        pingFailuresRef.current = 0;
-        if (!wasConnectedRef.current) fetchLiveState(cleanUrl);
+        pingFailuresRef.current = 0; // Reset fail counter on success
+        
+        // A tablet that was set up as a kitchen screen holds a token the hub honours for tickets and
+        // nothing else, and shares this browser's storage. It is not an enrolled handset: say so, and let
+        // the code entry below replace the token, rather than carrying on to a sign-in the hub refuses.
+        if (data.device_scope === 'kitchen') {
+          setIsEnrolled(false);
+          setConnStatus('unauthorized');
+          wasConnectedRef.current = false;
+          setIsTestingConn(false);
+          return false;
+        }
+
+        // If data.authorised is false (hub requires enrollment from this handset)
+        if (data.authorised === false && !hasToken()) {
+          setIsEnrolled(false);
+          setConnStatus('unauthorized');
+          wasConnectedRef.current = false;
+          setIsTestingConn(false);
+          return false;
+        }
+
+        setIsEnrolled(true);
+        // Auto Re-Sync check: if previously disconnected and now connected again
+        if (!wasConnectedRef.current) {
+          fetchLiveState(cleanUrl);
+        }
         wasConnectedRef.current = true;
         setConnStatus('connected');
         setHubUrl(cleanUrl);
@@ -130,6 +200,27 @@ export const WaiterApp = () => {
     setIsTestingConn(false);
     return false;
   }, [hubUrl, fetchLiveState]);
+
+  // A scanned QR now hands over an enrollment code rather than a token, so trade
+  // it for one as soon as the app mounts. The page is served by the hub itself,
+  // so its own origin is the right address to enrol against.
+  useEffect(() => {
+    const pendingCode = consumePendingEnrollmentCode();
+    if (!pendingCode || hasToken()) return;
+
+    let cancelled = false;
+    (async () => {
+      const target = hubUrl || window.location.origin;
+      const res = await enrollWithCode(target, pendingCode).catch(() => ({ ok: false }));
+      if (!cancelled && res.ok) {
+        setIsEnrolled(true);
+        checkHubConnection(target);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     isGracePeriodRef.current = true;
@@ -167,6 +258,11 @@ export const WaiterApp = () => {
           return o;
         }));
       }
+    } else if (type === 'TICKET_CANCELLED') {
+      // The order is gone; which tables are still busy is the hub's to say, so read them again.
+      const gone = payload.ticket_id || payload.ticket?.id;
+      if (gone) setActiveOrders(prev => prev.filter(o => o.id !== gone));
+      fetchLiveState(cleanUrl);
     } else if (type === 'CLEAR_TABLE' || type === 'bill_cleared' || type === 'order_cleared') {
       const tableId = payload.table_id;
       if (tableId) {
@@ -177,9 +273,11 @@ export const WaiterApp = () => {
     } else if (type === 'NEW_ORDER' || type === 'order_created') {
       const ticket = payload.ticket || payload;
       if (ticket && ticket.table_id) {
+        const alreadyCounted = countedOrdersRef.current.has(orderKey(ticket));
+        countedOrdersRef.current.add(orderKey(ticket));
         setLiveTables(prev => prev.map(t => {
           if (String(t.id) === String(ticket.table_id)) {
-            return { ...t, status: t.status === 'ready' ? 'ready' : 'kot', activeOrderTotal: (t.activeOrderTotal || 0) + (Number(ticket.total_amount) || 0) };
+            return { ...t, status: t.status === 'ready' ? 'ready' : 'kot', activeOrderTotal: (t.activeOrderTotal || 0) + (alreadyCounted ? 0 : Number(ticket.total_amount) || 0) };
           }
           return t;
         }));
@@ -202,9 +300,18 @@ export const WaiterApp = () => {
     let isSubscribed = true;
 
     const connectWs = () => {
+      // A reconnect timer set before this effect was cleaned up (the app went away, or the hub's address changed)
+      // still fires. It must not open a socket that nothing will ever close.
+      if (!isSubscribed) return;
       try {
-        ws = new WebSocket(wsUrl);
-        ws.onopen = () => { console.log(`📱 Waiter WS connected to ${wsUrl}`); fetchLiveState(cleanUrl); };
+        const finalWsUrl = authWsUrl(wsUrl);
+        ws = new WebSocket(finalWsUrl);
+
+        ws.onopen = () => {
+          console.log(`📱 Waiter App WS /live connected to ${finalWsUrl}`);
+          fetchLiveState(cleanUrl);
+        };
+
         ws.onmessage = (event) => {
           if (!isSubscribed) return;
           try { handleHubWsEvent(JSON.parse(event.data), cleanUrl); } catch (e) {}
@@ -217,8 +324,74 @@ export const WaiterApp = () => {
     return () => { isSubscribed = false; if (ws) ws.close(); };
   }, [hubUrl, fetchLiveState, handleHubWsEvent]);
 
+  // Courses held for the selected table (served in courses): which tickets, and what is still on hold.
+  const [firingId, setFiringId] = useState(null);
+  const [fireError, setFireError] = useState('');
+  const heldForTable = selectedTableId
+    ? activeOrders
+        .filter(t => String(t.table_id) === String(selectedTableId))
+        .map(t => ({ ticket: t, held: heldGroups(t) }))
+        .filter(x => x.held.length > 0)
+    : [];
+
+  const fireNextCourse = async (ticket) => {
+    if (!hubUrl) return;
+    const cleanUrl = hubUrl.replace(/\/+$/, '');
+    setFireError('');
+    setFiringId(ticket.id);
+    try {
+      const res = await authFetch(`${cleanUrl}/orders/${encodeURIComponent(ticket.id)}/fire`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFireError(data.error || 'Could not fire the next course.');
+      }
+      fetchLiveState(cleanUrl);
+    } catch {
+      setFireError(`Hub unreachable at ${cleanUrl}. Check WiFi network.`);
+    } finally {
+      setFiringId(null);
+    }
+  };
+
+  // The selected table's orders that are still on the board, for the cancel block under the floor grid.
+  const sentForTable = selectedTableId ? activeOrders.filter(t => String(t.table_id) === String(selectedTableId)) : [];
+
+  const cancelOrder = async (ticket, reason) => {
+    const cleanUrl = hubUrl.replace(/\/+$/, '');
+    try {
+      const res = await authFetch(`${cleanUrl}/orders/${encodeURIComponent(ticket.id)}/cancel`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, by: waiterSession?.name })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data.error || 'Could not cancel that order.' };
+      setActiveOrders(prev => prev.filter(o => o.id !== ticket.id));
+      fetchLiveState(cleanUrl);
+      return { ok: true, message: cancelledMessage(ticket, data) };
+    } catch {
+      return { ok: false, error: `Hub unreachable at ${cleanUrl}. Check WiFi network.` };
+    }
+  };
+
   const handleClearTableBill = async (tableId) => {
-    setDrafts(p => { const c = { ...p }; delete c[tableId]; return c; });
+    // 1. Clear draft for table
+    setDrafts(p => {
+      const c = { ...p };
+      delete c[tableId];
+      return c;
+    });
+
+    // 2. Optimistic UI update immediately
+    const prevTables = [...liveTables];
+    setLiveTables(prev => prev.map(t => String(t.id) === String(tableId) ? {
+      ...t,
+      status: 'available',
+      activeOrderTotal: 0,
+      occupiedSince: null
+    } : t));
+    setActiveOrders(prev => prev.filter(o => String(o.table_id) !== String(tableId)));
+
     if (!hubUrl) return;
     const cleanUrl = hubUrl.replace(/\/+$/, '');
     try {
@@ -228,20 +401,35 @@ export const WaiterApp = () => {
       });
       if (res.ok) {
         console.log(`🧹 Clear bill request for table ${tableId} succeeded on Hub`);
+        const data = await res.json().catch(() => ({}));
+        if (data.tables && Array.isArray(data.tables)) {
+          setLiveTables(data.tables);
+        }
         fetchLiveState(cleanUrl);
+      } else {
+        // Revert optimistic update
+        setLiveTables(prevTables);
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+          setShowPairModal(true);
+          setPairError('Handset is not enrolled or token expired. Enter the enrollment code from Kitchen Display.');
+        } else {
+          alert(errData.error || `Could not clear bill for table ${tableId}`);
+        }
       }
     } catch (err) {
+      setLiveTables(prevTables);
       console.error(`Failed to clear bill for table ${tableId}:`, err);
+      alert(`Could not reach Hub at ${cleanUrl}. Check WiFi connection.`);
     }
   };
 
   const handlePairSubmit = async (e) => {
     e.preventDefault();
-    if (!manualIpInput.trim()) return;
     setConnStatus('connecting');
     setPairError('');
 
-    let raw = manualIpInput.trim();
+    let raw = manualIpInput.trim() || hubUrl.replace(/^https?:\/\//, '');
     if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
       raw = `http://${raw}`;
     }
@@ -251,11 +439,11 @@ export const WaiterApp = () => {
 
     // The hub only accepts enrolled devices. If this handset has no token yet,
     // trade the code shown on the Kitchen Display for one before connecting.
-    if (!hasToken()) {
-      const code = enrollCodeInput.trim();
+    if (!hasToken() || !isEnrolled) {
+      const code = enrollCodeInput.trim().toUpperCase();
       if (!code) {
-        setConnStatus('disconnected');
-        setPairError('Enter the enrollment code shown on the Kitchen Display, or scan its QR code instead.');
+        setConnStatus('unauthorized');
+        setPairError('Enter the 6-character enrollment code shown on the Kitchen Display (e.g. 9KZXEC).');
         return;
       }
 
@@ -265,8 +453,8 @@ export const WaiterApp = () => {
       }));
 
       if (!enrolled.ok) {
-        setConnStatus('disconnected');
-        setPairError(enrolled.error);
+        setConnStatus('unauthorized');
+        setPairError(enrolled.error || 'Invalid enrollment code. Check the Kitchen Display.');
         return;
       }
       setIsEnrolled(true);
@@ -279,8 +467,75 @@ export const WaiterApp = () => {
       setEnrollCodeInput('');
       fetchLiveState(raw);
     } else {
-      setConnStatus('disconnected');
-      setPairError(`Could not reach Kitchen Hub at ${raw}. Check WiFi connection.`);
+      setConnStatus(prev => (prev === 'unauthorized' ? 'unauthorized' : 'disconnected'));
+      if (!pairError) {
+        setPairError(`Could not reach Kitchen Hub at ${raw}. Check WiFi connection.`);
+      }
+    }
+  };
+
+  // Auto-prompt enrollment modal when handset is detected as unauthorized
+  useEffect(() => {
+    if (connStatus === 'unauthorized' && !hasToken()) {
+      if (!manualIpInput) {
+        setManualIpInput(hubUrl.replace(/^https?:\/\//, ''));
+      }
+      setShowPairModal(true);
+    }
+  }, [connStatus, hubUrl]);
+
+  // Handle successful QR scan from QrScannerModal
+  const handleScanSuccess = useCallback(({ token, hubUrl: detectedHubUrl }) => {
+    if (detectedHubUrl) {
+      const cleanUrl = detectedHubUrl.replace(/\/+$/, '');
+      setHubUrl(cleanUrl);
+      localStorage.setItem('mejwani_hub_url', cleanUrl);
+    }
+    setIsEnrolled(true);
+    setConnStatus('connected');
+    setShowPairModal(false);
+    setShowScannerModal(false);
+    fetchLiveState(detectedHubUrl || hubUrl);
+  }, [fetchLiveState, hubUrl]);
+
+  // PWA Install Prompt Listener
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+      console.log('🎉 Waiter PWA installed to home screen');
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+      setIsInstalled(true);
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const openPairing = () => {
+    if (!manualIpInput) setManualIpInput(hubUrl.replace(/^https?:\/\//, ''));
+    setShowPairModal(true);
+  };
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setInstallPrompt(null);
+      setIsInstalled(true);
     }
   };
 
@@ -392,7 +647,7 @@ export const WaiterApp = () => {
 
   return (
     <div style={{
-      width: '100%', maxWidth: '480px', height: '100vh', display: 'flex', flexDirection: 'column',
+      width: '100%', maxWidth: '480px', height: '100dvh', display: 'flex', flexDirection: 'column',
       background: 'var(--color-canvas)', margin: '0 auto',
       paddingTop: 'env(safe-area-inset-top, 0px)',
       paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)'
@@ -432,28 +687,54 @@ export const WaiterApp = () => {
           </div>
 
           <div className="flex items-center gap-1.5">
+            {installPrompt && !isInstalled && (
+              <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px] gap-1"
+                onClick={handleInstallClick} title="Install Waiter App on this device"
+                style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}>
+                <Download size={12} />
+                <span>Install</span>
+              </Button>
+            )}
             <Badge variant="outline" className="text-[10px] font-semibold cursor-pointer gap-1 px-2.5 py-1"
-              onClick={() => setShowPairModal(true)}
+              onClick={openPairing}
               style={{
-                color: connStatus === 'connected' ? 'var(--status-green-text)' : connStatus === 'connecting' ? 'var(--status-amber-text)' : 'var(--status-rust-text)',
-                background: connStatus === 'connected' ? 'var(--status-green-bg)' : connStatus === 'connecting' ? 'var(--status-amber-bg)' : 'var(--status-rust-bg)',
-                borderColor: connStatus === 'connected' ? 'var(--status-green-border)' : connStatus === 'connecting' ? 'var(--status-amber-border)' : 'var(--status-rust-border)',
+                color: connStatus === 'connected' ? 'var(--status-green-text)' : connStatus === 'connecting' || connStatus === 'unauthorized' ? 'var(--status-amber-text)' : 'var(--status-rust-text)',
+                background: connStatus === 'connected' ? 'var(--status-green-bg)' : connStatus === 'connecting' || connStatus === 'unauthorized' ? 'var(--status-amber-bg)' : 'var(--status-rust-bg)',
+                borderColor: connStatus === 'connected' ? 'var(--status-green-border)' : connStatus === 'connecting' || connStatus === 'unauthorized' ? 'var(--status-amber-border)' : 'var(--status-rust-border)',
               }}>
-              {connStatus === 'connected' ? <ShieldCheck size={11} /> : connStatus === 'connecting' ? <RefreshCw size={11} className="spin" /> : <WifiOff size={11} />}
-              {connStatus === 'connected' ? 'LAN' : connStatus === 'connecting' ? '…' : 'Off'}
+              {connStatus === 'connected' ? <ShieldCheck size={11} /> : connStatus === 'unauthorized' ? <Key size={11} /> : connStatus === 'connecting' ? <RefreshCw size={11} className="spin" /> : <WifiOff size={11} />}
+              {connStatus === 'connected' ? 'LAN' : connStatus === 'unauthorized' ? 'Code' : connStatus === 'connecting' ? '…' : 'Off'}
             </Badge>
             <ThemeToggle size="icon-sm" />
           </div>
         </div>
 
         {/* Banners */}
+        {connStatus === 'unauthorized' && (
+          <div className="banner banner-warning flex items-center justify-between gap-2"
+            style={{ borderBottom: '1px solid var(--color-warning-border)', padding: '10px 14px', background: 'var(--status-amber-bg)', color: 'var(--status-amber-text)' }}>
+            <div className="flex items-center gap-2 text-xs font-semibold">
+              <Key size={14} className="shrink-0" />
+              <span>Handset not enrolled. Scan KDS QR or enter code.</span>
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              <Button size="sm" className="h-7 px-2.5 text-[11px] gap-1" onClick={() => setShowScannerModal(true)}>
+                <QrCode size={13} />
+                <span>Scan QR</span>
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px]" onClick={openPairing}>
+                Enter Code
+              </Button>
+            </div>
+          </div>
+        )}
         {connStatus === 'disconnected' && (
           <div className="banner banner-error flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-error-border)' }}>
             <div className="flex items-center gap-2">
               <WifiOff size={14} className="shrink-0" />
               <span className="text-xs">Not connected to kitchen hub.</span>
             </div>
-            <Button size="sm" variant="destructive" className="h-7 px-3 text-[11px]" onClick={() => setShowPairModal(true)}>Connect</Button>
+            <Button size="sm" variant="destructive" className="h-7 px-3 text-[11px]" onClick={openPairing}>Connect</Button>
           </div>
         )}
 
@@ -474,13 +755,27 @@ export const WaiterApp = () => {
                 <h3 className="typography-title-md" style={{ color: 'var(--color-ink)' }}>Connect to Kitchen Hub</h3>
               </div>
               <p className="typography-body-sm mb-4" style={{ color: 'var(--color-muted)' }}>
-                Enter the hub's LAN IP address to pair this device.
+                Scan the QR code displayed on the Kitchen Display screen, or enter the hub's LAN IP and the enrollment code below.
               </p>
+
+              {/* Instant Camera QR Scanner Trigger */}
+              <Button type="button" className="w-full gap-2 mb-3"
+                onClick={() => { setShowPairModal(false); setShowScannerModal(true); }}>
+                <QrCode size={17} />
+                <span>Scan Kitchen Display QR Code</span>
+              </Button>
+
+              <div className="flex items-center gap-2 mb-3 text-[10px] font-semibold tracking-wider" style={{ color: 'var(--color-muted)' }}>
+                <div className="flex-1 h-px" style={{ background: 'var(--color-hairline)' }} />
+                <span>OR ENTER MANUALLY</span>
+                <div className="flex-1 h-px" style={{ background: 'var(--color-hairline)' }} />
+              </div>
+
               <form onSubmit={handlePairSubmit} className="flex flex-col gap-4">
                 <div>
                   <Label className="text-xs font-semibold" style={{ color: 'var(--color-muted)' }}>Hub LAN IP or URL</Label>
                   <Input type="text" value={manualIpInput} onChange={e => setManualIpInput(e.target.value)}
-                    placeholder="e.g. 192.168.1.50:4000" className="mt-1 font-mono" />
+                    placeholder={hubUrl.replace(/^https?:\/\//, '') || 'e.g. 192.168.1.50:4000'} className="mt-1 font-mono" />
                 </div>
                 {!isEnrolled && (
                   <div>
@@ -489,15 +784,16 @@ export const WaiterApp = () => {
                       type="text"
                       value={enrollCodeInput}
                       onChange={e => setEnrollCodeInput(e.target.value.toUpperCase())}
-                      placeholder="Shown on the Kitchen Display"
+                      placeholder="e.g. 9KZXEC"
                       autoCapitalize="characters"
                       autoCorrect="off"
                       spellCheck={false}
+                      autoFocus
                       className="mt-1 font-mono"
-                      style={{ letterSpacing: '2px' }}
+                      style={{ letterSpacing: '3px', fontSize: '16px', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase' }}
                     />
                     <p className="typography-body-sm mt-1 text-[11px]" style={{ color: 'var(--color-muted)' }}>
-                      Only needed once per handset. Scanning the QR code skips this step.
+                      Check the Kitchen Display (KDS) for the code (e.g. <strong>9KZXEC</strong>). Only needed once per handset; scanning the QR code skips this step.
                     </p>
                   </div>
                 )}
@@ -510,7 +806,7 @@ export const WaiterApp = () => {
                 <div className="flex gap-2.5 mt-1">
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setShowPairModal(false)}>Cancel</Button>
                   <Button type="submit" disabled={isTestingConn} className="flex-1">
-                    {isTestingConn ? <RefreshCw size={14} className="spin" /> : 'Connect'}
+                    {isTestingConn ? <RefreshCw size={14} className="spin" /> : 'Connect & Unlock'}
                   </Button>
                 </div>
               </form>
@@ -527,10 +823,30 @@ export const WaiterApp = () => {
               </p>
               <FloorGrid
                 selectedTable={selectedTableId} onSelectTable={setSelectedTableId}
-                tables={liveTables} onClearTableBill={handleClearTableBill}
+                tables={liveTables} sections={liveSections} onClearTableBill={handleClearTableBill}
                 isLoading={connStatus === 'connecting' && liveTables.length === 0}
-                drafts={drafts} onOpenPairing={() => setShowPairModal(true)} hubConnected={hubConnected}
+                drafts={drafts} onOpenPairing={openPairing} hubConnected={hubConnected}
+                connStatus={connStatus}
+                isEnrolled={isEnrolled}
               />
+              {/* Courses held for the selected table: the waiter sends the next one when the guests are ready. */}
+              {heldForTable.length > 0 && (
+                <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] border px-3 py-2.5" style={{ borderColor: 'var(--status-blue-border)', background: 'var(--status-blue-bg)' }}>
+                  {heldForTable.map(({ ticket, held }) => (
+                    <div key={ticket.id} className="flex items-center justify-between gap-2">
+                      <span className="text-xs" style={{ color: 'var(--status-blue-text)' }}>
+                        <strong>{ticket.table_name || 'Table'} · #{ticket.ticket_number}</strong>
+                        {' '}on hold: {held.map(h => `course ${h.course} (${h.count})`).join(', ')}
+                      </span>
+                      <Button size="sm" className="h-9 shrink-0" disabled={firingId === ticket.id} onClick={() => fireNextCourse(ticket)}>
+                        Fire course {held[0].course}
+                      </Button>
+                    </div>
+                  ))}
+                  {fireError && <span className="text-xs" style={{ color: 'var(--color-error-text)' }}>{fireError}</span>}
+                </div>
+              )}
+              <SentOrders tickets={sentForTable} onCancel={cancelOrder} />
               <OrderDraftDrawer
                 selectedTableId={selectedTableId} draftItems={currentDraftItems}
                 onRemoveItem={removeItem} onClearDraft={clearDraft}
@@ -576,6 +892,14 @@ export const WaiterApp = () => {
             </button>
           ))}
         </div>
+
+        {/* In-App Camera QR Code Scanner Modal */}
+        <QrScannerModal
+          isOpen={showScannerModal}
+          onClose={() => setShowScannerModal(false)}
+          onScanSuccess={handleScanSuccess}
+          hubUrl={hubUrl}
+        />
       </div>
     </div>
   );

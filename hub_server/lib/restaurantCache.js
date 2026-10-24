@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabase, checkSupabaseConnection } from './supabaseClient.js';
+import { normalizeCloudMenuItem } from './menuNormalize.js';
+import { tablesFromCloud } from './catalogSync.js';
+import { applyPlanToMenuItems } from './plans.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +12,21 @@ const DATA_DIR = process.env.HUB_DATA_DIR || path.join(__dirname, '..', 'data');
 
 const MENU_CACHE_FILE = path.join(DATA_DIR, 'menu_cache.json');
 const TABLES_CACHE_FILE = path.join(DATA_DIR, 'tables_cache.json');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const MAX_BACKUPS = 10;
+const CATALOG_FILES = { menu: MENU_CACHE_FILE, tables: TABLES_CACHE_FILE };
+
+const failure = (status, code, error, extra = {}) => ({ ok: false, status, code, error, ...extra });
+
+// Section order is the order of first appearance when no explicit list is stored
+// (legacy caches written by the cloud pull).
+function deriveSections(tables) {
+  const seen = [];
+  for (const t of tables || []) {
+    if (t.section && !seen.includes(t.section)) seen.push(t.section);
+  }
+  return seen;
+}
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -28,16 +46,16 @@ const DEFAULT_MENU_ITEMS = [
   // Modifier groups and variants stack: Chicken Tikka Masala (Full) + Extra
   // Cheese = 340 + 40 = ₹380/unit.
   {
-    id: 'm1', name: 'Paneer Butter Masala', category: 'Main Course', isVeg: true, available: true,
+    id: 'm1', name: 'Paneer Butter Masala', category: 'Main Course', isVeg: true, available: true, course: 2,
     price: 280,
     variants: [
       { id: 'v_half', label: 'Half', price: 180 },
       { id: 'v_full', label: 'Full', price: 280 }
     ]
   },
-  { id: 'm2', name: 'Dal Tadka', price: 190, category: 'Main Course', isVeg: true, available: true },
+  { id: 'm2', name: 'Dal Tadka', price: 190, category: 'Main Course', isVeg: true, available: true, course: 2 },
   {
-    id: 'm3', name: 'Chicken Tikka Masala', category: 'Main Course', isVeg: false, available: true,
+    id: 'm3', name: 'Chicken Tikka Masala', category: 'Main Course', isVeg: false, available: true, course: 2,
     price: 340,
     variants: [
       { id: 'v_half', label: 'Half', price: 220 },
@@ -66,7 +84,7 @@ const DEFAULT_MENU_ITEMS = [
     ]
   },
   {
-    id: 'm4', name: 'Butter Naan', price: 45, category: 'Breads & Rice', isVeg: true, available: true,
+    id: 'm4', name: 'Butter Naan', price: 45, category: 'Breads & Rice', isVeg: true, available: true, course: 2,
     // Day-part pricing (M2 · PR 13): breakfast promotion drops naan to ₹35
     // between 07:00 and 11:00 every day. Legacy items with no `day_parts`
     // behave exactly as before — the pricer just resolves to the base price.
@@ -79,16 +97,16 @@ const DEFAULT_MENU_ITEMS = [
     ]
   },
   {
-    id: 'm5', name: 'Jeera Rice', category: 'Breads & Rice', isVeg: true, available: true,
+    id: 'm5', name: 'Jeera Rice', category: 'Breads & Rice', isVeg: true, available: true, course: 2,
     price: 140,
     variants: [
       { id: 'v_half', label: 'Half', price: 90 },
       { id: 'v_full', label: 'Full', price: 140 }
     ]
   },
-  { id: 'm6', name: 'Veg Crispy', price: 220, category: 'Starters', isVeg: true, available: true },
+  { id: 'm6', name: 'Veg Crispy', price: 220, category: 'Starters', isVeg: true, available: true, course: 1 },
   {
-    id: 'm7', name: 'Chicken 65', category: 'Starters', isVeg: false, available: true,
+    id: 'm7', name: 'Chicken 65', category: 'Starters', isVeg: false, available: true, course: 1,
     price: 290,
     variants: [
       // Boneless is temporarily 86'd (M2 · PR 14 demo). Reception sees the
@@ -100,10 +118,10 @@ const DEFAULT_MENU_ITEMS = [
   },
   // Cold-line item: desserts fire to a separate KOT so the pastry
   // station doesn't share a printer queue with the hot line (M2 · PR 15).
-  { id: 'm8', name: 'Gulab Jamun (2 pcs)', price: 90, category: 'Desserts', isVeg: true, available: true, station: 'cold' },
+  { id: 'm8', name: 'Gulab Jamun (2 pcs)', price: 90, category: 'Desserts', isVeg: true, available: true, course: 3, station: 'cold' },
   {
     // Bar-line item: beverages fire to the bar station's KOT/KDS view.
-    id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true, station: 'bar',
+    id: 'm9', name: 'Masala Chaas', price: 50, category: 'Beverages', isVeg: true, available: true, course: 1, station: 'bar',
     modifier_groups: [
       {
         id: 'mg_sweet', label: 'Sweetness', min: 1, max: 1,
@@ -149,9 +167,28 @@ class RestaurantCache {
     this.tablesCache = null;
     this.isUninitialized = false;
     this.realtimeChannel = null;
+    this._writeChain = Promise.resolve();
+    this._backupSeq = 0;
+    // Returns the effective plan's feature flags (see lib/plans.js). Wired by
+    // server.js; the default grants everything so unit tests and tools that
+    // use the cache standalone see the full menu.
+    this.featureProvider = () => null;
+    // Flags dishes that cannot be made from the stock on hand (lib/inventory.js). Wired by server.js;
+    // the default leaves the menu as it is, so the cache used standalone sees no stock at all.
+    this.stockProvider = items => items;
+  }
+
+  setFeatureProvider(fn) {
+    this.featureProvider = typeof fn === 'function' ? fn : () => null;
+  }
+
+  setStockProvider(fn) {
+    this.stockProvider = typeof fn === 'function' ? fn : items => items;
   }
 
   loadFromDisk() {
+    // A catalog edited on the hub (revision > 0) is real even when the owner has emptied it;
+    // only legacy cloud-written caches (no revision) are judged by whether they hold rows.
     let hasMenu = false;
     let hasTables = false;
 
@@ -159,7 +196,7 @@ class RestaurantCache {
       if (fs.existsSync(MENU_CACHE_FILE)) {
         const rawMenu = fs.readFileSync(MENU_CACHE_FILE, 'utf-8');
         this.menuCache = JSON.parse(rawMenu);
-        hasMenu = Boolean(this.menuCache && (this.menuCache.items?.length > 0 || this.menuCache.categories?.length > 0));
+        hasMenu = Boolean(this.menuCache && ((this.menuCache.revision || 0) > 0 || this.menuCache.items?.length > 0 || this.menuCache.categories?.length > 0));
       }
     } catch (err) {
       console.warn('⚠️ Could not load menu_cache.json from disk:', err.message);
@@ -169,7 +206,7 @@ class RestaurantCache {
       if (fs.existsSync(TABLES_CACHE_FILE)) {
         const rawTables = fs.readFileSync(TABLES_CACHE_FILE, 'utf-8');
         this.tablesCache = JSON.parse(rawTables);
-        hasTables = Boolean(this.tablesCache && this.tablesCache.tables?.length > 0);
+        hasTables = Boolean(this.tablesCache && ((this.tablesCache.revision || 0) > 0 || this.tablesCache.tables?.length > 0));
       }
     } catch (err) {
       console.warn('⚠️ Could not load tables_cache.json from disk:', err.message);
@@ -202,6 +239,142 @@ class RestaurantCache {
     }
   }
 
+  /**
+   * Once a catalog has been edited on the hub (revision > 0) it is authoritative:
+   * boot sync, reconnect and realtime events must not overwrite it. That holds only for
+   * the restaurant it was edited for. A catalog recording a different restaurant_id than
+   * the one being pulled belongs to an earlier pairing (POST /pair), and keeping it would
+   * serve that restaurant's menu and prices to this one. A catalog with no restaurant_id
+   * (legacy) counts as this restaurant's, and so does any pull whose restaurant is unknown:
+   * an edit is only ever replaced when the pulled data positively belongs to someone else.
+   */
+  isHubAuthoritative(kind, restaurantId) {
+    const cache = kind === 'menu' ? this.menuCache : this.tablesCache;
+    if ((cache?.revision || 0) <= 0) return false;
+    const owner = cache.restaurant_id;
+    return !owner || !restaurantId || String(owner) === String(restaurantId);
+  }
+
+  /**
+   * The only supported way to change the menu or tables from the hub. Calls are
+   * serialised through one promise chain so read-modify-write cannot interleave.
+   * `mutator` receives a deep copy of the current catalog and returns
+   * `{ ok:true, data, meta? }` or `{ ok:false, status, code, error, … }`.
+   */
+  updateCatalog(kind, baseRevision, mutator) {
+    const run = this._writeChain.then(() => this._applyCatalogUpdate(kind, baseRevision, mutator));
+    this._writeChain = run.catch(() => {});
+    return run;
+  }
+
+  async _applyCatalogUpdate(kind, baseRevision, mutator) {
+    // The stored menu, never the shown one (see getStoredMenu): saving must not write overlays.
+    const current = kind === 'menu' ? this.getStoredMenu() : this.getTablesCache();
+    if (current.uninitialized) {
+      return failure(409, 'HUB_UNINITIALIZED', 'No catalog yet — connect this hub to the internet once to complete setup.');
+    }
+    if (!Number.isInteger(baseRevision)) {
+      return failure(400, 'BASE_REVISION_REQUIRED', 'base_revision (the revision you loaded) is required.');
+    }
+    if (baseRevision !== current.revision) {
+      return failure(409, 'STALE_REVISION', 'This changed since you loaded it. Reload and try again.', { current_revision: current.revision });
+    }
+
+    let result;
+    try {
+      result = mutator(structuredClone(current));
+    } catch (err) {
+      return failure(500, 'MUTATION_FAILED', err.message);
+    }
+
+    // Do not trust what the mutator handed back. The chain is shared by every edit and every
+    // cloud pull, so a promise that never settles must not be returned from here (it would
+    // wedge them all), and a result without the right shape must not be written.
+    const malformed = () => failure(500, 'MUTATION_FAILED', 'The edit could not be applied. Nothing was changed.');
+    if (typeof result?.then === 'function') {
+      Promise.resolve(result).catch(() => {}); // nobody will await it: swallow a later rejection
+      return malformed();
+    }
+    if (result === null || typeof result !== 'object') return malformed();
+    if (result.ok !== true) {
+      return Number.isInteger(result.status) && typeof result.code === 'string' ? result : malformed();
+    }
+    const arrays = kind === 'menu' ? ['items', 'categories'] : ['tables'];
+    if (!result.data || typeof result.data !== 'object' || !arrays.every(k => Array.isArray(result.data[k]))) {
+      return malformed();
+    }
+
+    const next = { ...result.data, revision: current.revision + 1, source: 'hub', uninitialized: false };
+    const file = CATALOG_FILES[kind];
+    try {
+      await this._backupFile(file);
+      const tmp = `${file}.tmp`;
+      // Flush the temp file to disk before it replaces the real one. Renaming an unsynced file
+      // can leave an empty cache after a power cut, and an empty cache silently gives up hub
+      // authority on the next online boot.
+      const fh = await fs.promises.open(tmp, 'w');
+      try {
+        await fh.writeFile(JSON.stringify(next, null, 2), 'utf-8');
+        await fh.sync();
+      } finally {
+        await fh.close();
+      }
+      await fs.promises.rename(tmp, file);
+    } catch (err) {
+      console.error(`❌ Failed to write ${path.basename(file)}:`, err);
+      return failure(500, 'WRITE_FAILED', 'Could not save to disk. Nothing was changed.');
+    }
+
+    // Swap the in-memory copy only after the file is safely on disk.
+    if (kind === 'menu') this.menuCache = next; else this.tablesCache = next;
+    return { ok: true, data: next, ...(result.meta ? { meta: result.meta } : {}) };
+  }
+
+  async _backupFile(file) {
+    if (!fs.existsSync(file)) return;
+    await fs.promises.mkdir(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const seq = String(++this._backupSeq).padStart(4, '0');
+    const prefix = path.basename(file, '.json');
+    await fs.promises.copyFile(file, path.join(BACKUP_DIR, `${prefix}.${stamp}-${seq}.json`));
+
+    const mine = (await fs.promises.readdir(BACKUP_DIR)).filter(f => f.startsWith(`${prefix}.`)).sort();
+    for (const old of mine.slice(0, Math.max(0, mine.length - MAX_BACKUPS))) {
+      await fs.promises.unlink(path.join(BACKUP_DIR, old));
+    }
+  }
+
+  /**
+   * The only way cloud data may enter the cache. It runs in the same write chain as
+   * updateCatalog and re-checks authority at the moment of writing, so a pull that was
+   * already in flight when a hub edit committed loses instead of overwriting it.
+   * Resolves true if the data was applied; callers broadcast only then.
+   */
+  applyPulledCatalog(kind, fresh) {
+    const run = this._writeChain.then(async () => {
+      if (this.isHubAuthoritative(kind, fresh?.restaurant_id)) return false;
+
+      // Past the check above, a catalog that was edited on the hub is about to be replaced
+      // because it belongs to another restaurant. Keep a copy first; if that is not possible,
+      // leave it alone rather than destroy the only copy of someone's edits.
+      const cache = kind === 'menu' ? this.menuCache : this.tablesCache;
+      if ((cache?.revision || 0) > 0) {
+        try {
+          await this._backupFile(CATALOG_FILES[kind]);
+        } catch (err) {
+          console.warn(`⚠️ Not replacing the ${kind} catalog edited on this hub for another restaurant: its backup failed (${err.message}).`);
+          return false;
+        }
+      }
+
+      if (kind === 'menu') await this.saveMenuToDisk(fresh);
+      else await this.saveTablesToDisk(fresh);
+      return true;
+    });
+    this._writeChain = run.catch(() => {});
+    return run;
+  }
+
   async fetchMenuFromSupabase(restaurantId) {
     try {
       let catData = null;
@@ -225,99 +398,10 @@ class RestaurantCache {
       } catch (e) {}
 
       let categories = (catData && catData.length) ? catData.map(c => c.name || c) : [];
-      let items = (itemData && itemData.length) ? itemData.map(i => {
-        // Variants ship as JSONB from Supabase (`variants: [{ id, label, price }]`).
-        // Fall back to the top-level price if nothing valid comes through.
-        const rawVariants = Array.isArray(i.variants) ? i.variants : [];
-        const variants = rawVariants
-          .filter(v => v && v.id && v.label && Number.isFinite(Number(v.price)))
-          .map(v => ({
-            id: String(v.id),
-            label: String(v.label).slice(0, 40),
-            price: Number(v.price),
-            // Per-variant availability (M2 · PR 14). Legacy variants without
-            // the field default to true; only an explicit `false` marks 86'd.
-            available: v.available !== false
-          }));
-        // Modifier groups ship as JSONB (`modifier_groups: [{ id, label, min,
-        // max, options: [{ id, label, price_delta }] }]`). Every level is
-        // defensively normalised so a partial row never crashes the pricer;
-        // an option missing a numeric price_delta is dropped, a group missing
-        // an id or label is dropped, and the group is only kept when it has
-        // at least one valid option.
-        const rawGroups = Array.isArray(i.modifier_groups) ? i.modifier_groups : [];
-        const modifier_groups = rawGroups
-          .map(g => {
-            if (!g || !g.id || !g.label) return null;
-            const options = (Array.isArray(g.options) ? g.options : [])
-              .filter(o => o && o.id && o.label && Number.isFinite(Number(o.price_delta)))
-              .map(o => ({
-                id: String(o.id),
-                label: String(o.label).slice(0, 40),
-                price_delta: Number(o.price_delta),
-                // Per-option availability (M2 · PR 14). Same default-true
-                // discipline as variants — only explicit `false` marks 86'd.
-                available: o.available !== false
-              }));
-            if (options.length === 0) return null;
-            const min = Number.isFinite(Number(g.min)) ? Math.max(0, Math.floor(Number(g.min))) : 0;
-            const max = Number.isFinite(Number(g.max)) ? Math.max(min, Math.floor(Number(g.max))) : options.length;
-            return { id: String(g.id), label: String(g.label).slice(0, 40), min, max, options };
-          })
-          .filter(Boolean);
-        // Day-parts ship as JSONB (`day_parts: [{ id, label, starts_at,
-        // ends_at, days?, price?, variant_prices? }]`). Same defensive
-        // normalisation as modifier_groups — a window missing a valid
-        // HH:MM range is dropped so lib/dayParts.js never has to guard.
-        const HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/;
-        const rawDayParts = Array.isArray(i.day_parts) ? i.day_parts : [];
-        const day_parts = rawDayParts
-          .map(dp => {
-            if (!dp || !dp.id || !dp.label) return null;
-            if (!HHMM.test(String(dp.starts_at)) || !HHMM.test(String(dp.ends_at))) return null;
-            const out = {
-              id: String(dp.id),
-              label: String(dp.label).slice(0, 40),
-              starts_at: String(dp.starts_at),
-              ends_at: String(dp.ends_at)
-            };
-            if (Array.isArray(dp.days) && dp.days.length > 0) {
-              out.days = dp.days.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
-            }
-            if (Number.isFinite(Number(dp.price)) && Number(dp.price) >= 0) {
-              out.price = Number(dp.price);
-            }
-            if (dp.variant_prices && typeof dp.variant_prices === 'object') {
-              const vp = {};
-              for (const [k, v] of Object.entries(dp.variant_prices)) {
-                if (Number.isFinite(Number(v)) && Number(v) >= 0) vp[String(k)] = Number(v);
-              }
-              if (Object.keys(vp).length > 0) out.variant_prices = vp;
-            }
-            // A window with neither `price` nor `variant_prices` is useless
-            // — drop it rather than let the pricer silently fall back.
-            if (out.price === undefined && !out.variant_prices) return null;
-            return out;
-          })
-          .filter(Boolean);
-        // Station routing (M2 · PR 15): 'hot' | 'cold' | 'bar' | (default
-        // 'hot' when the column is missing / unknown). Whitelist happens
-        // in lib/kotRouting.js at read time, so a mistagged row still
-        // fires to the main kitchen rather than into an unlabeled queue.
-        const station = i.station ? String(i.station).toLowerCase() : undefined;
-        return {
-          id: i.id,
-          name: i.name,
-          price: Number(i.price) || 0,
-          category: i.category || i.category_name || 'General',
-          isVeg: i.is_veg !== undefined ? Boolean(i.is_veg) : Boolean(i.isVeg ?? true),
-          available: i.available !== undefined ? Boolean(i.available) : true,
-          ...(variants.length > 0 ? { variants } : {}),
-          ...(modifier_groups.length > 0 ? { modifier_groups } : {}),
-          ...(day_parts.length > 0 ? { day_parts } : {}),
-          ...(station ? { station } : {})
-        };
-      }) : [];
+      // hub_ref is the id the hub gave the item; rows written before it existed fall back to the cloud id.
+      let items = (itemData && itemData.length)
+        ? itemData.map(row => normalizeCloudMenuItem({ ...row, id: row.hub_ref || row.id }))
+        : [];
 
       // Fallback to default seed if Supabase table returns empty
       if (!categories.length && !items.length) {
@@ -348,16 +432,14 @@ class RestaurantCache {
           .from('tables')
           .select('*')
           .eq('restaurant_id', restaurantId)
+          // The hub writes display_order from its layout order on every push; id breaks ties for rows
+          // that never had one.
+          .order('display_order', { ascending: true })
           .order('id', { ascending: true });
         tablesData = res.data;
       } catch (e) {}
 
-      let tables = (tablesData && tablesData.length) ? tablesData.map((t, idx) => ({
-        id: t.id || (idx + 1),
-        name: t.name || `T${idx + 1}`,
-        section: t.section || 'Main Dining',
-        capacity: Number(t.capacity) || 4
-      })) : DEFAULT_TABLES;
+      let tables = (tablesData && tablesData.length) ? tablesFromCloud(tablesData) : DEFAULT_TABLES;
 
       return {
         restaurant_id: restaurantId,
@@ -382,17 +464,17 @@ class RestaurantCache {
 
     if (isOnline) {
       console.log('🌐 Hub is ONLINE at boot. Synchronizing menu & table layout snapshot from Supabase...');
-      const freshMenu = await this.fetchMenuFromSupabase(restaurantId);
-      const freshTables = await this.fetchTablesFromSupabase(restaurantId);
+      const freshMenu = this.isHubAuthoritative('menu', restaurantId) ? null : await this.fetchMenuFromSupabase(restaurantId);
+      const freshTables = this.isHubAuthoritative('tables', restaurantId) ? null : await this.fetchTablesFromSupabase(restaurantId);
 
       if (freshMenu) {
-        await this.saveMenuToDisk(freshMenu);
-        if (broadcastFn) broadcastFn('menu_updated', freshMenu);
+        const applied = await this.applyPulledCatalog('menu', freshMenu);
+        if (applied && broadcastFn) broadcastFn('menu_updated', freshMenu);
       }
 
       if (freshTables) {
-        await this.saveTablesToDisk(freshTables);
-        if (broadcastFn) broadcastFn('tables_updated', freshTables);
+        const applied = await this.applyPulledCatalog('tables', freshTables);
+        if (applied && broadcastFn) broadcastFn('tables_updated', freshTables);
       }
 
       this.isUninitialized = false;
@@ -417,27 +499,30 @@ class RestaurantCache {
     try {
       this.realtimeChannel = supabase.channel(`hub-cache-${restaurantId}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, async () => {
+          if (this.isHubAuthoritative('menu', restaurantId)) return;
           console.log('🔔 Supabase Realtime: menu_items change detected! Refreshing local cache & broadcasting live...');
           const fresh = await this.fetchMenuFromSupabase(restaurantId);
           if (fresh) {
-            await this.saveMenuToDisk(fresh);
-            if (broadcastFn) broadcastFn('menu_updated', fresh);
+            const applied = await this.applyPulledCatalog('menu', fresh);
+            if (applied && broadcastFn) broadcastFn('menu_updated', fresh);
           }
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_categories' }, async () => {
+          if (this.isHubAuthoritative('menu', restaurantId)) return;
           console.log('🔔 Supabase Realtime: menu_categories change detected! Refreshing local cache & broadcasting live...');
           const fresh = await this.fetchMenuFromSupabase(restaurantId);
           if (fresh) {
-            await this.saveMenuToDisk(fresh);
-            if (broadcastFn) broadcastFn('menu_updated', fresh);
+            const applied = await this.applyPulledCatalog('menu', fresh);
+            if (applied && broadcastFn) broadcastFn('menu_updated', fresh);
           }
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, async () => {
+          if (this.isHubAuthoritative('tables', restaurantId)) return;
           console.log('🔔 Supabase Realtime: tables change detected! Refreshing local cache & broadcasting live...');
           const fresh = await this.fetchTablesFromSupabase(restaurantId);
           if (fresh) {
-            await this.saveTablesToDisk(fresh);
-            if (broadcastFn) broadcastFn('tables_updated', fresh);
+            const applied = await this.applyPulledCatalog('tables', fresh);
+            if (applied && broadcastFn) broadcastFn('tables_updated', fresh);
           }
         })
         .subscribe((status) => {
@@ -448,6 +533,44 @@ class RestaurantCache {
     }
   }
 
+  async handleReconnection(restaurantId, broadcastFn) {
+    console.log(`🌐 Hub reconnected online! Fetching latest menu & table snapshot from Supabase...`);
+    try {
+      const freshMenu = this.isHubAuthoritative('menu', restaurantId) ? null : await this.fetchMenuFromSupabase(restaurantId);
+      const freshTables = this.isHubAuthoritative('tables', restaurantId) ? null : await this.fetchTablesFromSupabase(restaurantId);
+
+      if (freshMenu) {
+        const applied = await this.applyPulledCatalog('menu', freshMenu);
+        if (applied && broadcastFn) broadcastFn('menu_updated', freshMenu);
+      }
+
+      if (freshTables) {
+        const applied = await this.applyPulledCatalog('tables', freshTables);
+        if (applied && broadcastFn) broadcastFn('tables_updated', freshTables);
+      }
+
+      this.isUninitialized = false;
+      this.subscribeRealtime(restaurantId, broadcastFn);
+      console.log(`✅ Hub cache successfully synchronized with cloud upon reconnection.`);
+    } catch (err) {
+      console.error(`❌ Error during reconnection cache sync:`, err.message);
+    }
+  }
+
+  /**
+   * The menu as STORED, with no overlay of any kind. This is what an edit must start from.
+   *
+   * `getMenuCache` is the menu as SHOWN: the plan hides fields a tenant's plan does not include,
+   * and stock flags what cannot be made. An edit that began from the shown menu would write those
+   * overlays into the stored one when it saved. A tenant downgraded to Starter would lose every
+   * modifier, day-part price and station the first time they corrected a typo, and a stock-out
+   * would become a permanent 86. So reads get the overlays and writes never do.
+   */
+  getStoredMenu(restaurantId) {
+    if (this.isUninitialized || !this.menuCache) return this.getMenuCache(restaurantId);
+    return { ...this.menuCache, revision: this.menuCache.revision || 0, uninitialized: false };
+  }
+
   getMenuCache(restaurantId) {
     if (this.isUninitialized || !this.menuCache) {
       return {
@@ -455,12 +578,26 @@ class RestaurantCache {
         error: 'NO_CACHE_AND_OFFLINE',
         message: 'No menu data available — connect this hub to the internet once to complete setup.',
         restaurant_id: restaurantId,
+        revision: 0,
         categories: [],
         items: []
       };
     }
+    // Plan gating (M3 · PR 16): fields the tenant's plan doesn't include are
+    // stripped here, at the single read point shared by GET /menu and the
+    // order pricer, so handsets and billing always agree on what's sellable.
+    const features = this.featureProvider();
+    const planned = features
+      ? applyPlanToMenuItems(this.menuCache.items, features)
+      : this.menuCache.items;
+    // Stock-out (inventory): a `stock_out` flag layered over the menu, never a write to it, so the
+    // editor never sees it as a hand 86 and restocking undoes it. Same single read point as the plan,
+    // so the handset grid, the diner menu and the order check all agree on what can be made.
+    const items = this.stockProvider(planned, restaurantId);
     return {
       ...this.menuCache,
+      revision: this.menuCache.revision || 0,
+      ...(items !== this.menuCache.items ? { items } : {}),
       uninitialized: false
     };
   }
@@ -472,12 +609,16 @@ class RestaurantCache {
         error: 'NO_CACHE_AND_OFFLINE',
         message: 'No menu data available — connect this hub to the internet once to complete setup.',
         restaurant_id: restaurantId,
+        revision: 0,
         count: 0,
+        sections: [],
         tables: []
       };
     }
     return {
       ...this.tablesCache,
+      revision: this.tablesCache.revision || 0,
+      sections: this.tablesCache.sections || deriveSections(this.tablesCache.tables),
       uninitialized: false
     };
   }

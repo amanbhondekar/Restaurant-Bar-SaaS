@@ -47,10 +47,22 @@ class InvoiceStore {
       .catch(err => console.error('❌ Async save invoices error:', err));
   }
 
+  /**
+   * One past the highest number this tenant has used -- not the count of bills.
+   *
+   * The two agree while the ledger is whole and nothing is ever removed, but they diverge the
+   * moment it is not: a hub restored from the cloud with one bill missing would count N-1 and
+   * reissue a number the cloud already holds. Migration 005 puts a unique index on
+   * (restaurant_id, invoice_number), so that bill would be rejected on every retry and could
+   * never sync. Deriving from the maximum keeps numbering monotonic through any gap.
+   */
   nextInvoiceNumber(restaurantId) {
-    const tenantInvoices = this.invoices.filter(i => i.restaurant_id === restaurantId);
-    const nextSeq = tenantInvoices.length + 1;
-    return `INV-${String(nextSeq).padStart(6, '0')}`;
+    const highest = this.invoices.reduce((max, inv) => {
+      if (inv.restaurant_id !== restaurantId) return max;
+      const seq = Number(String(inv.invoice_number || '').replace(/^INV-/, ''));
+      return Number.isFinite(seq) && seq > max ? seq : max;
+    }, 0);
+    return `INV-${String(highest + 1).padStart(6, '0')}`;
   }
 
   /**
@@ -110,6 +122,45 @@ class InvoiceStore {
     this.invoices = [invoice, ...this.invoices];
     this.save();
     return { ok: true, invoice, duplicate: false };
+  }
+
+  /**
+   * Bills the cloud has not confirmed, oldest first so a ledger replicates in the order it was
+   * written. `invoices` is stored newest-first, hence the reverse.
+   */
+  listUnsynced(restaurantId) {
+    return this.invoices
+      .filter(inv => inv.synced_to_cloud !== true && (!restaurantId || inv.restaurant_id === restaurantId))
+      .slice()
+      .reverse();
+  }
+
+  /**
+   * Records that this bill has changed since the cloud last saw it. Paying, voiding, refunding
+   * or splitting a bill makes the cloud's copy stale until the next push lands.
+   */
+  markPending(invoiceId, restaurantId) {
+    if (!invoiceId) return false;
+    const invoice = this.invoices.find(inv =>
+      inv.id === invoiceId && (!restaurantId || inv.restaurant_id === restaurantId));
+    if (!invoice || invoice.synced_to_cloud === false) return false;
+    invoice.synced_to_cloud = false;
+    this.save();
+    return true;
+  }
+
+  /**
+   * Records that the cloud now holds this bill. Until migration 005 nothing ever called this,
+   * so `synced_to_cloud` was stamped false at issue and stayed false for the life of the bill.
+   */
+  markSynced(invoiceId, restaurantId) {
+    if (!invoiceId) return false;
+    const invoice = this.invoices.find(inv =>
+      inv.id === invoiceId && (!restaurantId || inv.restaurant_id === restaurantId));
+    if (!invoice || invoice.synced_to_cloud === true) return false;
+    invoice.synced_to_cloud = true;
+    this.save();
+    return true;
   }
 
   getInvoice(invoiceId, restaurantId) {

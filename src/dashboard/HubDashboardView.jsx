@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Activity, Wifi, WifiOff, Smartphone, Utensils, Clock,
   CheckCircle2, AlertTriangle, LayoutGrid, ArrowUpRight,
@@ -11,6 +11,7 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { fetchCloudDashboardData, subscribeCloudRealtime, isCloudConfigured } from '../services/cloudDataService';
 
 export const HubDashboardView = () => {
   const defaultHub = typeof window !== 'undefined'
@@ -18,22 +19,45 @@ export const HubDashboardView = () => {
     : 'http://localhost:4000';
 
   const [hubData, setHubData] = useState(null);
+  const [connectionMode, setConnectionMode] = useState('connecting'); // 'lan' | 'cloud' | 'disconnected'
   const [isLoading, setIsLoading] = useState(true);
   const [lastFetchErr, setLastFetchErr] = useState('');
   const shouldReduceMotion = useReducedMotion();
+  const activeModeRef = useRef('connecting');
 
   const fetchDashboardData = useCallback(async () => {
     try {
-      const res = await fetch(`${defaultHub}/dashboard-data`);
+      // 1. Attempt LAN Hub Direct Fetch
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`${defaultHub}/dashboard-data`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (res.ok) {
         const data = await res.json();
         setHubData(data);
+        setConnectionMode('lan');
+        activeModeRef.current = 'lan';
         setLastFetchErr('');
-      } else {
-        setLastFetchErr('Could not fetch dashboard metrics');
+        setIsLoading(false);
+        return;
       }
-    } catch (err) {
-      setLastFetchErr('Hub server unreachable');
+    } catch (lanErr) {
+      // LAN unreachable — attempt Cloud Remote Mode Fallback
+      if (isCloudConfigured()) {
+        const cloudRes = await fetchCloudDashboardData().catch(() => ({ ok: false }));
+        if (cloudRes.ok && cloudRes.data) {
+          setHubData(cloudRes.data);
+          setConnectionMode('cloud');
+          activeModeRef.current = 'cloud';
+          setLastFetchErr('');
+          setIsLoading(false);
+          return;
+        }
+      }
+      setConnectionMode('disconnected');
+      activeModeRef.current = 'disconnected';
+      setLastFetchErr('Hub server unreachable & Cloud sync offline');
     } finally {
       setIsLoading(false);
     }
@@ -50,6 +74,7 @@ export const HubDashboardView = () => {
     const wsUrl = `${wsHost}/live`;
     let ws = null;
     let isSubscribed = true;
+    let cloudUnsub = null;
 
     const connectWs = () => {
       try {
@@ -62,21 +87,32 @@ export const HubDashboardView = () => {
           if (!isSubscribed) return;
           try {
             const msg = JSON.parse(event.data);
-            if (['NEW_ORDER', 'order_created', 'TICKET_READY', 'order_ready', 'CLEAR_TABLE', 'bill_cleared', 'order_cleared', 'SYNC_STATUS_CHANGE', 'TABLE_STATUS_CHANGE'].includes(msg.type)) {
+            if (['NEW_ORDER', 'order_created', 'TICKET_READY', 'order_ready', 'CLEAR_TABLE', 'bill_cleared', 'order_cleared', 'TICKET_CANCELLED', 'SYNC_STATUS_CHANGE', 'TABLE_STATUS_CHANGE'].includes(msg.type)) {
               fetchDashboardData();
             }
           } catch (err) {}
         };
         ws.onclose = () => {
-          if (isSubscribed) setTimeout(connectWs, 4000);
+          if (isSubscribed && activeModeRef.current === 'lan') {
+            setTimeout(connectWs, 4000);
+          }
         };
       } catch (err) {}
     };
 
     connectWs();
+
+    // Also register cloud realtime listener for remote cloud mode updates
+    cloudUnsub = subscribeCloudRealtime('11111111-1111-1111-1111-111111111111', () => {
+      if (activeModeRef.current === 'cloud') {
+        fetchDashboardData();
+      }
+    });
+
     return () => {
       isSubscribed = false;
       if (ws) ws.close();
+      if (cloudUnsub) cloudUnsub();
     };
   }, [defaultHub, fetchDashboardData]);
 
@@ -117,14 +153,23 @@ export const HubDashboardView = () => {
               <h1 className="typography-display-sm" style={{ color: 'var(--color-ink)' }}>
                 {restaurant.name || 'Hotel Mejwani'}
               </h1>
-              <Badge variant={lastFetchErr ? 'destructive' : 'default'} className={lastFetchErr ? '' : 'bg-[var(--status-green-bg)] text-[var(--status-green-text)] border border-[var(--status-green-border)] hover:bg-[var(--status-green-bg)]'}>
-                {lastFetchErr ? 'HUB OFFLINE' : 'LIVE'}
+              <Badge
+                variant={connectionMode === 'disconnected' ? 'destructive' : 'default'}
+                className={connectionMode === 'lan'
+                  ? 'bg-[var(--status-green-bg)] text-[var(--status-green-text)] border border-[var(--status-green-border)] hover:bg-[var(--status-green-bg)]'
+                  : connectionMode === 'cloud'
+                    ? 'bg-[var(--status-blue-bg)] text-[var(--status-blue-text)] border border-[var(--status-blue-border)] hover:bg-[var(--status-blue-bg)]'
+                    : ''}
+              >
+                {connectionMode === 'lan' ? 'LAN HUB LIVE' : connectionMode === 'cloud' ? 'CLOUD REMOTE' : lastFetchErr ? 'OFFLINE' : 'CONNECTING'}
               </Badge>
             </div>
             <p className="typography-body-sm mt-0.5" style={{ color: 'var(--color-muted)' }}>
               Pairing <strong style={{ color: 'var(--color-primary)' }}>{restaurant.pairing_code || 'MJW-7492'}</strong>
               <span className="mx-1.5" style={{ color: 'var(--color-hairline)' }}>·</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>{defaultHub}</span>
+              {connectionMode === 'cloud'
+                ? <span>Source: <strong style={{ color: 'var(--status-blue-text)' }}>Supabase Cloud DB (Remote)</strong></span>
+                : <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>{defaultHub}</span>}
             </p>
           </div>
         </div>

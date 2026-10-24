@@ -34,3 +34,38 @@ hub_server/data/crash_log.json
 hub_server/data/menu_cache.json
 hub_server/data/tables_cache.json
 hub_server/data/invoices/
+
+# Rolling safety backups the hub writes before every menu/table edit
+hub_server/data/backups/
+
+# Temp files the hub writes while saving a catalog (renamed away on success)
+hub_server/data/*.tmp
+# Newest menu/table revision the cloud is known to hold
+hub_server/data/catalog_sync.json
+
+# A queue file that would not parse, kept aside by loadQueue so the unsent orders and bills
+# in it can be recovered by hand instead of being overwritten.
+hub_server/data/sync_queue.corrupt-*.json
+
+# Waiter records: names plus scrypt PIN hashes, seeded on first boot. Local to each hub.
+hub_server/data/waiters.json
+
+# Guest feedback left from the diner menu. Local to each hub, like the invoices it references.
+hub_server/data/feedback.json
+
+# Stock and recipes. Local to each hub: figures change with every order, and a hub that is re-paired
+# keeps the previous restaurant's file aside as inventory.<id>.json. Unreadable files are kept as
+# inventory.corrupt-<ts>.json.
+hub_server/data/inventory*.json
+
+# The sync queue's write-ahead journal: the hub's own crash-recovery record, rewritten constantly.
+hub_server/data/sync_queue.wal
+
+# Tonight's bookings and who is at the door. Local to each hub; a re-paired hub keeps the
+# previous restaurant's diary aside as reservations.<id>.json.
+hub_server/data/reservations*.json
+
+# The restaurant's money: every bill it has raised, and the daily and weekly summaries (which also hold the
+# owner's phone number). Local to each hub; never something to commit.
+hub_server/data/invoices.json
+hub_server/data/reports.json

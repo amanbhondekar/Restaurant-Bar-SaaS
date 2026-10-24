@@ -1040,10 +1040,22 @@ input, select, textarea { font-family: inherit; }
   border: 1px solid #10b981;
 }
 
+.conn-pill-cloud {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid #3b82f6;
+}
+
 .conn-pill-connecting {
   color: #94a3b8;
   background: rgba(148, 163, 184, 0.15);
   border: 1px solid #64748b;
+}
+
+.conn-pill-warning {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid #f59e0b;
 }
 
 .conn-pill-off {

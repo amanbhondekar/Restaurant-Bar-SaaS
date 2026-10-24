@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS public.restaurants (
     phone VARCHAR(20),
     currency VARCHAR(10) DEFAULT '₹',
     plan VARCHAR(20) NOT NULL DEFAULT 'starter', -- 'starter', 'pro', 'enterprise'
+    plan_status VARCHAR(20) NOT NULL DEFAULT 'active', -- 'active', 'trialing', 'past_due', 'suspended', 'cancelled' (see migrations/002)
+    trial_ends_at TIMESTAMPTZ,
+    current_period_end TIMESTAMPTZ,
     pairing_code VARCHAR(10) NOT NULL,
     -- bcrypt hash of the secret a reception hub must present to bind itself to
     -- this tenant. Set with set_hub_provisioning_secret() during onboarding.
@@ -197,10 +200,13 @@ CREATE TABLE IF NOT EXISTS public.orders (
     total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
     note TEXT,
     created_by_waiter VARCHAR(100),
+    order_request_id VARCHAR(100),
     synced_to_cloud BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_request_id ON public.orders(order_request_id);
 
 CREATE TABLE IF NOT EXISTS public.order_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -275,17 +281,33 @@ CREATE POLICY "Tenant isolation for tables"
     FOR ALL
     USING (restaurant_id = public.current_restaurant_id());
 
--- 4. MENU ITEMS POLICY
+-- 4. MENU CATEGORIES & ITEMS POLICY
+CREATE POLICY "Tenant isolation for menu_categories"
+    ON public.menu_categories
+    FOR ALL
+    USING (restaurant_id = public.current_restaurant_id());
+
 CREATE POLICY "Tenant isolation for menu_items"
     ON public.menu_items
     FOR ALL
     USING (restaurant_id = public.current_restaurant_id());
 
--- 5. ORDERS POLICY
+-- 5. ORDERS & ORDER ITEMS POLICY
 CREATE POLICY "Tenant isolation for orders"
     ON public.orders
     FOR ALL
     USING (restaurant_id = public.current_restaurant_id());
+
+CREATE POLICY "Tenant isolation for order_items"
+    ON public.order_items
+    FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE orders.id = order_items.order_id
+              AND orders.restaurant_id = public.current_restaurant_id()
+        )
+    );
 
 -- 6. WAITLIST POLICY
 CREATE POLICY "Tenant isolation for waitlist_entries"

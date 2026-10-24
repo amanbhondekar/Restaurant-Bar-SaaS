@@ -102,7 +102,9 @@ Clears active tickets for a table after guest payment.
 ---
 
 ### 7. `GET /sync-status`
-Returns background cloud retry queue metrics and online status.
+Returns background cloud retry queue metrics and online status (`queued`, `quarantined`, `online`, `last_synced_at`, `catalog`, `pairing`), and
+`heartbeat: { at, ok }`: whether this hub has told the cloud it is alive (every five minutes; see `docs/OPERATOR_SERVICE.md`). `at` is when the
+last report **got through**, and stays put while later ones fail; `ok` is `null` before the first attempt, then whether the latest one worked.
 
 ---
 
