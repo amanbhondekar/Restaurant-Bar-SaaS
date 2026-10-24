@@ -113,14 +113,14 @@ export function publicBookingRoutes({ cloud, now = Date.now, limits = BOOKING_LI
 }
 
 /** The headers the page is served with: it keeps its own address to itself, runs no inline script, and talks only to this service. */
-const PAGE_HEADERS = {
+export const PAGE_HEADERS = {
   'Cache-Control': 'no-store',
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 };
 
-/** Serves `reserve.html` at /book/:code and the built assets at /assets, and nothing else from the build. */
+/** Serves `reserve.html` at /book/:code and the built assets and fonts the pages use, and nothing else from the build. */
 export function bookingPageRoutes({ distDir }) {
   const router = express.Router();
   const page = path.join(path.resolve(distDir), 'reserve.html');
@@ -133,5 +133,7 @@ export function bookingPageRoutes({ distDir }) {
   });
 
   router.use('/assets', express.static(path.join(path.resolve(distDir), 'assets'), { index: false, maxAge: '1y', immutable: true }));
+  // The product's stylesheet names its fonts under /fonts; the operator console is drawn with the same stylesheet.
+  router.use('/fonts', express.static(path.join(path.resolve(distDir), 'fonts'), { index: false, maxAge: '1y' }));
   return router;
 }

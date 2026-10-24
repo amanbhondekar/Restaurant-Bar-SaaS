@@ -21,6 +21,7 @@ export default defineConfig({
         station: resolve(__dirname, 'station.html'),
         owner: resolve(__dirname, 'owner.html'),
         reserve: resolve(__dirname, 'reserve.html'),
+        ops: resolve(__dirname, 'ops.html'),
       },
     },
   },
@@ -28,8 +29,11 @@ export default defineConfig({
     port: 3000,
     host: true,
     allowedHosts: true,
-    // The booking page talks to the operator service, which serves it in production; in development it is somewhere else.
-    proxy: { '/public/booking': process.env.OPERATOR_DEV_URL || 'http://localhost:4500' }
+    // The booking page and the operator console talk to the operator service, which serves them in production; in development it is somewhere else.
+    proxy: {
+      '/public/booking': process.env.OPERATOR_DEV_URL || 'http://localhost:4500',
+      '/ops/api': process.env.OPERATOR_DEV_URL || 'http://localhost:4500'
+    }
   }
 });
 

@@ -12,6 +12,14 @@ and what is not.
 Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 
 ### Added
+- **The operator console, read-only** (`/ops` on the operator service, `src/ops/`): where the person running Kullina looks at every
+  restaurant at once. Counts (active, on trial, overdue or suspended, hubs live), a list of who to look at and why (ten rules: payment
+  overdue, suspended, trial ended or ending, asked to cancel, hub never reported, hub silent for 36 hours and for a week, orders shelved, a
+  long sync backlog, a wrong clock), every restaurant in a searchable table, the latest subscription events, and one restaurant's whole
+  picture. It sits behind its own token (`OPS_TOKEN`, off unless set, kept in memory only, ten wrong tries turn an address away) and
+  cannot change anything. A hub now tells the cloud it is alive every five minutes (`hub_status`, counts and times only, stamped with the
+  database's clock) and two views that span every restaurant are readable by the service role alone (migration 021). Runbook:
+  `docs/OPERATOR_SERVICE.md`. Not run against a hosted project.
 - **A public page where a guest asks for a table** (`/book/<code>`, served by the operator service). A restaurant switches it on in the
   Bookings tab and gets an address for a card or a screen. The guest only *asks* (name, number, how many, when, an optional note); the
   request waits in the cloud (migration 020, closed to `anon`) until the hub collects it, and reception accepts it (booked through the
@@ -46,9 +54,9 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
   queue with WhatsApp click-to-chat (migration 011).
 - **Role-scoped devices**: a `kitchen` device token reaches five routes only; the live feed now tells it the board and not the
   bill (`hub_server/lib/liveFeed.js`).
-- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–020, privileges, pairing, the owner's access, and
+- **SQL on a real Postgres engine** (PGlite) in the test suite: migrations 001–021, privileges, pairing, the owner's access, and
   the hub's own push and restore code round-tripped against the schema.
-- **Tests for every reception surface**: the frontend suite grew from none to 1,002 tests, including the whole Kitchen Display
+- **Tests for every reception surface**: the frontend suite grew from none to 1,112 tests, including the whole Kitchen Display
   rendered against a fake hub and socket (`src/test/kitchen/`).
 
 ### Changed
@@ -78,7 +86,7 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 - A queue file that would not parse was answered with an empty queue and overwritten; it is now salvaged and kept.
 
 ### Known gaps
-- Migrations 004–020 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
+- Migrations 004–021 have not run against a hosted Supabase project (no credentials on the build machine), and the Razorpay calls
   have never been made against Razorpay itself (no keys). A subscription runs for 12 billing periods and then ends; whether that
   is the right length is undecided.
 - The owner view is not deployed; the waiter's QR scanner needs a camera and is untested; nothing drives a real browser in CI.

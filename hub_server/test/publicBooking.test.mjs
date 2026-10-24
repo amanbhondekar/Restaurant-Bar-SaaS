@@ -401,6 +401,21 @@ test('a hit exactly one window old no longer counts', () => {
   assert.equal(l.hit('a'), true, 'the window is the last 100 ms, not 101');
 });
 
+test('the limiter can say how many a key has used without using one', () => {
+  let t = 1000;
+  const l = createLimiter({ max: 3, windowMs: 100, now: () => t });
+  assert.equal(l.count('a'), 0, 'a key never seen');
+  assert.equal(l.size(), 0, 'and asking about it does not make it one');
+  l.hit('a'); l.hit('a');
+  assert.equal(l.count('a'), 2);
+  assert.equal(l.count('a'), 2, 'asking does not count');
+  assert.equal(l.count('b'), 0, 'per key');
+  t += 99;
+  assert.equal(l.count('a'), 2);
+  t += 1;
+  assert.equal(l.count('a'), 0, 'hits exactly one window old no longer count, as with hit');
+});
+
 test('when the limiter has to forget someone it forgets whoever has been quiet longest', () => {
   const l = createLimiter({ max: 1, windowMs: 1e9, now: () => 1, maxKeys: 2 });
   l.hit('a'); l.hit('b');
@@ -437,6 +452,8 @@ test('validation gives back exactly what is stored and nothing the guest added',
 function builtPage() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kullina-reserve-'));
   fs.mkdirSync(path.join(dir, 'assets'));
+  fs.mkdirSync(path.join(dir, 'fonts'));
+  fs.writeFileSync(path.join(dir, 'fonts', 'Test-Variable.woff2'), 'not really a font');
   fs.writeFileSync(path.join(dir, 'reserve.html'), '<!doctype html><title>Ask for a table</title><div id="root"></div>');
   fs.writeFileSync(path.join(dir, 'assets', 'reserve-abc.js'), 'console.log("page")');
   fs.writeFileSync(path.join(dir, 'admin.html'), '<!doctype html><title>The reception console</title>');
@@ -464,6 +481,11 @@ test('the operator service serves the page itself, with headers that keep the ad
     const js = await app.get('/assets/reserve-abc.js');
     assert.equal(js.status, 200);
     assert.match(js.headers.get('content-type'), /javascript/);
+
+    // The product's stylesheet names its fonts under /fonts, and the operator console is drawn with it.
+    const font = await app.get('/fonts/Test-Variable.woff2');
+    assert.equal(font.status, 200);
+    assert.equal(await font.text(), 'not really a font');
   } finally { await app.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -471,7 +493,7 @@ test('only the booking page and its assets are served: not the other pages, not 
   const dir = builtPage();
   const app = await serve({ distDir: dir });
   try {
-    for (const p of ['/admin.html', '/reserve.html', '/secret.txt', '/assets/../secret.txt', '/assets/%2e%2e/secret.txt', '/book', `/book/${CODE}/extra`, '/book/SHORT', '/book/..%2fsecret']) {
+    for (const p of ['/admin.html', '/reserve.html', '/secret.txt', '/assets/../secret.txt', '/assets/%2e%2e/secret.txt', '/fonts', '/fonts/', '/fonts/../secret.txt', '/fonts/%2e%2e/secret.txt', '/fonts/Missing.woff2', '/book', `/book/${CODE}/extra`, '/book/SHORT', '/book/..%2fsecret']) {
       const r = await app.get(p);
       assert.notEqual(r.status, 200, p);
       assert.doesNotMatch(await r.text(), /not for the public|reception console/, p);

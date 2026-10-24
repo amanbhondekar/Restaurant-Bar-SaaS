@@ -90,6 +90,11 @@ export function createLimiter({ max, windowMs, now = Date.now, maxKeys = 20000 }
       while (seen.size > maxKeys) seen.delete(seen.keys().next().value);
       return true;
     },
+    /** How many a key has used within the window, without using one: for turning someone away before they are let to try again. */
+    count(key) {
+      const t = now();
+      return (seen.get(key) || []).filter(at => at > t - windowMs).length;
+    },
     size: () => seen.size
   };
 }

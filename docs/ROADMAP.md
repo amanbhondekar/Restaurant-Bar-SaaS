@@ -59,16 +59,16 @@ is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup, Razorpay webhooks and the
 subscription itself (the owner starts, switches and cancels it from the Plan tab).
 What is left is everything that needs a real Supabase project or Razorpay keys:
-migrations 004–020 have never run on a hosted project, and the Razorpay calls have
+migrations 004–021 have never run on a hosted project, and the Razorpay calls have
 only ever been made against a stand-in, because there are no credentials on the
 machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition, reservations with staff-sent reminders,
 a public page where a guest asks for a table, and a reward for coming back that the
 restaurant sets itself.
 
-Automated coverage is **1647 hub tests across 81 files** (pure rules plus live
+Automated coverage is **1752 hub tests across 87 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**1002 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**1112 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the booking page a guest asks for a table on, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -230,6 +230,8 @@ drives a real browser in CI.
   switches plan or cancels, each at the end of the paid period and each after an
   "are you sure". The hub only forwards; the operator service decides and calls
   Razorpay. Built against stand-ins, never run against Razorpay.
+- ✅ The operator console (§4.9), read-only: `/ops` on the operator service shows every
+  restaurant at once, to the operator alone. See below.
 
 ### Frontend surfaces
 - ✅ Kitchen KDS (`src/kitchen_main.jsx`, the page the hub serves at `/`): live
@@ -286,7 +288,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1647 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1752 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -761,11 +763,30 @@ milestones (§5) when a theme is pulled into a release.
   suite touching nothing there. (It used to fill the real crash log with test
   records, displacing any genuine crash.)
 
-### 4.9 Deployment & fleet  ⬜
-- One-click hub installer for Windows (auto-start service, firewall rule,
+### 4.9 Deployment & fleet  🟡
+- ✅ **The operator console, read-only** (2026-10-24): where the person running Kullina looks at every
+  restaurant at once. `/ops` on the operator service, behind its own token (`OPS_TOKEN`, off unless
+  set; ten wrong tries turn an address away). It shows how many restaurants are active, on trial, overdue
+  or suspended, how many hubs are live, **a list of who to look at and why** (ten rules, each a constant
+  pinned to the millisecond: payment overdue, suspended, trial ended or ending, asked to cancel, hub never
+  reported, hub silent for 36 hours and for a week, orders shelved, a long sync backlog, a wrong clock),
+  every restaurant in a searchable, filterable table, the latest subscription events across all of them,
+  and for one restaurant its subscriptions, its events and everything its hub says. It reads again every
+  minute and says how old what it shows is. Nothing in it can change anything.
+  Behind it, migration 021: a hub now **tells the cloud it is alive every five minutes** (version, since when
+  it has run, bills waiting, orders shelved, last sync, handsets and waiters: counts and times only, stamped
+  with the database's clock) and two views that span every restaurant, readable by the service role alone.
+  103 hub and operator tests (against stand-ins and the real schema) and 110 on the screens. Mutation-checked: about 540 mutants, every survivor closed
+  (several were tests that quoted the constant under test) or shown equivalent. See `docs/OPERATOR_SERVICE.md`.
+- ⬜ **Still open on the console**: it cannot *do* anything (suspend, extend a trial, change a plan, message a
+  restaurant): that is writes, and the point was read-only first. One token and no names, so nothing says who
+  looked. It shows at most 1,000 restaurants. It shows the figures the hub reports and the bills that reached
+  the cloud, not revenue; a restaurant's money is its own. No alerting: it tells you when you look. It has not run
+  against a hosted Supabase project or a public address, and migration 021 has not run on one. On a phone the
+  table scrolls sideways.
+- ⬜ One-click hub installer for Windows (auto-start service, firewall rule,
   update channel) — M3 · PR 20.
-- Signed auto-updates for the hub binary.
-- Remote fleet view: which tenants' hubs are online / behind on sync.
+- ⬜ Signed auto-updates for the hub binary.
 
 ### 4.10 Documentation  🟡
 - ✅ `CHANGELOG.md` following Keep a Changelog: no releases are tagged, so it is grouped by milestone, with the unmerged work under Unreleased.
@@ -815,7 +836,7 @@ The product can onboard a new restaurant without engineering.
 - 🟡 PR 19 — Razorpay chosen; the webhooks, plan status and the owner's start /
   switch / cancel flow are built and tested against stand-ins (2026-10-23). There
   are no keys, and Razorpay has never been called for real.
-- ⬜ PR 20 — Windows installer + fleet view.
+- 🟡 PR 20 — the fleet view is built (the read-only operator console, 2026-10-24); the Windows installer is not.
 - 🟡 4.10 CHANGELOG and CONTRIBUTING are written; LICENSE is the owner's call.
 
 ### M4 — Customer surfaces  🟡

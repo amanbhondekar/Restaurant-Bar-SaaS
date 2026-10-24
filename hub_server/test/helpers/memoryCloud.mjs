@@ -8,7 +8,8 @@
 const UNIQUE = {
   subscriptions: ['razorpay_subscription_id'],
   subscription_events: ['razorpay_event_id'],
-  booking_pages: ['restaurant_id', 'code']
+  booking_pages: ['restaurant_id', 'code'],
+  hub_status: ['restaurant_id']
 };
 
 // Timestamps arrive as ISO strings and compare as moments; anything else compares as it is.
@@ -22,8 +23,8 @@ const TESTS = {
   in: (a, list) => Array.isArray(list) && list.includes(a)
 };
 
-export function memoryCloud({ users = {}, staff = [], subscriptions = [], events = [], restaurants = [{ id: 'r-uuid' }], bookingPages = [], bookingRequests = [], rpcResult, rpcError = null, failures = {} } = {}) {
-  const tables = { staff_users: staff, subscriptions, subscription_events: events, restaurants, booking_pages: bookingPages, booking_requests: bookingRequests };
+export function memoryCloud({ users = {}, staff = [], subscriptions = [], events = [], restaurants = [{ id: 'r-uuid' }], bookingPages = [], bookingRequests = [], hubStatus = [], opsTenants = [], opsEvents = [], rpcResult, rpcError = null, failures = {} } = {}) {
+  const tables = { staff_users: staff, subscriptions, subscription_events: events, restaurants, booking_pages: bookingPages, booking_requests: bookingRequests, hub_status: hubStatus, ops_tenants: opsTenants, ops_events: opsEvents };
   const calls = { rpc: [], updates: [], inserts: [], upserts: [], selects: [], deletes: [], getUser: [] };
   let counter = 0;
 
@@ -31,7 +32,7 @@ export function memoryCloud({ users = {}, staff = [], subscriptions = [], events
 
   function from(table) {
     if (!tables[table]) throw new Error(`memoryCloud: no table ${table}`);
-    const q = { op: 'select', filters: [], order: null, limit: null, single: false, patch: null, onConflict: null, returning: false, count: false, head: false };
+    const q = { op: 'select', filters: [], order: null, limit: null, single: false, patch: null, onConflict: null, returning: false, count: false, head: false, columns: null };
 
     const matches = row => q.filters.every(([col, val, op = 'eq']) => TESTS[op](row[col], val));
 
@@ -40,7 +41,7 @@ export function memoryCloud({ users = {}, staff = [], subscriptions = [], events
     function run() {
       const rows = tables[table];
       if (q.op === 'select') {
-        calls.selects.push({ table, filters: q.filters });
+        calls.selects.push({ table, filters: q.filters, columns: q.columns });
         const bad = failure('select', table);
         if (bad) return { data: null, error: bad };
         let found = rows.filter(matches).map(r => ({ ...r }));
@@ -90,7 +91,7 @@ export function memoryCloud({ users = {}, staff = [], subscriptions = [], events
     }
 
     const builder = {
-      select(_cols, { count = null, head = false } = {}) { if (q.op === 'update') q.returning = true; q.count = Boolean(count); q.head = head; return builder; },
+      select(cols, { count = null, head = false } = {}) { q.columns = cols ?? null; if (q.op === 'update') q.returning = true; q.count = Boolean(count); q.head = head; return builder; },
       eq(col, val) { q.filters.push([col, val]); return builder; },
       in(col, vals) { q.filters.push([col, vals, 'in']); return builder; },
       lt(col, val) { q.filters.push([col, val, 'lt']); return builder; },

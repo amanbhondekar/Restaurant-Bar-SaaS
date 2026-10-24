@@ -32,6 +32,7 @@ const { reconciliationStore } = await import('../lib/reconciliationStore.js');
 const { reconciliationFromCloud } = await import('../lib/reconciliationSync.js');
 const { feedbackRow, feedbackFromCloud } = await import('../lib/feedbackSync.js');
 const { feedbackStore, MAX_COMMENT } = await import('../lib/feedbackStore.js');
+const { buildReport } = await import('../lib/heartbeat.js');
 
 import { after } from 'node:test';
 after(() => fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -227,6 +228,13 @@ test('booking and queue rows fit, in every status', () => {
   for (const status of WAITLIST_STATUSES) {
     fits('walkins', walkInRow(RID, { id: 'w1', guest_name: 'Dev', phone: null, phone_key: null, party_size: 2, quoted_wait_mins: 15, status, created_at: T }));
   }
+});
+
+test('the hub\'s report on itself fits hub_status, whether it knows everything or nothing', () => {
+  const full = buildReport({ now: new Date(T), startedAt: T, version: '1.0.0', sync: { queued: 3, quarantined: 1, last_synced_at: T }, devices: 2, waiters: 4 });
+  fits('hub_status', { restaurant_id: RID, ...full });
+  fits('hub_status', { restaurant_id: RID, ...buildReport({ now: new Date(T) }) });
+  assert.deepEqual(Object.keys(full).sort(), [...SCHEMA.hub_status.columns.keys()].filter(c => !['restaurant_id', 'received_at'].includes(c)).sort(), 'every column the hub is meant to fill, and not the one the database stamps');
 });
 
 test('guest feedback fits the table -- built by the real store, with every rating and the longest comment', () => {

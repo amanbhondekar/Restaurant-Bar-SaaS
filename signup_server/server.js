@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import { validateSignup, provisionArgs, describeProvisioned, newProvisioningSecret, isOperator } from './lib/provision.js';
 import { createRazorpayApi } from './lib/razorpayApi.js';
 import { publicBookingRoutes, bookingPageRoutes, parseTrustProxy } from './lib/publicBooking.js';
+import { opsRoutes, opsPageRoutes, opsEnabled } from './lib/opsRoutes.js';
 import { BILLABLE_PLANS, planIdFor, planForRazorpayPlanId, offeredPlans, validatePlan, isLive, canCancel, describeSubscription } from './lib/billing.js';
 import { verifyWebhookSignature, readSubscriptionEvent, subscriptionPayload } from '../hub_server/lib/razorpay.js';
 
@@ -51,6 +52,7 @@ export function createApp({
   operatorToken = OPERATOR_TOKEN,
   webhookSecret = RAZORPAY_WEBHOOK_SECRET,
   env = process.env,
+  opsToken = env.OPS_TOKEN,
   razorpay = createRazorpayApi({ keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }),
   now = Date.now,
   minGapMs = 5000,
@@ -71,9 +73,19 @@ export function createApp({
   app.use('/public', publicBookingRoutes({ cloud, now }));
   app.use(bookingPageRoutes({ distDir }));
 
+  // The operator console: read-only, behind its own token, and off unless that is set (lib/opsRoutes.js).
+  // Its token is its own. If it were the one that creates restaurants, looking could not be given to anyone without giving that away.
+  const sharedToken = Boolean(opsToken) && opsToken === operatorToken;
+  const consoleToken = sharedToken ? undefined : opsToken;
+  const opsOn = opsEnabled(cloud, consoleToken);
+  if (cloud && sharedToken) console.warn('[ops] OPS_TOKEN is the same as SIGNUP_OPERATOR_TOKEN, so the operator console is off. They must differ: one lets someone look, the other creates restaurants.');
+  else if (cloud && opsToken && !opsOn) console.warn('[ops] OPS_TOKEN is too short to be a secret, so the operator console is off.');
+  app.use('/ops/api', opsRoutes({ cloud, token: consoleToken, now }));
+  app.use(opsPageRoutes({ distDir, enabled: opsOn }));
+
   app.use(express.json({ limit: '100kb' }));
 
-  app.get('/health', (req, res) => res.json({ ok: true, configured: Boolean(cloud && operatorToken), billing: Boolean(cloud && razorpay.configured()) }));
+  app.get('/health', (req, res) => res.json({ ok: true, configured: Boolean(cloud && operatorToken), billing: Boolean(cloud && razorpay.configured()), ops: opsOn }));
 
   /**
    * Create a tenant. Operator-only: a token in `Authorization: Bearer`, compared in constant time,

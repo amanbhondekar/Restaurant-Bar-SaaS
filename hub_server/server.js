@@ -53,6 +53,7 @@ import { createBillingClient, normalizeOperatorUrl } from './lib/billingClient.j
 import { requestMessages } from './lib/bookingRequests.js';
 import { pullInbox } from './lib/bookingInbox.js';
 import { createInboxRunner, withinMs } from './lib/bookingInboxRunner.js';
+import { createHeartbeatRunner, makeCollector } from './lib/heartbeat.js';
 import { bookingPageRoutes, pageMemory } from './lib/bookingPageRoutes.js';
 import { billingRoutes } from './lib/billingRoutes.js';
 import { deviceAuth, requireDevice, requireKitchenDevice, DEVICE_SCOPES, requireReception, requireReceptionFor, isReceptionRequest, extractToken, isLoopback, trustLocalAddress } from './lib/deviceAuth.js';
@@ -1725,15 +1726,26 @@ const operatorUrl = () => normalizeOperatorUrl(process.env.OPERATOR_SERVICE_URL)
 const CLOUD_READ_MS = 4000;      // a read that has to wait for the internet must not hold up a screen
 
 /** The hub's own cloud session, or null while it has none (offline, or not set up). */
-const bookingCloud = async () => {
+const hubCloud = async () => {
   const rid = hubConfig.getPairingInfo().restaurant_id;
   const auth = await authenticateHubStaff(rid);   // answers "no" by itself when there is no restaurant yet or no cloud
   return auth?.success ? { rid, client: supabase } : null;
 };
 
 /** Collect the inbox, now and on a timer: one at a time, and never throws (lib/bookingInboxRunner.js). */
-const inbox = createInboxRunner({ cloudSession: bookingCloud, pull: cloud => pullInbox(cloud.client, cloud.rid, reservationStore) });
+const inbox = createInboxRunner({ cloudSession: hubCloud, pull: cloud => pullInbox(cloud.client, cloud.rid, reservationStore) });
 const pullBookingInbox = inbox.run;
+
+// The hub's report on itself (lib/heartbeat.js): every few minutes it tells the cloud it is alive and how its sync is doing, which is what
+// the operator console shows. Counts and times only; asked afresh each time, so a queue that grew is reported as grown.
+const HUB_STARTED_AT = new Date().toISOString();
+const HUB_VERSION = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8')).version ?? null; } catch { return null; }
+})();
+const heartbeat = createHeartbeatRunner({
+  cloudSession: hubCloud,
+  collect: makeCollector({ startedAt: HUB_STARTED_AT, version: HUB_VERSION, syncQueue, deviceAuth, waiterStore })
+});
 
 /** What a screen is shown of a request: nothing that identifies the guest to the cloud or to loyalty. */
 const publicRequest = ({ phone_key, cloud_id, ...request }) => request;
@@ -1780,7 +1792,7 @@ app.post('/admin/booking-requests/:id/decline', requireReception, (req, res) => 
 // something with the internet down.
 app.use(bookingPageRoutes({
   guard: requireReception,
-  cloudSession: bookingCloud,
+  cloudSession: hubCloud,
   operatorUrl,
   memory: pageMemory(hubConfig)
 }));
@@ -2365,6 +2377,8 @@ app.get('/plan', requireDevice, (req, res) => {
 app.get('/sync-status', requireDevice, (req, res) => {
   res.json({
     ...syncQueue.getStatus(),
+    // Whether this hub has told the cloud it is alive, and when it last did (lib/heartbeat.js).
+    heartbeat: heartbeat.last(),
     pairing: hubConfig.getPairingInfo()
   });
 });
@@ -2953,6 +2967,11 @@ server.listen(PORT, '0.0.0.0', () => {
     // internet the requests simply wait in the cloud, and nothing else on the hub is affected.
     setTimeout(pullBookingInbox, Number(process.env.HUB_BOOKING_INBOX_FIRST_MS) || 5000).unref();
     setInterval(pullBookingInbox, Number(process.env.HUB_BOOKING_INBOX_MS) || 2 * 60 * 1000).unref();
+
+    // Tell the cloud this hub is alive, now and every five minutes. Fail-soft: a report that does not get through is shown as one on
+    // /sync-status and tried again, and nothing else on the hub is affected.
+    setTimeout(heartbeat.run, Number(process.env.HUB_HEARTBEAT_FIRST_MS) || 15 * 1000).unref();
+    setInterval(heartbeat.run, Number(process.env.HUB_HEARTBEAT_MS) || 5 * 60 * 1000).unref();
 
     // Restore first, then backfill. A hub with an empty ledger (a reinstalled or replaced
     // reception laptop) pulls its financial history back from the cloud; everything restored
