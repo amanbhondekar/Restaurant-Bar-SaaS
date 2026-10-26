@@ -68,4 +68,6 @@ hub_server/data/reservations*.json
 # The restaurant's money: every bill it has raised, and the daily and weekly summaries (which also hold the
 # owner's phone number). Local to each hub; never something to commit.
 hub_server/data/invoices.json
+# The history of each bill: one JSON line per change, only ever appended to. Local to each hub.
+hub_server/data/invoice_events.jsonl
 hub_server/data/reports.json

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { cloudSchema, migrationFiles } from '../lib/sqlSchema.js';
 import { RESTAURANT_ID } from './helpers/spawnHub.mjs';
@@ -283,7 +284,7 @@ test('every column the hub names when reading the cloud exists', () => {
 
 test('what the source asks the cloud for is what this test checks: no read goes unlisted', () => {
   // If someone adds a .select('a, b') somewhere, this fails until the column list above is extended.
-  const libDir = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '..', 'lib');
+  const libDir = fileURLToPath(new URL('../lib', import.meta.url));   // decoded: a folder name with a space must not break the scan
   const explicit = new Set();
   for (const f of fs.readdirSync(libDir).filter(f => f.endsWith('.js'))) {
     const src = fs.readFileSync(path.join(libDir, f), 'utf8');

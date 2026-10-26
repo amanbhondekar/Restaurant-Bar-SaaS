@@ -2143,7 +2143,8 @@ app.post('/invoices/:id/split-by-amounts', requireDevice, requireReceptionFor('S
 // 7g. DELETE /invoices/:id/splits — Undo the split (only if nothing is paid yet)
 app.delete('/invoices/:id/splits', requireDevice, requireReceptionFor('Undoing a split'), (req, res) => {
   const pairing = hubConfig.getPairingInfo();
-  const result = invoiceStore.unsplit(req.params.id, pairing.restaurant_id);
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const result = invoiceStore.unsplit(req.params.id, pairing.restaurant_id, { actor: body.actor });
 
   if (!result.ok) {
     const status = result.code === 'NOT_FOUND' ? 404 : 400;
@@ -3002,6 +3003,12 @@ server.listen(PORT, '0.0.0.0', () => {
     syncQueue.restoreFeedbackFromCloud(pairingInfo.restaurant_id)
       .catch(err => console.warn('⚠️ Guest feedback restore failed:', err.message))
       .finally(() => syncQueue.enqueueUnsyncedFeedback(pairingInfo.restaurant_id));
+
+    // The history of each bill the same way: a replacement laptop gets it back, then bills with no history are given a baseline and
+    // whatever the cloud has not confirmed is carried up.
+    syncQueue.restoreInvoiceEventsFromCloud(pairingInfo.restaurant_id)
+      .catch(err => console.warn('⚠️ Bill history restore failed:', err.message))
+      .finally(() => syncQueue.enqueueUnsyncedInvoiceEvents(pairingInfo.restaurant_id));
 
     // The booking diary the same way: a replacement laptop rebuilds it, then anything the cloud has
     // not confirmed is carried up.

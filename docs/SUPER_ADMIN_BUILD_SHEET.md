@@ -39,7 +39,7 @@
 - Plans degrade, never block: past-due (7-day grace), suspended and cancelled tenants fall back to Starter; orders, billing and KDS are never switched off.
 - `restaurants.plan` is set only by an `active` subscription. `plan_status` is kept by Razorpay webhooks. A payment problem becomes `past_due`, never `suspended`.
 - Hub pulls plan state at boot and every 15 minutes, fail-soft offline.
-- Migrations `004`–`021` have **never run on a hosted Supabase project.** Razorpay has never been called for real.
+- Migrations `004`–`022` have **never run on a hosted Supabase project.** Razorpay has never been called for real.
 - Migration `014` sets each role's privileges explicitly because default privileges leaked write access. Follow that pattern.
 - A restaurant's money is its own: the console shows hub-reported counts and times, not revenue.
 - Invoice snapshots replicate to the cloud as full-snapshot upserts keyed on the hub's invoice id; cash-ups and feedback are insert-only.
@@ -94,7 +94,7 @@ Founder browser ── (Supabase Auth + TOTP, email allowlist, optional IP allow
 
 ---
 
-## 5. Data model (new migrations; confirm next free number, expected `022`+)
+## 5. Data model (new migrations; confirm next free number, expected `023`+: `022` is `invoice_events`, the bill history built on 2026-10-26)
 
 State privileges explicitly for every table and function (migration `014` pattern): `REVOKE ALL … FROM anon, authenticated, public;` then grant only what is listed.
 
@@ -126,10 +126,10 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 
 | ID | Task | Owner |
 |---|---|---|
-| G0-1 | Run migrations `004`–`021` on a hosted Supabase project; run `npm run cloud:check`; record results. **In progress (2026-10-26): Aman is setting up the hosted project and credentials; not yet run.** | Human |
+| G0-1 | Run migrations `004`–`022` on a hosted Supabase project; run `npm run cloud:check`; record results. **In progress (2026-10-26): Aman is setting up the hosted project and credentials; not yet run.** | Human |
 | G0-2 | Razorpay test-mode run of start/switch/cancel and webhooks. **In progress (2026-10-26): Aman is setting up test-mode credentials; not yet run.** | Human |
 | G0-3 | **GST audit (🚧, agent, read-only):** check the invoice generator for GSTIN, HSN/SAC per line, CGST/SGST vs IGST split, sequential invoice numbers (≤16 chars, FY-aware), and a tax summary. Output a gap report; fix is a separate PR. Constraint #4 is unverified until this passes. **Done 2026-10-26: `Darshil_docs/reports/report_2026-10-26_133000_gst_audit.md`; constraint #4 is not satisfied today (no GSTIN, no HSN/SAC, no IGST path, no FY-aware series, no credit note).** | Agent |
-| G0-4 | **LEDGER-1 analysis (🚧, agent, read-only):** confirm whether cloud invoice upserts lose prior content. Propose an append-only `invoice_events` with hash chain. Report only; do not implement without approval. **Done 2026-10-26: `Darshil_docs/reports/report_2026-10-26_134500_ledger_analysis.md`; cloud upserts do overwrite, and six hub fields are never sent. The `invoice_events` proposal awaits approval.** | Agent |
+| G0-4 | **LEDGER-1 analysis (🚧, agent, read-only):** confirm whether cloud invoice upserts lose prior content. Propose an append-only `invoice_events` with hash chain. Report only; do not implement without approval. **Done 2026-10-26: `Darshil_docs/reports/report_2026-10-26_134500_ledger_analysis.md`; cloud upserts do overwrite, and six hub fields are never sent. The `invoice_events` proposal was approved and built the same day: migration 022 (`Darshil_docs/reports/report_2026-10-26_150000_invoice_events.md`), so the admin console's tables start at `023`.** | Agent |
 | G0-5 | Answer decisions D1–D5 (§12). | Human |
 
 ### Phase 1 — Foundation · 🚧 · acceptance: two named founders sign in with MFA; every action is attributed

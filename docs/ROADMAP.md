@@ -59,14 +59,14 @@ is mostly built: plan enforcement, the owner console, staff and device
 management, and an operator service for signup, Razorpay webhooks and the
 subscription itself (the owner starts, switches and cancels it from the Plan tab).
 What is left is everything that needs a real Supabase project or Razorpay keys:
-migrations 004–021 have never run on a hosted project, and the Razorpay calls have
+migrations 004–022 have never run on a hosted project, and the Razorpay calls have
 only ever been made against a stand-in, because there are no credentials on the
 machine this was built on. M4 — customer surfaces — has
 guest ordering, repeat-visit recognition, reservations with staff-sent reminders,
 a public page where a guest asks for a table, and a reward for coming back that the
 restaurant sets itself.
 
-Automated coverage is **1752 hub tests across 87 files** (pure rules plus live
+Automated coverage is **1871 hub tests across 92 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **1112 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the booking page a guest asks for a table on, the station screens, device enrolment, every reception admin tab
@@ -288,7 +288,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (1752 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (1871 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -449,6 +449,21 @@ milestones (§5) when a theme is pulled into a release.
   when the cloud has more.
 - ✅ Cloud replication of cash-up records (migration 006), inserted rather
   than upserted: a closed shift is immutable.
+- ✅ **The history of each bill** (migration 022, `invoice_events`; 2026-10-26, from the G0-4 analysis). A bill used to be overwritten in place, on the hub
+  and in the cloud, and six things the hub stamped on it (`paid_by`, `voided_by`, `refund_by`, `split_mode`, `split_at`, `split_by`) never reached the
+  cloud. Now every change (issued, split, unsplit, paid, share paid, voided, refunded) also leaves an **event**: what the change did to each field (what
+  it was and what it became, so an undone split keeps the shares it destroyed), who did it, and when by the hub's clock. The events of one bill form a
+  **hash chain** (each carries the hash of the one before), kept on the hub as an append-only file and replicated to an append-only cloud table. The
+  database refuses UPDATE, DELETE and TRUNCATE for every role, and refuses a history that skips an event, forks, or does not start at the beginning;
+  only the hub's login can add events and any staff login of the restaurant can read them. A bill that existed before gets a **baseline** event that
+  says earlier history is not known. A replacement laptop restores the history, then carries up what the cloud has not confirmed. Replaying a bill's
+  events from its issue gives back the bill as it stands, for every kind of life. The event never stops a bill: if it cannot be written, the failure is
+  logged and the bill goes through. 119 tests in five files; 114 mutations, every one caught (the 11 that first survived were closed or removed).
+  **Honest limits:** the hub writes the chain, so it shows an edit, a deletion in the middle, a reordering or an inserted event, but NOT events cut off the
+  end, and it cannot stop whoever controls the hub's cloud login from rewriting a whole chain; keeping each bill's latest hash somewhere the hub cannot
+  write (the operator service, say) would close that and is not built. `actor` is the label the till sent, not a verified identity. The bill's own cloud
+  row can still be edited by the hub's login (no freeze trigger yet), and nothing in the product shows the history to a person yet. The hub's issue of a
+  bill records no actor (the close-table route has none to give). Not run against a hosted project (G0-1).
 - ✅ Backfill at boot for bills and cash-ups the cloud has not confirmed,
   so an existing ledger replicates rather than only new takings.
 - ✅ A sync queue file that will not parse is salvaged, preserved for
@@ -809,12 +824,12 @@ read shows an error, not the last value; **I9** counts and times only (no PIN ha
 small `admin_api` talks to Postgres as a dedicated role through `SECURITY DEFINER` RPCs only (not the service key; decision D1); Razorpay stays
 in the operator service, reached by an internal signed route. The spine is `tenant_events`, a per-restaurant hash chain; the existing
 `subscription_events` and the heartbeat are ingested into it, not rewritten. The existing ten `/ops` rules and their constants are reused
-from one shared module, not forked. New tables (expected from migration 022): `admin_users`, `tenant_events`, `admin_commands`, `alerts`,
+from one shared module, not forked. New tables (expected from migration 023; 022 is the bill history, `invoice_events`): `admin_users`, `tenant_events`, `admin_commands`, `alerts`,
 `plan_overrides`, `tenant_admin_meta`, `tenant_notes`, `tenant_onboarding_steps`.
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 0 Gates | Run migrations 004-021 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | G0-1 and G0-2: 🟡 in progress, Aman is setting up the hosted Supabase project and the Razorpay test-mode credentials (2026-10-26); the runs themselves have not happened. G0-5 (D1-D5) waits on people. G0-3 (GST audit) and G0-4 (ledger analysis) are ✅ written as reports on 2026-10-26: invoices have no GSTIN, no HSN/SAC, no IGST path, no FY-aware series and no credit note, and a bill is overwritten in place on the hub and in the cloud with six hub fields never sent (`Darshil_docs/reports/report_2026-10-26_133000_gst_audit.md`, `report_2026-10-26_134500_ledger_analysis.md`); the fixes wait on a CA and on approval |
+| 0 Gates | Run migrations 004-022 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | G0-1 and G0-2: 🟡 in progress, Aman is setting up the hosted Supabase project and the Razorpay test-mode credentials (2026-10-26); the runs themselves have not happened. G0-5 (D1-D5) waits on people. G0-3 (GST audit) and G0-4 (ledger analysis) are ✅ written as reports on 2026-10-26 (G0-4's `invoice_events` proposal was then approved and BUILT, migration 022, §4.1): invoices have no GSTIN, no HSN/SAC, no IGST path, no FY-aware series and no credit note, and a bill is overwritten in place on the hub and in the cloud with six hub fields never sent (`Darshil_docs/reports/report_2026-10-26_133000_gst_audit.md`, `report_2026-10-26_134500_ledger_analysis.md`); the fixes wait on a CA and on approval |
 | 1 Foundation | `admin_users` and the spine with its hash chain; TOTP and `aal2` in every RPC; `admin_api` and `admin_web` skeletons; ingest of existing events; audit-log viewer; port of the `/ops` views, then retire `OPS_TOKEN` (keeping a documented break-glass) | 🚧 |
 | 2 Alerting and timeline | Per-tenant timeline over the spine; alert engine (dedupe, state machine, escalation); a push adapter with signed one-tap acknowledge links (Telegram or ntfy first); an inbox; a watcher of the watcher | 🚧 |
 | 3 Safe cloud writes | Extend a trial, set `plan_status`, grant or revoke a comp plan (mandatory expiry), notes; the expiry job and the webhook-race test; the write-dialog pattern (reason, when and how it takes effect, type the restaurant's name to suspend) | 🚧 |
@@ -840,7 +855,7 @@ as the long-term auth; auto-suspension that blocks service; a CRM, ticket inbox 
 on the installer and auto-update above).
 
 **Checked against the repo on 2026-10-25, before anything is built (the sheet's own §14 list is still to be answered in full):**
-- *Next free migration is 022* (the last is `021_ops_console.sql`), as the sheet expects.
+- *Next free migration was 022* (the last was `021_ops_console.sql`), as the sheet expected. **022 was taken on 2026-10-26 by `022_invoice_events.sql`** (G0-4), so the admin console's tables start at 023.
 - *Tax:* `hub_server/lib/tax.js` defaults to **CGST 2.5% + SGST 2.5%** and takes a per-tenant tax config; invoice numbers are `INV-000001`
   (a per-tenant sequence, not financial-year aware). A search found **no GSTIN or HSN/SAC** anywhere in the hub library, so the sheet's
   suspicion that they are missing stands until G0-3 is done properly. There is no IGST path in `tax.js` either.

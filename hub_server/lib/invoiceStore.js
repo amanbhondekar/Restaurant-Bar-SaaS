@@ -3,6 +3,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildInvoicePreview } from './invoice.js';
 import { computeSeatSplits, validateSeatCount, validateAmountSplits, validateItemSplits } from './split.js';
+import { invoiceEventStore } from './invoiceEventStore.js';
+import { diffInvoice } from './invoiceEvents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +68,60 @@ class InvoiceStore {
   }
 
   /**
+   * Records one event for a change that has just been made. A change must never be lost for want of its event, and an event must never
+   * stop a bill: if the history cannot be written the failure is said loudly and the bill carries on.
+   *
+   * A bill that has no history yet (one issued before events existed, or restored from the cloud) is given a baseline first, so the
+   * history starts from the state BEFORE this change rather than from the change itself.
+   */
+  recordChange(type, before, after, actor) {
+    try {
+      this.ensureBaseline(before);
+      const changes = diffInvoice(before, after);
+      if (!Object.keys(changes).length) return null;
+      return invoiceEventStore.append({ restaurantId: after.restaurant_id, invoiceRef: after.id, type, actor, payload: { changes } });
+    } catch (err) {
+      console.error(`❌ Could not record the ${type} event for ${after?.invoice_number || after?.id}:`, err.message);
+      return null;
+    }
+  }
+
+  ensureBaseline(bill) {
+    if (!bill?.id || !bill.restaurant_id || invoiceEventStore.hasHistory(bill.restaurant_id, bill.id)) return null;
+    const { synced_to_cloud: _sync, ...body } = bill;
+    return invoiceEventStore.append({
+      restaurantId: bill.restaurant_id,
+      invoiceRef: bill.id,
+      type: 'baseline',
+      payload: { invoice: JSON.parse(JSON.stringify(body)), note: 'Recorded when this hub began keeping a history of each bill; history before this is not known.' }
+    });
+  }
+
+  /** Gives every bill of this restaurant that has no history a baseline. Runs at boot; a no-op once every bill has one. */
+  recordBaselines(restaurantId) {
+    let recorded = 0;
+    for (const bill of invoiceEventStore.withoutHistory(restaurantId, this.invoices)) {
+      try {
+        if (this.ensureBaseline(bill)) recorded++;
+      } catch (err) {
+        console.error(`❌ Could not record a baseline for ${bill.invoice_number || bill.id}:`, err.message);
+      }
+    }
+    if (recorded) console.log(`📜 Recorded a baseline for ${recorded} bill(s) that had no history.`);
+    return { recorded };
+  }
+
+  /** The first event of a bill: the whole bill as it was issued. */
+  recordIssued(invoice, actor) {
+    try {
+      const { synced_to_cloud: _sync, ...body } = invoice;
+      invoiceEventStore.append({ restaurantId: invoice.restaurant_id, invoiceRef: invoice.id, type: 'issued', actor, payload: { invoice: JSON.parse(JSON.stringify(body)) } });
+    } catch (err) {
+      console.error(`❌ Could not record the issue of ${invoice.invoice_number}:`, err.message);
+    }
+  }
+
+  /**
    * Build the invoice from live ticket state, assign a stable number, persist,
    * and return it. Idempotent per (restaurant_id, table_id, ticket ids):
    * calling twice with the same tickets returns the first invoice unchanged
@@ -74,7 +130,7 @@ class InvoiceStore {
    * `adjustments` (optional) is forwarded to buildInvoicePreview; a validation
    * failure there is returned to the caller and no invoice is persisted.
    */
-  issueInvoice({ tickets, tableId, tableName, restaurantId, currency, taxConfig, adjustments }) {
+  issueInvoice({ tickets, tableId, tableName, restaurantId, currency, taxConfig, adjustments, actor }) {
     if (!Array.isArray(tickets) || tickets.length === 0) {
       return { ok: false, error: 'No open tickets to invoice for this table.' };
     }
@@ -120,6 +176,7 @@ class InvoiceStore {
     };
 
     this.invoices = [invoice, ...this.invoices];
+    this.recordIssued(invoice, actor);
     this.save();
     return { ok: true, invoice, duplicate: false };
   }
@@ -211,6 +268,7 @@ class InvoiceStore {
         voided_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
     });
+    this.recordChange('voided', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
@@ -257,6 +315,7 @@ class InvoiceStore {
         split_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
     });
+    this.recordChange('split', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
@@ -298,6 +357,7 @@ class InvoiceStore {
         split_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
     });
+    this.recordChange('split', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
@@ -339,6 +399,7 @@ class InvoiceStore {
         split_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
     });
+    this.recordChange('split', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
@@ -347,7 +408,7 @@ class InvoiceStore {
    * Undo a split before any share is paid. Once a share is marked paid,
    * unsplit is refused (that money belongs to a settled record).
    */
-  unsplit(invoiceId, restaurantId) {
+  unsplit(invoiceId, restaurantId, { actor } = {}) {
     const invoice = this.getInvoice(invoiceId, restaurantId);
     if (!invoice) return { ok: false, error: 'Invoice not found.', code: 'NOT_FOUND' };
     if (!Array.isArray(invoice.splits) || invoice.splits.length === 0) {
@@ -362,6 +423,7 @@ class InvoiceStore {
       const { splits: _s, split_mode: _m, split_at: _sa, split_by: _sb, ...rest } = inv;
       return rest;
     });
+    this.recordChange('unsplit', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
@@ -421,6 +483,7 @@ class InvoiceStore {
       }
       return patch;
     });
+    this.recordChange('split_paid', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return {
       ok: true,
@@ -469,6 +532,7 @@ class InvoiceStore {
         paid_by: typeof actor === 'string' ? actor.slice(0, 60) : null
       };
     });
+    this.recordChange('paid', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }
@@ -521,6 +585,7 @@ class InvoiceStore {
       }
       return patched;
     });
+    this.recordChange('refunded', invoice, this.getInvoice(invoice.id, restaurantId), actor);
     this.save();
     return { ok: true, invoice: this.getInvoice(invoice.id, restaurantId) };
   }

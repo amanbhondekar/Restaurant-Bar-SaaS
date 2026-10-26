@@ -16,6 +16,8 @@ import { mergeById, byIssuedDesc, bySeqAsc, describeRepair, ledgerGap } from './
 import { reconciliationStore } from './reconciliationStore.js';
 import { pushFeedback, pullFeedback } from './feedbackSync.js';
 import { feedbackStore } from './feedbackStore.js';
+import { pushInvoiceEvents, pullInvoiceEvents } from './invoiceEventsSync.js';
+import { invoiceEventStore } from './invoiceEventStore.js';
 import { orderCourseColumns, itemCourseColumns, isMissingCourseColumn, withoutCourseColumns } from './courseSync.js';
 import { appendRecord, encodeRecord, fsyncEnabled, lastCompleteRecord, SLOW_SYNC_MS } from './queueJournal.js';
 
@@ -44,6 +46,8 @@ const isReconciliationOp = item => item?.type === RECONCILIATION_OP;
 
 const FEEDBACK_OP = 'SYNC_FEEDBACK';
 const isFeedbackOp = item => item?.type === FEEDBACK_OP;
+const INVOICE_EVENTS_OP = 'SYNC_INVOICE_EVENTS';
+const isInvoiceEventsOp = item => item?.type === INVOICE_EVENTS_OP;
 export const MAX_SYNC_ATTEMPTS = 5;
 
 /**
@@ -455,6 +459,8 @@ class SyncQueue {
     // The cloud's copy is stale from the moment the bill changes, not from when the push fails.
     invoiceStore.markPending(invoice.id, restaurantId);
     this.saveQueue(this.mergeInvoiceOp(this.queue, this.invoiceOp(invoice, restaurantId)));
+    // The history behind this change goes with it. It is a separate push because it is a separate table, and it never holds up the bill.
+    this.enqueueInvoiceEvents(invoice.id, restaurantId);
     this.processQueue();
   }
 
@@ -734,6 +740,92 @@ class SyncQueue {
     const restored = feedbackStore.restoreAll(restaurantId, pulled);   // re-checks emptiness: a guest may have answered meanwhile
     if (restored) console.log(`📥 Restored ${restored} piece(s) of guest feedback from the cloud.`);
     return { restored: restored > 0, count: restored };
+  }
+
+  /**
+   * Queues the unsent events of one bill. One push per bill, however often this is asked: the push reads what is unsent when it RUNS,
+   * so events recorded after it was queued ride along with it, and they always go up in order, in one call.
+   */
+  enqueueInvoiceEvents(invoiceRef, restaurantId) {
+    if (!invoiceRef || !restaurantId) return false;
+    if (!invoiceEventStore.listUnsyncedFor(restaurantId, invoiceRef).length) return false;
+    if (this.queue.some(q => isInvoiceEventsOp(q) && q.payload?.invoice_ref === invoiceRef && q.payload?.restaurant_id === restaurantId)) return false;
+
+    this.saveQueue([...this.queue, {
+      queue_id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      type: INVOICE_EVENTS_OP,
+      payload: { restaurant_id: restaurantId, invoice_ref: invoiceRef },
+      queued_at: new Date().toISOString(),
+      attempts: 0
+    }]);
+    this.processQueue();
+    return true;
+  }
+
+  /**
+   * Gives bills that have no history a baseline, then queues every bill that has events the cloud has not confirmed. Runs at boot, after
+   * the restore. A bill restored from the cloud later than this runs gets its baseline the first time it changes.
+   */
+  enqueueUnsyncedInvoiceEvents(restaurantId) {
+    const { recorded: baselines } = invoiceStore.recordBaselines(restaurantId);
+    const refs = invoiceEventStore.unsyncedRefs(restaurantId);
+    let queued = 0;
+    for (const ref of refs) if (this.enqueueInvoiceEvents(ref, restaurantId)) queued++;
+    if (queued) console.log(`[sync] 📜 Queued the unsent history of ${queued} bill(s) for the cloud.`);
+    return { queued, baselines };
+  }
+
+  async syncInvoiceEventsToSupabase(item) {
+    const { restaurant_id, invoice_ref } = item.payload;
+    const pairing = hubConfig.getPairingInfo();
+
+    if (!pairing.paired || !isUuid(restaurant_id) || String(restaurant_id) !== String(pairing.restaurant_id)) {
+      console.warn(`[sync] ⚠️ Dropping ${INVOICE_EVENTS_OP} (${invoice_ref}): it was left for a different restaurant than this hub is paired with.`);
+      return true;
+    }
+
+    const events = invoiceEventStore.listUnsyncedFor(restaurant_id, invoice_ref);
+    if (!events.length) return true;
+
+    try {
+      const pushed = await pushInvoiceEvents(this.cloud, restaurant_id, events);
+      invoiceEventStore.markSynced(pushed.ids);
+      console.log(`[sync] ✅ ${pushed.ids.length} event(s) of bill ${invoice_ref} pushed to Supabase`);
+      return true;
+    } catch (err) {
+      this.lastFailureSystemic = isSystemicFailure(err);
+      console.error(`[sync] ❌ ${INVOICE_EVENTS_OP} failed:`, { message: err.message, code: err.code || 'unknown', details: err.details || err.hint || null });
+      return false;
+    }
+  }
+
+  /**
+   * Fills an EMPTY history from the cloud, for a replacement laptop. Never merges: a hub that holds any history is the authority on it.
+   * A restored history that does not verify is kept and reported, not thrown away.
+   */
+  async restoreInvoiceEventsFromCloud(restaurantId) {
+    const pairing = hubConfig.getPairingInfo();
+    if (!pairing.paired || !isUuid(restaurantId) || String(restaurantId) !== String(pairing.restaurant_id)) {
+      return { restored: false, reason: 'NOT_PAIRED' };
+    }
+    if (!invoiceEventStore.isEmpty(restaurantId)) return { restored: false, reason: 'EVENTS_PRESENT' };
+
+    const { online } = await this.checkConnection();
+    if (!online) return { restored: false, reason: 'OFFLINE' };
+
+    let pulled;
+    try {
+      pulled = await pullInvoiceEvents(this.cloud, restaurantId);
+    } catch (err) {
+      console.warn(`⚠️ Could not restore the history of bills from the cloud: ${err.message}`);
+      return { restored: false, reason: 'CLOUD_ERROR', detail: err.message };
+    }
+    if (!pulled.length) return { restored: false, reason: 'NOTHING_IN_CLOUD' };
+
+    const result = invoiceEventStore.restoreAll(restaurantId, pulled);   // re-checks emptiness: a bill may have changed meanwhile
+    if (result.restored) console.log(`📥 Restored ${result.restored} event(s) of bill history from the cloud.`);
+    if (result.broken.length) console.error(`🚨 The restored history of ${result.broken.length} bill(s) does not verify: ${result.broken.slice(0, 5).join(', ')}${result.broken.length > 5 ? ', ...' : ''}. It was kept as evidence.`);
+    return { restored: result.restored > 0, count: result.restored, broken: result.broken };
   }
 
   /** Queues every cash-up the cloud has not confirmed. Runs at boot, alongside the bills. */
@@ -1034,6 +1126,11 @@ class SyncQueue {
             return false;
           });
           if (success) feedbackStore.markSynced(item.payload?.entry?.id, item.payload?.restaurant_id);
+        } else if (isInvoiceEventsOp(item)) {
+          success = await this.syncInvoiceEventsToSupabase(item).catch((err) => {
+            console.error('[sync] ❌ Sync invoice events exception:', { message: err.message, code: err.code || 'unknown' });
+            return false;
+          });
         } else if (item.type === 'UPDATE_STATUS') {
           success = await this.syncStatusToSupabase(item.payload).catch((err) => {
             console.error('[sync] ❌ Sync status exception:', {
