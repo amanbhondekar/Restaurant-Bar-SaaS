@@ -28,8 +28,26 @@ The same rule, moved inside `@layer base`, which is where the file already kept 
 
 In a real browser, on a production build, before and after: the admin console's sign-in button `rgba(0, 0, 0, 0)` → `rgb(255, 87, 34)`, and the operator console's "Open console" the same. The frontend suite (1112 tests of the product's own screens) is unchanged by it, as it runs without CSS.
 
-## NOT CHECKED, AND WHY IT MATTERS
+## FOLLOW-UP: THE REST OF THE PRODUCT WAS LOOKED AT (2026-10-26, same day)
 
-**This changes how default buttons look across the whole product**, and I looked at two pages only. Anywhere a button carries a utility class that was being overridden, the utility now applies. That is what its author wrote, so it should be an improvement (filled primary buttons, outline buttons with borders), but a screen that had quietly come to depend on a transparent, borderless button may now look different. **Someone should look through the reception, kitchen, waiter, owner and diner screens in a browser.** It is one commit, and reverting it is one line.
+Two production builds, one with the old `components.css` and one with the fix, were served by two scratch hubs and driven in a real browser (dark theme). For every page that loads `index.css`, each visible button's computed background, border, colour and size were compared. Nothing was changed in the product for this review.
 
-Status: ✅ fixed and pinned by a test; 🟡 not looked at across the rest of the product.
+**What differs after the fix**
+
+- **Operator console (`/ops`):** "Open console" is now filled orange. It was white text on nothing. The intended effect.
+- **Kitchen station screen (`/station/hot`):** the sound toggle gains a faint grey outline (`border border-border` was being cancelled). Small, visible.
+- **Kitchen display, dashboard, waiter:** the shared theme toggle gains a 1px *transparent* border. Fixed size, invisible.
+
+**What does not differ**
+
+- **Reception (`/admin`), all 11 tabs, and owner:** identical (228 of 258 buttons the same; the other 30 were sampling noise, checked in a stable state). `src/admin/admin.css` already carried `body button { border: revert-layer; background: revert-layer }`, a local workaround for this exact bug. It is now redundant for buttons and harmless.
+- **Diner and reserve:** their stylesheets are byte-identical in both builds and do not include `components.css`, so they cannot differ.
+- **Kitchen display:** same layout in before/after screenshots.
+
+**A sibling fault the fix did not touch**
+
+`:focus-visible { outline: ...; border-radius: var(--radius-xs); }` in `components.css` is still outside any layer. On the station screen, keyboard-focusing a button turned its 14px corners into 4px. It affects the kitchen display, station, waiter and ops; reception already works around it. Not fixed: the decision was to leave it for now.
+
+**Not reached:** kitchen ticket cards and the bill modal (the display stayed on "Loading active KOTs" against the scratch hub), the waiter order flow beyond the table list (that page talks to a hub on :4000), and the light theme.
+
+Status: ✅ fixed and pinned by a test; ✅ looked at across the product's screens, with the gaps above; 🟡 the `:focus-visible` sibling is open.

@@ -281,7 +281,7 @@ drives a real browser in CI.
   `.type-*` and `.typography-*` class aliases; status colour palettes
   (green / amber / blue / rust); JetBrains Mono for numerics.
 - ✅ 40+ restaurant-oriented UI components.
-- ✅ The base reset for `button` is in Tailwind's `base` layer (2026-10-26). It used to sit outside any layer and beat every utility, so the default `Button` and the operator console's buttons were unfilled; pinned by `hub_server/test/designSystemCss.test.mjs`. Looked at on two pages: the rest of the product's screens have not been looked at since the change.
+- ✅ The base reset for `button` is in Tailwind's `base` layer (2026-10-26). It used to sit outside any layer and beat every utility, so the default `Button` and the operator console's buttons were unfilled; pinned by `hub_server/test/designSystemCss.test.mjs`. Looked at across the product's screens the same day (`report_2026-10-26_190000_design_system_button_layer.md`): `/ops` "Open console" is now filled and the station sound toggle gains an outline; reception and owner are unchanged (they already worked around it in `admin.css`). **Open:** the `:focus-visible` rule in the same file is still unlayered and squashes a focused button's corners to 4px on kitchen, station, waiter and ops.
 
 ### Documentation & process
 - ✅ `docs/ARCHITECTURE.md`, `docs/API_SPECIFICATION.md`,
