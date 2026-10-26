@@ -26,12 +26,16 @@ html, body {
 
 body { min-height: 100vh; }
 
-button {
-  font-family: inherit;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  user-select: none;
+/* In the base layer, like Tailwind's own reset: an unlayered rule here beats every Tailwind utility, so a Button's `bg-primary` and `border` never applied
+   (the default button rendered as white text on nothing). A reset is supposed to be the thing a utility overrides. */
+@layer base {
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    user-select: none;
+  }
 }
 
 input, select, textarea { font-family: inherit; }

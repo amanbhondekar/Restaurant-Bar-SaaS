@@ -80,6 +80,7 @@ Everything on `feat/m2-kitchen-ops` (pull request #1) that is not yet on `main`.
 - Migration 014 states each role's table privileges explicitly instead of relying on Supabase defaults.
 
 ### Fixed
+- **The default `Button` and the operator console's buttons were unfilled.** The design system's base reset for `button` sat outside Tailwind's `base` layer, so it beat every Tailwind utility (`bg-primary`, `border`, ...): a primary button rendered as white text on nothing. It is now inside `@layer base`, pinned by `hub_server/test/designSystemCss.test.mjs` (`report_2026-10-26_190000_design_system_button_layer.md`). **Looked at on two pages only; the rest of the product's screens should be looked at in a browser.**
 - A freshly provisioned restaurant's hub could never pair (migration 015, `restaurant_for_pairing_code()`).
 - A tenant's own login could set its plan, or edit and delete its cash-ups and feedback (migration 014).
 - Voided bills, and a refund's time and a void's reason, never reached the cloud.

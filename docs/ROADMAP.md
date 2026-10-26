@@ -66,7 +66,7 @@ guest ordering, repeat-visit recognition, reservations with staff-sent reminders
 a public page where a guest asks for a table, and a reward for coming back that the
 restaurant sets itself.
 
-Automated coverage is **2027 hub tests across 96 files** (pure rules plus live
+Automated coverage is **2028 hub tests across 97 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **1112 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
 its basket, the booking page a guest asks for a table on, the station screens, device enrolment, every reception admin tab
@@ -281,6 +281,7 @@ drives a real browser in CI.
   `.type-*` and `.typography-*` class aliases; status colour palettes
   (green / amber / blue / rust); JetBrains Mono for numerics.
 - ✅ 40+ restaurant-oriented UI components.
+- ✅ The base reset for `button` is in Tailwind's `base` layer (2026-10-26). It used to sit outside any layer and beat every utility, so the default `Button` and the operator console's buttons were unfilled; pinned by `hub_server/test/designSystemCss.test.mjs`. Looked at on two pages: the rest of the product's screens have not been looked at since the change.
 
 ### Documentation & process
 - ✅ `docs/ARCHITECTURE.md`, `docs/API_SPECIFICATION.md`,
@@ -288,7 +289,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (2027 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (2028 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
