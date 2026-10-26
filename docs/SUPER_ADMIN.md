@@ -9,20 +9,20 @@ Status legend: ✅ built · 🟡 partial · 🚧 planned · ❌ blocked.
 | Task | What | Status |
 |---|---|---|
 | P1-1 | `admin_users`, the event spine `tenant_events` with a hash chain per restaurant, append-only, privileges stated (migration 023) | ✅ on PGlite |
-| P1-2 | Sign-in checks in the database: allowlist plus `aal2` in every admin function; `seed_admin_user` for the two founders | ✅ on PGlite. **Enrolling a second factor needs `admin_web`, which is not built** |
-| P1-3 | `admin_api`: JWT verification, default-deny routes, security headers, optional IP allowlist, rate limit on wrong tries | ✅ on stand-ins. `admin_web` (the page) ⬜ not started |
+| P1-2 | Sign-in checks in the database: allowlist plus `aal2` in every admin function; `seed_admin_user` for the two founders; enrolling and answering a second factor in the page | ✅ on PGlite and stand-ins; the page's sign-in has never met a real Supabase Auth |
+| P1-3 | `admin_api`: JWT verification, default-deny routes, security headers, optional IP allowlist, rate limit on wrong tries; `admin_web`: the page, its own build and host config | ✅ on stand-ins; the page also checked in a real browser (styled, no policy violations) |
 | P1-4 | Ingest: subscription events and hub changes land on the spine as they happen; a backfill for older events | ✅ on PGlite |
-| P1-5 | Audit log: the API (filter, page, CSV, chain check) | ✅ API. The page ⬜ |
-| P1-6 | Port the `/ops` read views | 🟡 The API serves the same fleet and tenant views from the same rules (`common/opsRules.js`). The page ⬜. **`OPS_TOKEN` is not retired**: it stays as the break-glass until the page reaches parity |
+| P1-5 | Audit log: the API (filter, page, CSV, chain check) and the page | ✅ |
+| P1-6 | Port the `/ops` read views | 🟡 The page shows the same fleet and restaurant views, from the same rules and the same screens (`common/opsRules.js`, `src/ops/`), served by `admin_api`. **`OPS_TOKEN` is not retired**: it stays as the break-glass until the page has run against a real project |
 
-Phase 1's acceptance, "two named founders sign in with MFA; every action is attributed", is **not met yet**: it needs `admin_web` (to enrol and use a second factor) and a hosted project.
+Phase 1's acceptance, "two named founders sign in with MFA; every action is attributed", is **built but not yet proven**: everything it needs exists (the page enrols and answers a second factor, the API and the database each refuse a session without one, every sign-in is recorded), and every piece is tested, but none of it has met a hosted Supabase project, so no real founder has signed in.
 
 ## 2. The shape
 
 ```
 Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
         │
-   admin_web   (static page; no secrets)                     🚧 not built
+   admin_web   (static page; no secrets)                     ✅
         │  Authorization: Bearer <JWT>
    admin_api   (admin_api/; its own deploy and credentials)  ✅
         │  connects as the Postgres role `kullina_admin`, never the service key
@@ -50,7 +50,8 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
    alter role kullina_admin login password '<a long random password>';
    ```
    Supabase's connection pooler writes the user as `kullina_admin.<project-ref>`; the API accepts that.
-5. Deploy `admin_api/` somewhere that is **not** where the operator service runs, with:
+5. In Supabase Auth, make sure multi-factor (TOTP) is enabled for the project; the page enrols each founder's authenticator app the first time they sign in.
+6. Deploy `admin_api/` somewhere that is **not** where the operator service runs, with:
 
    | Variable | Meaning |
    |---|---|
@@ -63,6 +64,25 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
    | `PORT` | default 4600 |
 
    `npm run admin` (that is `node admin_api/server.js`). It prints every problem it finds and exits rather than start with one.
+7. Build and host the page (see "The page" above) with `VITE_ADMIN_API_URL` set to the API's address and `ADMIN_WEB_ORIGIN` on the API set to the page's.
+
+### The page (`admin_web/`)
+
+A static page with its own build and its own host (invariant I10). It reuses the product's design tokens and fonts (Cabinet Grotesk, Instrument Sans) and two screens of the operator console, so it looks like the same product.
+
+**What a founder sees, in order:** sign in with an email and password; set up an authenticator app (first time: a QR code and a setup key) or enter a code; the API is asked who they are and whether they are an administrator (if not: "This account is not an administrator", and nothing else); the sign-in is recorded; and only then the console, with **Fleet** (every restaurant, ranked by the same ten rules, read again every minute) and **Audit log** (filter by restaurant, event type, source and dates; page back; export a CSV; check that the history has not been tampered with). One restaurant opens from the fleet. **There is no control on the page that changes anything.**
+
+**What it keeps:** nothing. The session lives in the page's memory (no storage, no cookie, nothing in the address), so a refresh asks for the password and a code again. A password or a code is held only while it is being typed and is cleared after a failure.
+
+**What it never does:** show a figure without when it was read (`as of 14:38`, with the day when it is not today); show an old answer as current (when a read fails it says so and marks what is still shown as older, and when the very first read fails it shows nothing); trust text from the API (everything is drawn as text); or go on after the session ends anywhere (it returns to sign-in and says so).
+
+**Settings (build time, all public):** `VITE_ADMIN_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. The build **refuses** to run if any is missing, if an address is not https (the API may be http on this machine), or if anything in the settings looks like a service key, by its name or by what the value says it is (invariant I2). It writes a content-security policy into the page that allows scripts, styles and fonts from the page's own host only, images from it and `data:` (for the QR code), and connections to exactly the two addresses above and nowhere else.
+
+**Building and hosting:** `npm run build:admin` makes `admin_web/dist` (the page and the product's fonts, and nothing else of the product). `admin_web/vercel.json` is the host's side: a Vercel project with its root directory set to `admin_web` and "include source files outside the root directory" on, which adds the headers a page like this needs (no framing, no sniffing, no referrer, HSTS, a permissions policy, never cached). `npm run admin:web` runs it for development on :5174; `ADMIN_WEB_ORIGIN` on the API must be that origin.
+
+**Tested** by 165 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which has been looked at on two pages only.
+
+The settings are in `admin_web/.env.example`. **Mutation-checked:** 179 mutants of the page's code, the build config and the stylesheet, all caught after the survivors were closed.
 
 ## 4. The event spine
 
@@ -128,7 +148,7 @@ The operator console (`/ops` on the operator service, behind `OPS_TOKEN`) still 
 
 ## 8. Not built yet
 
-`admin_web` (sign-in and second-factor enrolment, the audit page, the fleet and tenant pages); everything in Phases 2-7 of the build sheet (alerting, tenant writes, hub commands, billing operations, onboarding, the compliance desk); running any of it on a hosted project.
+Everything in Phases 2-7 of the build sheet (alerting, tenant writes, hub commands, billing operations, onboarding, the compliance desk); running any of it on a hosted project.
 
 ## 9. Decisions recorded
 

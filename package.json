@@ -8,6 +8,8 @@
     "hub": "node hub_server/server.js",
     "signup": "node signup_server/server.js",
     "admin": "node admin_api/server.js",
+    "admin:web": "vite --config admin_web/vite.config.js",
+    "build:admin": "vite build --config admin_web/vite.config.js",
     "cloud:check": "node hub_server/scripts/cloud-check.mjs",
     "build": "vite build",
     "preview": "vite preview",

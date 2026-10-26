@@ -14,7 +14,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    include: ['src/test/**/*.test.{js,jsx}'],
+    include: ['src/test/**/*.test.{js,jsx}', 'admin_web/test/**/*.test.{js,jsx}'],
     setupFiles: ['src/test/setup.js'],
     css: false,
     // Each file gets a fresh DOM and fresh module state, so one surface's fetch stub or URL can

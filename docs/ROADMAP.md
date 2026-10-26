@@ -66,9 +66,9 @@ guest ordering, repeat-visit recognition, reservations with staff-sent reminders
 a public page where a guest asks for a table, and a reward for coming back that the
 restaurant sets itself.
 
-Automated coverage is **2028 hub tests across 97 files** (pure rules plus live
+Automated coverage is **2041 hub tests across 98 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
-**1112 frontend tests** (Vitest + Testing Library in jsdom) on the diner page and
+**1277 frontend tests** (Vitest + Testing Library in jsdom; 165 of them on the admin console's page) on the diner page and
 its basket, the booking page a guest asks for a table on, the station screens, device enrolment, every reception admin tab
 (Menu and its item editor, the menu importer, Tables, Bookings, Cash, Sales,
 Stock, Kitchen, Printers, Staff, Feedback, Plan, ledger repair, guest ordering),
@@ -289,7 +289,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (2028 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (2041 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -807,7 +807,7 @@ milestones (§5) when a theme is pulled into a release.
 #### 4.9a Super admin console: the plan  🚧
 
 Plan of record: [`docs/SUPER_ADMIN_BUILD_SHEET.md`](./SUPER_ADMIN_BUILD_SHEET.md) (drafted 2026-10-24 by Aman and Darshil for an
-AI coding agent). **Phase 1 is started** (the database spine and the admin API, 2026-10-26; the page is not), nothing else is. What exists is the read-only console above; this is the back-office for the two founders to
+AI coding agent). **Phase 1 is started** (the database spine, the admin API and the page, 2026-10-26), nothing else is. What exists is the read-only console above; this is the back-office for the two founders to
 run Kullina as a business: named secure access, an immutable event spine, push alerting, safe tenant writes, hub commands with
 acknowledgement, billing operations, onboarding tooling and a compliance desk. The living `docs/SUPER_ADMIN.md` is
 now split off and the sheet stays the plan.
@@ -831,7 +831,7 @@ from one shared module, not forked. New tables (expected from migration 023; 022
 | Phase | What | Status |
 | --- | --- | --- |
 | 0 Gates | Run migrations 004-023 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | G0-1 and G0-2: 🟡 in progress, Aman is setting up the hosted Supabase project and the Razorpay test-mode credentials (2026-10-26); the runs themselves have not happened. G0-5 (D1-D5) waits on people. G0-3 (GST audit) and G0-4 (ledger analysis) are ✅ written as reports on 2026-10-26 (G0-4's `invoice_events` proposal was then approved and BUILT, migration 022, §4.1): invoices have no GSTIN, no HSN/SAC, no IGST path, no FY-aware series and no credit note, and a bill is overwritten in place on the hub and in the cloud with six hub fields never sent (`Darshil_docs/reports/report_2026-10-26_133000_gst_audit.md`, `report_2026-10-26_134500_ledger_analysis.md`); the fixes wait on a CA and on approval |
-| 1 Foundation | `admin_users` and the spine with its hash chain; TOTP and `aal2` in every RPC; `admin_api` and `admin_web` skeletons; ingest of existing events; audit-log viewer; port of the `/ops` views, then retire `OPS_TOKEN` (keeping a documented break-glass) | 🟡 started 2026-10-26: **the database half and the API are built** (migration 023, `admin_api/`, `common/opsRules.js`; 156 tests, 262 mutations; `Darshil_docs/reports/report_2026-10-26_173000_admin_console_phase1_foundation.md`; living doc `docs/SUPER_ADMIN.md`). **`admin_web` is not started**, so no founder can yet enrol a second factor or use the console; `OPS_TOKEN` is not retired; nothing has run on a hosted project |
+| 1 Foundation | `admin_users` and the spine with its hash chain; TOTP and `aal2` in every RPC; `admin_api` and `admin_web` skeletons; ingest of existing events; audit-log viewer; port of the `/ops` views, then retire `OPS_TOKEN` (keeping a documented break-glass) | 🟡 started 2026-10-26: **the database half and the API are built** (migration 023, `admin_api/`, `common/opsRules.js`; 156 tests, 262 mutations; `Darshil_docs/reports/report_2026-10-26_173000_admin_console_phase1_foundation.md`; living doc `docs/SUPER_ADMIN.md`). **`admin_web` is built too** (2026-10-26: sign-in, authenticator setup, fleet, restaurant and audit-log pages; 165 page tests and 13 build tests; 179 mutations; `Darshil_docs/reports/report_2026-10-26_194500_admin_web.md`), so the parts of Phase 1 all exist, **but none has met a real Supabase project, so no real founder has signed in**; `OPS_TOKEN` is not retired |
 | 2 Alerting and timeline | Per-tenant timeline over the spine; alert engine (dedupe, state machine, escalation); a push adapter with signed one-tap acknowledge links (Telegram or ntfy first); an inbox; a watcher of the watcher | 🚧 |
 | 3 Safe cloud writes | Extend a trial, set `plan_status`, grant or revoke a comp plan (mandatory expiry), notes; the expiry job and the webhook-race test; the write-dialog pattern (reason, when and how it takes effect, type the restaurant's name to suspend) | 🚧 |
 | 4 Hub commands | `admin_commands` and acknowledgement carried on the heartbeat; a hub-local default-deny allowlist (`force_resync`, `request_diagnostics`); a redacted diagnostics bundle; a command centre with an honest "hub silent since…" banner; `rotate_pairing_code` stays 🔬 (every handset would re-enrol) | 🚧 (4-5 is 🔬) |
@@ -942,7 +942,7 @@ both phones within about 15 minutes and can be acknowledged; every plan change, 
 timeline; no code path lets an admin alter a tenant's bills; every number shows how fresh it is; and every claim in the docs says whether it was
 proven against a hosted project or only a stand-in.
 - 🟡 Phase 0 gates: hosted Supabase and Razorpay test-mode credentials are being set up by Aman (2026-10-26), so G0-1 and G0-2 have not run; ❌ decisions D1-D5 wait on people; ✅ the GST audit and the ledger analysis (read-only).
-- 🟡 Phase 1: the database spine (migration 023) and the admin API are built and proven on a real Postgres engine and stand-ins; `admin_web` is ⬜. 🚧 Phases 2-7 as in
+- 🟡 Phase 1: the database spine (migration 023), the admin API and the page (`admin_web`) are built and proven on a real Postgres engine and stand-ins, and the page was looked at in a real browser; none of it has met a hosted project. 🚧 Phases 2-7 as in
   the table in §4.9a; Phase 5 invoicing is ❌ on a CA's answer.
 
 ---
