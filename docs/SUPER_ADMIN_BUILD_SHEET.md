@@ -126,8 +126,8 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 
 | ID | Task | Owner |
 |---|---|---|
-| G0-1 | Run migrations `004`–`021` on a hosted Supabase project; run `npm run cloud:check`; record results. | Human |
-| G0-2 | Razorpay test-mode run of start/switch/cancel and webhooks. | Human |
+| G0-1 | Run migrations `004`–`021` on a hosted Supabase project; run `npm run cloud:check`; record results. **In progress (2026-10-26): Aman is setting up the hosted project and credentials; not yet run.** | Human |
+| G0-2 | Razorpay test-mode run of start/switch/cancel and webhooks. **In progress (2026-10-26): Aman is setting up test-mode credentials; not yet run.** | Human |
 | G0-3 | **GST audit (🚧, agent, read-only):** check the invoice generator for GSTIN, HSN/SAC per line, CGST/SGST vs IGST split, sequential invoice numbers (≤16 chars, FY-aware), and a tax summary. Output a gap report; fix is a separate PR. Constraint #4 is unverified until this passes. | Agent |
 | G0-4 | **LEDGER-1 analysis (🚧, agent, read-only):** confirm whether cloud invoice upserts lose prior content. Propose an append-only `invoice_events` with hash chain. Report only; do not implement without approval. | Agent |
 | G0-5 | Answer decisions D1–D5 (§12). | Human |
@@ -204,7 +204,7 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 
 ## 7. Screens (design system: **Cabinet Grotesk + Instrument Sans**, icons from the repo's existing **`lucide-react`** (^0.475), tokens from `design-system/css/tokens.css`, Kullina light theme)
 
-> **Decided 2026-10-25 (Aman):** keep the product's own fonts and the `lucide-react` library already in the repo. This replaces the earlier "Fraunces + DM Sans, Lucide v0.263.1" wording; do not add either.
+> **Decided 2026-10-25, reconfirmed 2026-10-26 (Aman):** keep the product's own fonts and the `lucide-react` library already in the repo. This replaces the earlier "Fraunces + DM Sans, Lucide v0.263.1" wording; do not add either.
 
 1. **Sign-in + TOTP**
 2. **Fleet** (port of `/ops`): counts, attention list, filterable table; "as of" on everything.

@@ -7,7 +7,7 @@ this roadmap is scoped to any single tenant.
 
 Legend: ✅ shipped · 🟡 partial · ⬜ not started · 🚧 planned and specified · 🔬 R&D, only on sign-off · ❌ blocked on a person or an outside party
 
-**Last reconciled against the code:** 2026-10-25 for §4.9 (the super admin plan below); the rest 2026-10-24 (M1 and M2 complete, M3 mostly
+**Last reconciled against the code:** 2026-10-26 for the status of Phase 0 gates and the LICENSE (decisions only, no code changed); 2026-10-25 for §4.9 (the super admin plan below); the rest 2026-10-24 (M1 and M2 complete, M3 mostly
 built, M4 mostly built). Between 2026-09-19 and 2026-10-13 the file lived on an
 unmerged `docs/roadmap` branch, so §6's maintenance rule could not be followed and
 the document fell a full two milestones behind. It is on the working line now, and
@@ -814,7 +814,7 @@ from one shared module, not forked. New tables (expected from migration 022): `a
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 0 Gates | Run migrations 004-021 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | ❌ G0-1, G0-2, G0-5 wait on people; G0-3, G0-4 are 🚧 and agent-doable |
+| 0 Gates | Run migrations 004-021 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | G0-1 and G0-2: 🟡 in progress, Aman is setting up the hosted Supabase project and the Razorpay test-mode credentials (2026-10-26); the runs themselves have not happened. G0-5 (D1-D5) waits on people. G0-3, G0-4 are 🚧 and agent-doable |
 | 1 Foundation | `admin_users` and the spine with its hash chain; TOTP and `aal2` in every RPC; `admin_api` and `admin_web` skeletons; ingest of existing events; audit-log viewer; port of the `/ops` views, then retire `OPS_TOKEN` (keeping a documented break-glass) | 🚧 |
 | 2 Alerting and timeline | Per-tenant timeline over the spine; alert engine (dedupe, state machine, escalation); a push adapter with signed one-tap acknowledge links (Telegram or ntfy first); an inbox; a watcher of the watcher | 🚧 |
 | 3 Safe cloud writes | Extend a trial, set `plan_status`, grant or revoke a comp plan (mandatory expiry), notes; the expiry job and the webhook-race test; the write-dialog pattern (reason, when and how it takes effect, type the restaurant's name to suspend) | 🚧 |
@@ -844,7 +844,7 @@ on the installer and auto-update above).
 - *Tax:* `hub_server/lib/tax.js` defaults to **CGST 2.5% + SGST 2.5%** and takes a per-tenant tax config; invoice numbers are `INV-000001`
   (a per-tenant sequence, not financial-year aware). A search found **no GSTIN or HSN/SAC** anywhere in the hub library, so the sheet's
   suspicion that they are missing stands until G0-3 is done properly. There is no IGST path in `tax.js` either.
-- *Settled 2026-10-25 (Aman):* the console keeps the product's **Cabinet Grotesk + Instrument Sans** and the repo's **`lucide-react`** (^0.475); the
+- *Settled 2026-10-25 and reconfirmed 2026-10-26 (Aman):* the console keeps the product's **Cabinet Grotesk + Instrument Sans** and the repo's **`lucide-react`** (^0.475); the
   sheet's "Fraunces + DM Sans, Lucide v0.263.1" is superseded (the sheet now says so). *Still to settle before Phase 1:* the sheet's "ten existing rules" are in `signup_server/lib/ops.js` (`OPS_LIMITS`, pinned in
   `hub_server/test/opsLib.test.mjs`), which is the module to share; it currently lives in the operator service, not a common lib.
 - *Already true, and the sheet's assumptions rest on it:* the heartbeat is five minutes and carries counts and times only (migration 021);
@@ -856,7 +856,7 @@ on the installer and auto-update above).
 - ✅ `CONTRIBUTING.md` capturing the `Darshil_docs` audit-report SOP, tests-first and mutation checking, and the default-deny rules.
 - ✅ `docs/pilot-report-template.md`, and the README no longer lists the missing
   `docs/mejwani-pos-progress-report.md`.
-- ⬜ `LICENSE`: not written. Which licence this product is released under is the owner's decision, not an engineering one; the
+- ⬜ `LICENSE`: not written, **deferred by Aman on 2026-10-26 as a later task**; nothing is blocked on it. Which licence this product is released under is the owner's decision, not an engineering one; the
   README still says only "maintained by Darshil & Engineering Team".
 
 ---
@@ -900,7 +900,7 @@ The product can onboard a new restaurant without engineering.
   switch / cancel flow are built and tested against stand-ins (2026-10-23). There
   are no keys, and Razorpay has never been called for real.
 - 🟡 PR 20 — the fleet view is built (the read-only operator console, 2026-10-24); the Windows installer is not.
-- 🟡 4.10 CHANGELOG and CONTRIBUTING are written; LICENSE is the owner's call.
+- 🟡 4.10 CHANGELOG and CONTRIBUTING are written; LICENSE is the owner's call, deferred to later (2026-10-26).
 
 ### M4 — Customer surfaces  🟡
 - ✅ Sales analytics for reception (2026-10-22): period comparisons, guests new
@@ -925,7 +925,7 @@ tested locally against PGlite and stand-ins. Definition of done: two named found
 both phones within about 15 minutes and can be acknowledged; every plan change, note and command is in an immutable, attributed, hash-chained
 timeline; no code path lets an admin alter a tenant's bills; every number shows how fresh it is; and every claim in the docs says whether it was
 proven against a hosted project or only a stand-in.
-- ❌ Phase 0 gates (hosted migrations, Razorpay test mode, decisions D1-D5); 🚧 the GST audit and the ledger analysis (read-only).
+- 🟡 Phase 0 gates: hosted Supabase and Razorpay test-mode credentials are being set up by Aman (2026-10-26), so G0-1 and G0-2 have not run; ❌ decisions D1-D5 wait on people; 🚧 the GST audit and the ledger analysis (read-only).
 - 🚧 Phases 1-7 as in the table in §4.9a; Phase 5 invoicing is ❌ on a CA's answer.
 
 ---
