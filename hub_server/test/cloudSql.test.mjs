@@ -68,8 +68,9 @@ test('every table that belongs to a restaurant has row-level security switched o
      ORDER BY c.relname`)).rows;
   assert.ok(owned.length >= 15, 'the tenant tables were found');
   // subscriptions and subscription_events are the operator service's, reached only with the service key: RLS on and
-  // NO policy is how they say "nobody else".
-  const operatorOnly = new Set(['subscriptions', 'subscription_events']);
+  // NO policy is how they say "nobody else". So is tenant_events (migration 023), the admin console's log of everything: it is
+  // reached only through the admin functions, which run with their owner's rights.
+  const operatorOnly = new Set(['subscriptions', 'subscription_events', 'tenant_events']);
   for (const t of owned) {
     assert.equal(t.rls, true, `${t.name} has RLS off: every tenant could read every other tenant's rows`);
     if (!operatorOnly.has(t.name)) assert.ok(t.policies > 0, `${t.name} has RLS on and no policy: nothing could use it`);

@@ -111,7 +111,7 @@ Before it, "where do I look" was a different table, the Supabase dashboard, or a
 - **What it never shows.** Pairing codes, the hash of a hub's provisioning secret, restaurant settings, a subscription's payment link, the payload
   Razorpay sent (which carries a customer's details), a guest, a bill, a menu, a staff name or a PIN. It is told how the restaurants are doing,
   not what they hold.
-- **What counts as "look at this".** Each rule is a constant in `signup_server/lib/ops.js` (`OPS_LIMITS`), pinned to the millisecond in the tests.
+- **What counts as "look at this".** Each rule is a constant in `common/opsRules.js` (`OPS_LIMITS`; `signup_server/lib/ops.js` re-exports it, and the admin API shares it), pinned to the millisecond in the tests.
   A restaurant that has cancelled asks for nothing, except that shelved orders are always flagged.
 
 | Rule | Severity | When |

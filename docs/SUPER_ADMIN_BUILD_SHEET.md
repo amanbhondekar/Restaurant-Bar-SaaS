@@ -132,16 +132,16 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 | G0-4 | **LEDGER-1 analysis (🚧, agent, read-only):** confirm whether cloud invoice upserts lose prior content. Propose an append-only `invoice_events` with hash chain. Report only; do not implement without approval. **Done 2026-10-26: `Darshil_docs/reports/report_2026-10-26_134500_ledger_analysis.md`; cloud upserts do overwrite, and six hub fields are never sent. The `invoice_events` proposal was approved and built the same day: migration 022 (`Darshil_docs/reports/report_2026-10-26_150000_invoice_events.md`), so the admin console's tables start at `023`.** | Agent |
 | G0-5 | Answer decisions D1–D5 (§12). | Human |
 
-### Phase 1 — Foundation · 🚧 · acceptance: two named founders sign in with MFA; every action is attributed
+### Phase 1 — Foundation · 🟡 started 2026-10-26 (database and API built; `admin_web` not) · acceptance: two named founders sign in with MFA; every action is attributed
 
 | ID | Task | Size |
 |---|---|---|
-| P1-1 | Migration: `admin_users`, `tenant_events` (+ hash chain, append-only triggers), privilege statements. | M |
-| P1-2 | Auth: Supabase Auth TOTP, allowlist check, `aal2` enforcement in every RPC. Seed script for exactly two founders (emails supplied by humans). | M |
-| P1-3 | `admin_api` + `admin_web` skeleton, separate deploy config, security headers (CSP, no inline script), optional IP allowlist hook. | L |
-| P1-4 | Ingest existing `subscription_events` and heartbeat data into the spine (view or job); idempotent. | M |
-| P1-5 | Audit log viewer (filter by actor, tenant, type, time; export CSV). | M |
-| P1-6 | Port `/ops` read views into the new shell; retire `OPS_TOKEN` access once parity is proven (keep a documented break-glass). | M |
+| P1-1 | Migration: `admin_users`, `tenant_events` (+ hash chain, append-only triggers), privilege statements. **✅ 2026-10-26: migration `023_admin_spine.sql`, proven on PGlite** | M |
+| P1-2 | Auth: Supabase Auth TOTP, allowlist check, `aal2` enforcement in every RPC. Seed script for exactly two founders (emails supplied by humans). **✅ database side 2026-10-26 (`seed_admin_user`, `aal2` in every `admin_*` function); enrolling a second factor needs `admin_web` ⬜** | M |
+| P1-3 | `admin_api` + `admin_web` skeleton, separate deploy config, security headers (CSP, no inline script), optional IP allowlist hook. **🟡 2026-10-26: `admin_api/` built (default-deny routes, headers, IP allowlist, limiter, the service-key guard); `admin_web` ⬜** | L |
+| P1-4 | Ingest existing `subscription_events` and heartbeat data into the spine (view or job); idempotent. **✅ 2026-10-26: triggers as events happen plus a backfill function, idempotent by source reference** | M |
+| P1-5 | Audit log viewer (filter by actor, tenant, type, time; export CSV). **🟡 API ✅ (`/api/audit`, `/api/audit.csv`, `/api/audit/verify`); the page ⬜** | M |
+| P1-6 | Port `/ops` read views into the new shell; retire `OPS_TOKEN` access once parity is proven (keep a documented break-glass). **🟡 API ✅ (`/api/fleet`, `/api/tenants/:id` on the shared rules); the page ⬜; `OPS_TOKEN` is not retired** | M |
 
 **Acceptance tests:** (a) non-admin tenant owner calling any admin RPC is denied; (b) admin without `aal2` is denied; (c) `UPDATE`/`DELETE` on `tenant_events` fails for every role including service role; (d) tampering a row breaks the hash chain check; (e) `actor_id` null with `actor_type='admin'` is rejected.
 
@@ -286,10 +286,10 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 
 | ID | Decision | Default if unanswered | Who |
 |---|---|---|---|
-| D1 | Admin API uses a dedicated DB role + RPCs (not the service key) | Yes, per §4 | HUMAN to confirm |
-| D2 | What may the hub report to the cloud (heartbeat fields, diagnostics)? | Counts, times, versions only (current policy) | HUMAN |
-| D3 | Alert channel(s) | Telegram/ntfy adapter first | HUMAN |
-| D4 | Who is paged, and escalation | Both founders; re-notify every 10 min | HUMAN |
+| D1 | Admin API uses a dedicated DB role + RPCs (not the service key) | Yes, per §4 | **Confirmed by Aman, 2026-10-26** |
+| D2 | What may the hub report to the cloud (heartbeat fields, diagnostics)? | Counts, times, versions only (current policy) | **Confirmed by Aman, 2026-10-26** |
+| D3 | Alert channel(s) | Telegram/ntfy adapter first | **Confirmed by Aman, 2026-10-26** (takes effect in Phase 2) |
+| D4 | Who is paged, and escalation | Both founders; re-notify every 10 min | **Confirmed by Aman, 2026-10-26** (takes effect in Phase 2) |
 | D5 | Kullina entity GST facts (GSTIN, SAC, rate, e-invoicing) | **No default. Phase 5-4 stays blocked** | HUMAN + CA |
 | D6 | Is `rotate_pairing_code` worth building? | No (stays 🔬) | HUMAN |
 | D7 | Subscription length (12 billing periods today) | Out of scope for the console | HUMAN |
@@ -311,6 +311,8 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 ---
 
 ## 14. Verify before coding (answer in your first report)
+
+> **Answered 2026-10-26** in `Darshil_docs/reports/report_2026-10-26_173000_admin_console_phase1_foundation.md`.
 
 1. Actual table and view names introduced by migration `021`; heartbeat payload fields.
 2. Where trial end and `plan_status` live; how `hub_server/lib/plans.js` reads them; what exactly the Razorpay webhook handler overwrites.
