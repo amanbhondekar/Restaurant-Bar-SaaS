@@ -814,7 +814,7 @@ from one shared module, not forked. New tables (expected from migration 022): `a
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 0 Gates | Run migrations 004-021 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | G0-1 and G0-2: 🟡 in progress, Aman is setting up the hosted Supabase project and the Razorpay test-mode credentials (2026-10-26); the runs themselves have not happened. G0-5 (D1-D5) waits on people. G0-3, G0-4 are 🚧 and agent-doable |
+| 0 Gates | Run migrations 004-021 on a hosted project and `cloud:check` (G0-1, human); Razorpay test-mode run (G0-2, human); a read-only GST audit (G0-3); a read-only analysis of whether cloud invoice upserts lose earlier content, with a proposed append-only `invoice_events` (G0-4); answers to D1-D5 | G0-1 and G0-2: 🟡 in progress, Aman is setting up the hosted Supabase project and the Razorpay test-mode credentials (2026-10-26); the runs themselves have not happened. G0-5 (D1-D5) waits on people. G0-3 (GST audit) and G0-4 (ledger analysis) are ✅ written as reports on 2026-10-26: invoices have no GSTIN, no HSN/SAC, no IGST path, no FY-aware series and no credit note, and a bill is overwritten in place on the hub and in the cloud with six hub fields never sent (`Darshil_docs/reports/report_2026-10-26_133000_gst_audit.md`, `report_2026-10-26_134500_ledger_analysis.md`); the fixes wait on a CA and on approval |
 | 1 Foundation | `admin_users` and the spine with its hash chain; TOTP and `aal2` in every RPC; `admin_api` and `admin_web` skeletons; ingest of existing events; audit-log viewer; port of the `/ops` views, then retire `OPS_TOKEN` (keeping a documented break-glass) | 🚧 |
 | 2 Alerting and timeline | Per-tenant timeline over the spine; alert engine (dedupe, state machine, escalation); a push adapter with signed one-tap acknowledge links (Telegram or ntfy first); an inbox; a watcher of the watcher | 🚧 |
 | 3 Safe cloud writes | Extend a trial, set `plan_status`, grant or revoke a comp plan (mandatory expiry), notes; the expiry job and the webhook-race test; the write-dialog pattern (reason, when and how it takes effect, type the restaurant's name to suspend) | 🚧 |
@@ -925,7 +925,7 @@ tested locally against PGlite and stand-ins. Definition of done: two named found
 both phones within about 15 minutes and can be acknowledged; every plan change, note and command is in an immutable, attributed, hash-chained
 timeline; no code path lets an admin alter a tenant's bills; every number shows how fresh it is; and every claim in the docs says whether it was
 proven against a hosted project or only a stand-in.
-- 🟡 Phase 0 gates: hosted Supabase and Razorpay test-mode credentials are being set up by Aman (2026-10-26), so G0-1 and G0-2 have not run; ❌ decisions D1-D5 wait on people; 🚧 the GST audit and the ledger analysis (read-only).
+- 🟡 Phase 0 gates: hosted Supabase and Razorpay test-mode credentials are being set up by Aman (2026-10-26), so G0-1 and G0-2 have not run; ❌ decisions D1-D5 wait on people; ✅ the GST audit and the ledger analysis (read-only).
 - 🚧 Phases 1-7 as in the table in §4.9a; Phase 5 invoicing is ❌ on a CA's answer.
 
 ---
