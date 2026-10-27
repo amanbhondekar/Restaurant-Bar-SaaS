@@ -256,10 +256,12 @@ describe('owner view — when something is wrong', () => {
   });
 
   it('a ledger too long to read at once says its figures may be short', async () => {
+    // Twenty thousand bills is deliberately a lot of work: about 0.6 s here, and CI's slower runners took longer than the default one-second wait
+    // (it failed there on Node 20 while passing on Node 22 in the same run). The wait fits the size of the input, not a fast machine.
     const many = Array.from({ length: 20000 }, (_, i) => bill(i));
     render(<OwnerApp client={signedIn({ tables: { invoices: many } })} />);
-    expect(await screen.findByText(/more bills than this page reads at once/)).toBeInTheDocument();
-  });
+    expect(await screen.findByText(/more bills than this page reads at once/, {}, { timeout: 15000 })).toBeInTheDocument();
+  }, 30000);
 
   it('refreshing reads the restaurant again', async () => {
     const client = signedIn();
