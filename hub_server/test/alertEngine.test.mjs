@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ALERT_DEFAULTS, reconcileAlerts, isQuietHours, dueNotifications, unattendedAlerts, describeAlert
+  ALERT_DEFAULTS, reconcileAlerts, isQuietHours, dueNotifications, unattendedAlerts, describeAlert, alertWords, rankAlerts
 } from '../../common/alertEngine.js';
 
 // Phase 2 of docs/SUPER_ADMIN_BUILD_SHEET.md, task P2-2, the lifecycle half (§8): conditions that are true now, alerts that are open, and what
@@ -322,4 +322,80 @@ test('a restaurant\'s name is passed on as text and cannot make the page say som
 test('an alert of a rule it has no words for still says which rule it is', () => {
   const m = describeAlert(alert('orders_shelved', { rule_key: 'something_new', severity: 'P2' }), 0, ALERT_DEFAULTS);
   assert.match(m.body, /something_new/);
+});
+
+// --- the words of an alert, on their own (for the inbox) -----------------------------------------------------------------------------
+
+test('an alert\'s words are what it is and what is wrong, with no "since" and no severity: the screen has its own columns for those', () => {
+  const w = alertWords('orders_shelved', { count: 3 });
+  assert.deepEqual(Object.keys(w).sort(), ['text', 'what']);
+  assert.equal(w.what, 'orders shelved');
+  assert.match(w.text, /^3 orders were shelved/);
+  assert.doesNotMatch(w.text, /since|P1/i);
+});
+
+test('the words used for a page and for the inbox are the same words', () => {
+  for (const [rule, detail] of [['hub_silent_service', { silent_ms: 20 * MIN }], ['sync_backlog', { count: 60 }], ['payment_past_due', {}], ['service_hours_missing', {}]]) {
+    const page = describeAlert(alert(rule, { detail }), 0, ALERT_DEFAULTS);
+    const w = alertWords(rule, detail);
+    assert.ok(page.body.startsWith(w.text), rule);
+    assert.ok(page.title.endsWith(w.what), rule);
+  }
+});
+
+test('words for a rule it does not know say which rule it is, and never fail on a missing or odd detail', () => {
+  assert.match(alertWords('something_new', {}).text, /something_new/);
+  assert.equal(alertWords('something_new', {}).what, 'something_new');
+  for (const odd of [undefined, null, 'x', 5, [1]]) assert.doesNotThrow(() => alertWords('orders_shelved', odd), String(odd));
+  assert.match(alertWords('orders_shelved', null).text, /0 orders/);
+});
+
+// --- the order of the inbox ------------------------------------------------------------------------------------------------------
+
+const row = (id, over = {}) => ({ id, state: 'open', severity: 'P1', opened_at: ago(HOUR), unattended_at: null, resolved_at: null, ...over });
+
+test('what is waiting for an answer comes first, then what somebody has taken on', () => {
+  const list = [row(1, { state: 'acked' }), row(2), row(3, { state: 'acked', severity: 'P2' }), row(4, { severity: 'P2' })];
+  assert.deepEqual(rankAlerts(list).map(a => a.id), [2, 4, 1, 3]);
+});
+
+test('among those waiting: what nobody has answered at all first, then the worse, then the one that has waited longest', () => {
+  const list = [
+    row(1, { severity: 'P2', opened_at: ago(5 * HOUR) }),
+    row(2, { severity: 'P1', opened_at: ago(MIN) }),
+    row(3, { severity: 'P1', opened_at: ago(3 * HOUR) }),
+    row(4, { severity: 'P3', opened_at: ago(9 * HOUR) }),
+    row(5, { severity: 'P2', opened_at: ago(MIN), unattended_at: ago(MIN) })
+  ];
+  assert.deepEqual(rankAlerts(list).map(a => a.id), [5, 3, 2, 1, 4]);
+});
+
+test('alerts that tie on everything keep a steady order, by id', () => {
+  const list = [row(9, { opened_at: ago(HOUR) }), row(3, { opened_at: ago(HOUR) }), row(7, { opened_at: ago(HOUR) })];
+  assert.deepEqual(rankAlerts(list).map(a => a.id), [3, 7, 9]);
+});
+
+test('resolved alerts, when listed, are the most recently closed first', () => {
+  const list = [row(1, { state: 'resolved', resolved_at: ago(5 * HOUR) }), row(2, { state: 'resolved', resolved_at: ago(MIN) }), row(3, { state: 'resolved', resolved_at: ago(2 * HOUR) })];
+  assert.deepEqual(rankAlerts(list).map(a => a.id), [2, 3, 1]);
+});
+
+test('ranking does not change the list it is given, and a time that is not one does not break it', () => {
+  const list = [row(2, { opened_at: 'soon' }), row(1)];
+  const before = JSON.stringify(list);
+  assert.doesNotThrow(() => rankAlerts(list));
+  assert.equal(JSON.stringify(list), before);
+});
+
+test('closed alerts that closed at the same moment keep a steady order, by id', () => {
+  const same = ago(HOUR);
+  const list = [row(9, { state: 'resolved', resolved_at: same }), row(3, { state: 'resolved', resolved_at: same }), row(7, { state: 'resolved', resolved_at: same })];
+  assert.deepEqual(rankAlerts(list).map(a => a.id), [3, 7, 9]);
+});
+
+test('ranking leaves the list it was given in its own order, even when ranking would move things', () => {
+  const list = [row(2, { severity: 'P3' }), row(1, { severity: 'P1' })];
+  const before = list.map(a => a.id);
+  assert.deepEqual(rankAlerts(list).map(a => a.id), [1, 2], 'the ranked copy is reordered');
+  assert.deepEqual(list.map(a => a.id), before, 'the original is not');
 });

@@ -493,9 +493,12 @@ test('acknowledging twice changes nothing and records nothing; an unknown or res
   const a = await alertRow(id);
   assert.deepEqual([a.acked_by, a.ack_reason], [F1, 'first acknowledgement'], 'the first acknowledgement stands');
   assert.equal((await eventsFor(T.A.restaurant, 'alert.acked', id)).length, 1);
-  await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_ack_alert(999999, 'no such alert, truly')`), /not found|no such/i);
+  // Told apart by their own error codes, so the API can say 404 and 409 rather than guessing from words.
+  const missing = await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_ack_alert(999999, 'no such alert, truly')`), /not found|no such/i);
+  assert.equal(missing.code, 'P0002', 'no_data_found');
   await apply([], [{ id, reason: 'condition_cleared' }]);
-  await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_ack_alert($1, 'too late, it cleared')`, [id]), /resolved/i);
+  const late = await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_ack_alert($1, 'too late, it cleared')`, [id]), /resolved/i);
+  assert.equal(late.code, '55000', 'object_not_in_prerequisite_state');
 });
 
 test('resolving asks who is asking and needs a reason; from open or acknowledged; leaves an event naming the person', async () => {
@@ -524,8 +527,10 @@ test('resolving a resolved or unknown alert is refused', async () => {
   await clearAlerts();
   const { opened } = await apply([cond('orders_shelved', T.A.restaurant)]);
   await asAdmin(aal2(F1), `SELECT * FROM public.admin_resolve_alert($1, 'done and dusted')`, [opened[0].id]);
-  await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_resolve_alert($1, 'again, in error')`, [opened[0].id]), /already resolved/i);
-  await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_resolve_alert(999999, 'no such alert, truly')`), /not found|no such/i);
+  const again = await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_resolve_alert($1, 'again, in error')`, [opened[0].id]), /already resolved/i);
+  assert.equal(again.code, '55000');
+  const missing = await rejected(() => asAdmin(aal2(F1), `SELECT * FROM public.admin_resolve_alert(999999, 'no such alert, truly')`), /not found|no such/i);
+  assert.equal(missing.code, 'P0002');
   const fresh = (await apply([cond('orders_shelved', T.B.restaurant)])).opened[0].id;
   assert.equal((await asAdmin(aal2(F1), `SELECT * FROM public.admin_resolve_alert($1, $2)`, [fresh, '  1234567890  '])).rows[0].state, 'resolved', 'ten characters is enough');
   assert.equal((await alertRow(fresh)).resolve_reason, '1234567890');

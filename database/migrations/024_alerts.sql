@@ -379,7 +379,7 @@ BEGIN
 
     SELECT * INTO v_alert FROM public.alerts a WHERE a.id = p_id FOR UPDATE;
     IF NOT FOUND THEN RAISE EXCEPTION 'admin_ack_alert: alert not found' USING ERRCODE = 'no_data_found'; END IF;
-    IF v_alert.state = 'resolved' THEN RAISE EXCEPTION 'admin_ack_alert: the alert is already resolved' USING ERRCODE = 'invalid_parameter_value'; END IF;
+    IF v_alert.state = 'resolved' THEN RAISE EXCEPTION 'admin_ack_alert: the alert is already resolved' USING ERRCODE = 'object_not_in_prerequisite_state'; END IF;
     IF v_alert.state = 'acked' THEN
         RETURN QUERY SELECT v_alert.id, v_alert.state, NULL::bigint;
         RETURN;
@@ -411,7 +411,7 @@ BEGIN
 
     SELECT * INTO v_alert FROM public.alerts a WHERE a.id = p_id FOR UPDATE;
     IF NOT FOUND THEN RAISE EXCEPTION 'admin_resolve_alert: alert not found' USING ERRCODE = 'no_data_found'; END IF;
-    IF v_alert.state = 'resolved' THEN RAISE EXCEPTION 'admin_resolve_alert: the alert is already resolved' USING ERRCODE = 'invalid_parameter_value'; END IF;
+    IF v_alert.state = 'resolved' THEN RAISE EXCEPTION 'admin_resolve_alert: the alert is already resolved' USING ERRCODE = 'object_not_in_prerequisite_state'; END IF;
 
     UPDATE public.alerts a SET state = 'resolved', resolved_at = clock_timestamp(), resolved_by = v_user, resolve_reason = v_reason WHERE a.id = p_id;
     v_event := public.record_tenant_event(v_alert.restaurant_id, 'admin', 'alert.resolved', 'admin', v_user, NULL,

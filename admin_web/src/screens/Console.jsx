@@ -6,16 +6,18 @@ import { FleetView } from '@/ops/FleetView';
 import { TenantView } from '@/ops/TenantView';
 import { relative } from '@/ops/lib/format';
 import { asOf } from '../lib/format';
+import { AlertsPage } from './AlertsPage';
 import { AuditPage } from './AuditPage';
 import { ConsoleShell } from './parts';
 
-// The console once someone is in: the fleet (read again every minute), one restaurant, and the audit log. It can change nothing.
+// The console once someone is in: the fleet (read again every minute), one restaurant, the alerts inbox and the audit log. The only things it changes are
+// an alert being acknowledged or resolved, each with a reason, and nothing about a restaurant.
 //
 // Every figure says when it was read. When a read fails the page says so and marks what is still on screen as older, with the time it was read; it is
 // never left looking current. When the very first read fails there is nothing to show, and nothing is shown.
 
 const ENDED = 'Your session ended. Sign in again.';
-const PLACES = [['fleet', 'Fleet'], ['audit', 'Audit log']];
+const PLACES = [['fleet', 'Fleet'], ['alerts', 'Alerts'], ['audit', 'Audit log']];
 
 export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, onSignOut, onLeave }) {
   const [place, setPlace] = useState('fleet');
@@ -25,6 +27,7 @@ export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, on
   const [open, setOpen] = useState(null);
   const [filters, setFilters] = useState({ text: '', view: 'all' });
   const [nonce, setNonce] = useState(0);
+  const [alertsNonce, setAlertsNonce] = useState(0);
   const [, setTick] = useState(0);
   const live = useRef(true);
   const reading = useRef(false);
@@ -70,7 +73,11 @@ export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, on
 
   const now = clock();
   const known = open && fleet ? fleet.tenants.find(t => t.id === open.id) : null;
-  const reload = () => (place === 'fleet' && open ? setNonce(n => n + 1) : refresh());
+  const reload = () => {
+    if (place === 'alerts') setAlertsNonce(n => n + 1);
+    else if (place === 'fleet' && open) setNonce(n => n + 1);
+    else refresh();
+  };
   const go = id => { setPlace(id); setOpen(null); };
 
   const nav = (
@@ -92,7 +99,9 @@ export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, on
   const status = fleet ? <span className="text-xs text-muted-foreground">Updated {relative(fleet.generated_at, now)}</span> : null;
 
   let body;
-  if (place === 'audit') {
+  if (place === 'alerts') {
+    body = <AlertsPage api={api} clock={clock} timeZone={timeZone} pollMs={pollMs} nonce={alertsNonce} onLeave={onLeave} />;
+  } else if (place === 'audit') {
     body = <AuditPage api={api} tenants={fleet?.tenants ?? []} clock={clock} timeZone={timeZone} download={download} onLeave={onLeave} />;
   } else if (!fleet) {
     body = problem ? (

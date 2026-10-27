@@ -22,7 +22,7 @@ Status legend: ✅ built · 🟡 partial · 🚧 planned · ❌ blocked.
 | P2-1 | Tenant timeline page over the spine | 🚧 |
 | P2-2 | The alert engine: the rules (`common/alertRules.js`), the lifecycle and escalation (`common/alertEngine.js`), the database (migration `024_alerts.sql`), and the worker's pass (`alert_worker/`) | ✅ on PGlite and stand-ins. **Nothing sends a message yet and there is no entry point to run the worker**; both arrive with P2-3 |
 | P2-3 | A push channel (Telegram or ntfy) and the signed acknowledge link | 🚧 next |
-| P2-4 | The alerts inbox in the page, and the API routes to acknowledge and resolve | 🚧 (the database functions exist) |
+| P2-4 | The alerts inbox: the API routes (`GET /api/alerts`, acknowledge, resolve) and the page's **Alerts** place | ✅ on PGlite and stand-ins, and looked at in a real browser (desktop, phone, dark). Never met a real Supabase project |
 | P2-5 | A watcher for the watcher: the worker reports to an outside uptime monitor | 🚧 |
 
 Phase 1's acceptance, "two named founders sign in with MFA; every action is attributed", is **built but not yet proven**: everything it needs exists (the page enrols and answers a second factor, the API and the database each refuse a session without one, every sign-in is recorded), and every piece is tested, but none of it has met a hosted Supabase project, so no real founder has signed in.
@@ -47,7 +47,7 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
 * **The service key never reaches `admin_api`** (invariant I2). It refuses to start if a variable named like a service key, or holding a service-role token, is in its environment, and it refuses a database login that is not `kullina_admin`.
 * **`kullina_admin` holds no privilege on any table or view.** It can run exactly the `admin_*` functions (a test pins the list). So a compromised API could read what the console reads and nothing else: not a bill, a menu or an order (invariant I1; a test also checks that no admin function mentions those tables).
 * **Two checks, on purpose.** The API verifies the token's signature, lifetime, audience and `aal2`; then the database checks again that the caller is an *active* administrator with `aal2`. Either would hold if the other had a bug.
-* **Reads only, plus one write.** The only thing any route writes is the record that a founder signed in.
+* **Reads, plus three writes, and no write touches a restaurant.** A route writes only the record that a founder signed in, and an alert being acknowledged or resolved. Each of the last two needs a reason of at least ten characters in a person's words and leaves an event naming the person (invariants I3 and I4). The administrator is asked **before** the body of a write is read, so a tenant or a founder without a second factor is refused the same way whatever they send.
 
 ## 3. Setting it up (a human, once, in the Supabase SQL editor)
 
@@ -91,7 +91,7 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
 
 A static page with its own build and its own host (invariant I10). It reuses the product's design tokens and fonts (Cabinet Grotesk, Instrument Sans) and two screens of the operator console, so it looks like the same product.
 
-**What a founder sees, in order:** sign in with an email and password; set up an authenticator app (first time: a QR code and a setup key) or enter a code; the API is asked who they are and whether they are an administrator (if not: "This account is not an administrator", and nothing else); the sign-in is recorded; and only then the console, with **Fleet** (every restaurant, ranked by the same ten rules, read again every minute) and **Audit log** (filter by restaurant, event type, source and dates; page back; export a CSV; check that the history has not been tampered with). One restaurant opens from the fleet. **There is no control on the page that changes anything.**
+**What a founder sees, in order:** sign in with an email and password; set up an authenticator app (first time: a QR code and a setup key) or enter a code; the API is asked who they are and whether they are an administrator (if not: "This account is not an administrator", and nothing else); the sign-in is recorded; and only then the console, with **Fleet** (every restaurant, ranked by the same ten rules, read again every minute) and **Audit log** (filter by restaurant, event type, source and dates; page back; export a CSV; check that the history has not been tampered with). One restaurant opens from the fleet. **Alerts** (what is waiting, what somebody has taken on, what is closed; each can be acknowledged or resolved with a reason). **The only controls on the page that change anything are those two actions on an alert: nothing about a restaurant, a plan or a person can be changed from it.**
 
 **What it keeps:** nothing. The session lives in the page's memory (no storage, no cookie, nothing in the address), so a refresh asks for the password and a code again. A password or a code is held only while it is being typed and is cleared after a failure.
 
@@ -101,7 +101,7 @@ A static page with its own build and its own host (invariant I10). It reuses the
 
 **Building and hosting:** `npm run build:admin` makes `admin_web/dist` (the page and the product's fonts, and nothing else of the product). `admin_web/vercel.json` is the host's side: a Vercel project with its root directory set to `admin_web` and "include source files outside the root directory" on, which adds the headers a page like this needs (no framing, no sniffing, no referrer, HSTS, a permissions policy, never cached). `npm run admin:web` runs it for development on :5174; `ADMIN_WEB_ORIGIN` on the API must be that origin.
 
-**Tested** by 165 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which was then looked at in a real browser on every screen that loads the stylesheet (see the same report: only the operator console's "Open console" and the station sound toggle change visibly).
+**Tested** by 240 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which was then looked at in a real browser on every screen that loads the stylesheet (see the same report: only the operator console's "Open console" and the station sound toggle change visibly).
 
 The settings are in `admin_web/.env.example`. **Mutation-checked:** 179 mutants of the page's code, the build config and the stylesheet, all caught after the survivors were closed.
 
@@ -133,12 +133,15 @@ Default-deny. These are all the routes there are (pinned by a test); any other p
 |---|---|
 | `GET /healthz` | Liveness. No token, no database |
 | `GET /api/me` | Who the token's owner is |
-| `POST /api/session` | Records a sign-in. The only write |
+| `POST /api/session` | Records a sign-in. One of the three writes |
 | `GET /api/audit` | The audit log. Filters: `restaurant_id`, `type`, `source`, `actor_id`, `from`, `to`; paging: `before` (an event id), `limit` (1-500, default 100) |
 | `GET /api/audit.csv` | The same, as a file (up to 500 rows). Cells a spreadsheet would run as formulas are neutralised |
 | `GET /api/audit/verify` | Checks a hash chain (`restaurant_id`, or the global chain) |
 | `GET /api/fleet` | Every restaurant, ranked by the same ten rules as the operator console (`common/opsRules.js`) |
 | `GET /api/tenants/:id` | One restaurant: its state, subscriptions and events |
+| `GET /api/alerts` | The inbox: `state` (`active`, the default, is waiting plus taken on; or `open`, `acked`, `resolved`), `limit` (1-500, default 100). Ranked: what nobody answered after every reminder, then the worse, then the longest-waiting. Each alert says what is wrong in words, names its restaurant and carries a closed list of fields. `truncated` says when the list was cut |
+| `POST /api/alerts/:id/ack` | Acknowledge ("I know": stops the paging). Body `{ "reason": "..." }`, 10 to 500 characters after trimming. A second acknowledgement changes nothing and says so |
+| `POST /api/alerts/:id/resolve` | Resolve ("it is dealt with"). Same body. `409` if it is already resolved, `404` if there is no such alert |
 
 Behaviour worth knowing:
 
@@ -176,7 +179,11 @@ A cancelled restaurant's hub is meant to be off, so only `orders_shelved` and `p
 * The alert's details are as they were when it opened (a count that has grown since is on the restaurant's page, not the alert).
 * **Never run on a hosted project**, with no channel to send through yet.
 
-**Runbook (alert response):** an alert is paged → open the console → the alert's restaurant → acknowledge it with a reason of at least ten characters (that stops the paging and records who) → look at the restaurant → when it is dealt with the alert resolves by itself once the condition clears. If the page said the hub is silent and the restaurant is open, ring them first.
+### The inbox (P2-4)
+
+The console's **Alerts** place lists what is waiting, what somebody has taken on, and (by a filter) what is closed, read again every minute and on Refresh, with "as of" on it and the same rule as everywhere else: a read that fails never leaves the old list looking current. Each alert names its restaurant, says what is wrong in words, says when it opened, how far the paging has got ("Not paged yet", "Paged 12 min ago", "reminder 2 of 3", or for a P3 that it is shown here only), and whether nobody answered after every reminder. A form opens under the alert for either action: it says in plain words what the action does and does not do, wants a reason (at least ten characters, counted in characters not bytes; the box takes focus), sends **one** request however many times the button is tapped, keeps what was typed when it is refused, and says so if the alert changed meanwhile (already resolved: the list is read again). Everything the API sends is drawn as text.
+
+**Runbook (alert response):** an alert is paged → open the console → **Alerts** → acknowledge it with a reason of at least ten characters (that stops the paging and records who) → look at the restaurant → when it is dealt with the alert resolves by itself once the condition clears. Use **Resolve** only when it is truly done: resolving an alert whose problem is still there opens a fresh one within a minute or so. If the page said the hub is silent and the restaurant is open, ring them first.
 
 ## 6. Invariants and where each is pinned
 
@@ -185,7 +192,7 @@ A cancelled restaurant's hub is meant to be off, so only `orders_shelved` and `p
 | I1 | No admin path touches a tenant's bills, menu, orders, guests | The role holds no table privilege; the runnable-function list; a scan of every admin function's text; the route sweep that counts tenant rows |
 | I2 | The service key never leaves the operator service | `loadConfig` refuses to start with one, by name or by what a value is; the connection must be `kullina_admin` |
 | I3 | Every admin action is attributed | A CHECK on the spine |
-| I4 | Every admin write needs a reason of 10+ characters and an event in the same transaction | `admin_ack_alert` and `admin_resolve_alert` refuse a reason under 10 characters (after trimming) and write their event in the same transaction; `deactivate_admin_user` the same; the worker's own writes are the system's and say so. Sign-in writes its event in its own transaction |
+| I4 | Every admin write needs a reason of 10+ characters and an event in the same transaction | `admin_ack_alert` and `admin_resolve_alert` refuse a reason under 10 characters (after trimming) and write their event in the same transaction, the API says so in words before it asks the database, and the page will not send fewer; `deactivate_admin_user` the same; the worker's own writes are the system's and say so. Sign-in writes its event in its own transaction |
 | I5 | Events are append-only | Triggers and privileges, tested for every role |
 | I6 | An action on a hub is a request until the hub acknowledges | Phase 4 |
 | I7 | Never block a restaurant | The two ingest hooks cannot fail what they watch |
@@ -199,7 +206,7 @@ The operator console (`/ops` on the operator service, behind `OPS_TOKEN`) still 
 
 ## 8. Not built yet
 
-From Phase 2: the tenant timeline (P2-1), a channel to page through and the worker's entry point (P2-3), the alerts inbox and the API routes for acknowledging and resolving (P2-4), the watcher for the watcher (P2-5). Phases 3-7 of the build sheet (tenant writes, hub commands, billing operations, onboarding, the compliance desk). Running any of it on a hosted project.
+From Phase 2: the tenant timeline (P2-1), a channel to page through and the worker's entry point (P2-3), the watcher for the watcher (P2-5). Phases 3-7 of the build sheet (tenant writes, hub commands, billing operations, onboarding, the compliance desk). Running any of it on a hosted project.
 
 ## 9. Decisions recorded
 

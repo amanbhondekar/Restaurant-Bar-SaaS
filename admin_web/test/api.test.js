@@ -212,3 +212,98 @@ describe('what an answer means', () => {
     }
   });
 });
+
+describe('the alerts', () => {
+  const alerts = { alerts: [], counts: { open: 0, acked: 0, unattended: 0 }, truncated: false };
+
+  it('reads the inbox with GET, asking for what is waiting and taken on unless told otherwise', async () => {
+    const { api, fetchImpl } = make(ok(alerts));
+    await api.alerts();
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${BASE}/api/alerts`);
+    expect(fetchImpl.mock.calls[0][1].method ?? 'GET').toBe('GET');
+    expect(fetchImpl.mock.calls[0][1].body).toBeUndefined();
+  });
+
+  it('turns the filters into a query, leaving out what is empty, and encodes what is given', async () => {
+    const { api, fetchImpl } = make(ok(alerts));
+    await api.alerts({ state: 'open', limit: 20 });
+    await api.alerts({ state: '', limit: undefined });
+    await api.alerts({ state: 'a&b=c' });
+    expect(fetchImpl.mock.calls.map(c => c[0])).toEqual([`${BASE}/api/alerts?state=open&limit=20`, `${BASE}/api/alerts`, `${BASE}/api/alerts?state=a%26b%3Dc`]);
+  });
+
+  it('acknowledges with a POST of JSON holding the reason and nothing else, the token in the header only', async () => {
+    const { api, fetchImpl } = make(ok({ alert: { id: 7, state: 'acked' }, event_id: 3 }));
+    const out = await api.acknowledgeAlert(7, 'the owner is ringing them back');
+    expect(out.alert).toEqual({ id: 7, state: 'acked' });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/alerts/7/ack`);
+    expect(init.method).toBe('POST');
+    expect(init.headers['Content-Type']).toBe('application/json');
+    expect(init.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(init.body)).toEqual({ reason: 'the owner is ringing them back' });
+    expect(init.body).not.toContain(TOKEN);
+    expect(url).not.toContain(TOKEN);
+    expect([init.credentials, init.cache, init.referrerPolicy, init.mode]).toEqual(['omit', 'no-store', 'no-referrer', 'cors']);
+  });
+
+  it('resolves the same way, at its own address', async () => {
+    const { api, fetchImpl } = make(ok({ alert: { id: 7, state: 'resolved' }, event_id: 4 }));
+    await api.resolveAlert(7, 'the hub is back on, they rang');
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/alerts/7/resolve`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ reason: 'the hub is back on, they rang' });
+  });
+
+  it('encodes an id in the address, so it cannot reach another route', async () => {
+    const { api, fetchImpl } = make(ok({ alert: {}, event_id: 1 }));
+    await api.acknowledgeAlert('7/../fleet?x=', 'a perfectly good reason');
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${BASE}/api/alerts/7%2F..%2Ffleet%3Fx%3D/ack`);
+  });
+
+  it('sends a body only for these two, and a reason that is not text is sent as text, never as something else', async () => {
+    const { api, fetchImpl } = make(ok({ alert: {}, event_id: 1, user: {}, tenant: {}, events: [], ok: true, checked: 0, next_before: null, subscriptions: [], ...alerts }));
+    await api.me(); await api.fleet(); await api.alerts(); await api.audit({}); await api.recordSession();
+    for (const [, init] of fetchImpl.mock.calls) expect(init.body).toBeUndefined();
+    await api.acknowledgeAlert(1, { toString: () => 'sneaky' });
+    expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body)).toEqual({ reason: 'sneaky' });
+  });
+
+  it('says in its own words that an alert is already resolved, and a missing one is missing', async () => {
+    const conflict = await make(() => reply(409, { success: false, code: 'CONFLICT', error: 'That alert is already resolved.' })).api.resolveAlert(1, 'a perfectly good reason').catch(e => e);
+    expect(conflict).toBeInstanceOf(AdminApiError);
+    expect(conflict.kind).toBe('conflict');
+    expect(conflict.message).toBe('That alert is already resolved.');
+    await expect(make(() => reply(404, { success: false, code: 'NOT_FOUND' })).api.acknowledgeAlert(1, 'a perfectly good reason')).rejects.toMatchObject({ kind: 'missing' });
+  });
+
+  it('a 409 is a conflict whatever words come with it: the words shown are the page\'s own', async () => {
+    const e = await make(() => reply(409, { success: false, code: 'CONFLICT', error: `internal ${TOKEN}` })).api.resolveAlert(1, 'a perfectly good reason').catch(x => x);
+    expect(e.kind).toBe('conflict');
+    expect(e.message).not.toContain(TOKEN);
+  });
+
+  it('a 400 about the reason says what the API said was wrong, because that was written for a person', async () => {
+    const e = await make(() => reply(400, { success: false, code: 'BAD_REQUEST', error: 'Give a reason of at least 10 characters, in your own words.' })).api.acknowledgeAlert(1, 'short').catch(x => x);
+    expect(e.kind).toBe('bad');
+    expect(e.message).toBe('Give a reason of at least 10 characters, in your own words.');
+  });
+
+  it('a refused session on a write is "denied", an administrator-only refusal "not_admin", and no connection "offline"; none of them sends twice', async () => {
+    const one = (status, body) => make(() => reply(status, { success: false, ...body }));
+    for (const [status, body, kind] of [[401, { code: 'UNAUTHENTICATED' }, 'denied'], [403, { code: 'MFA_REQUIRED' }, 'mfa'], [403, { code: 'ADMIN_ONLY' }, 'not_admin'], [502, { code: 'DATABASE' }, 'down']]) {
+      const { api, fetchImpl } = one(status, body);
+      await expect(api.acknowledgeAlert(1, 'a perfectly good reason')).rejects.toMatchObject({ kind });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+    await expect(make(() => { throw new TypeError('Failed to fetch'); }).api.resolveAlert(1, 'a perfectly good reason')).rejects.toMatchObject({ kind: 'offline' });
+  });
+
+  it('with no session a write asks the network for nothing', async () => {
+    const getToken = vi.fn(async () => '');
+    const { api, fetchImpl } = make(ok({}), { getToken });
+    await expect(api.acknowledgeAlert(1, 'a perfectly good reason')).rejects.toMatchObject({ kind: 'denied' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});

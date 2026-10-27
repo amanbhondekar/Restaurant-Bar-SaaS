@@ -152,7 +152,7 @@ Size: S (≤½ day), M (1–2 days), L (3+ days). Phases 1–4 can be built and 
 | P2-1 | Tenant detail page: unified timeline over the spine (subscription, heartbeat anomalies, alerts, admin actions, notes), with "as of" stamps. | L |
 | P2-2 | Alert engine per §8 (rules, dedupe, state machine, escalation). **✅ 2026-10-27: `common/alertRules.js`, `common/alertEngine.js`, migration `024_alerts.sql`, `alert_worker/lib/` (`report_2026-10-27_120000_alert_engine.md`). Six of the nine §8 rules are built; webhook failures, service/worker down, login anomaly and migration drift need data that does not exist yet. On PGlite and stand-ins; no entry point, nothing sends.** | L |
 | P2-3 | Push channel adapter + acknowledgement links (§8). **🚧 next. Needs a decision first: a one-tap link has no room for the 10-character reason I4 asks for (`docs/SUPER_ADMIN.md` §9).** | M |
-| P2-4 | Alerts inbox UI. | M |
+| P2-4 | Alerts inbox UI. **✅ 2026-10-27: `GET /api/alerts`, `POST /api/alerts/:id/ack` and `/resolve`, the page's Alerts place (`report_2026-10-27_160000_alerts_inbox.md`). Reason of 10+ characters at every layer (I4); looked at in a real browser. Not run against a hosted project.** | M |
 | P2-5 | Watcher-of-the-watcher: the alert worker itself emits a heartbeat to an external uptime monitor. | S |
 
 ### Phase 3 — Safe cloud writes · 🚧

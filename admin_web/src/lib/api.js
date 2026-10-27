@@ -1,6 +1,6 @@
-// What the admin console's page asks the admin API, and what it makes of the answer. It reads; the one write is recording that a person signed in. The
-// token goes in a header and nowhere else (never an address, never stored), and every way an answer can go wrong becomes one of a few kinds the
-// screens know how to word.
+// What the admin console's page asks the admin API, and what it makes of the answer. It reads; the writes are recording that a person signed in and
+// acknowledging or resolving an alert, the last two with a reason in a person's words. The token goes in a header and nowhere else (never an address,
+// never in a body, never stored), and every way an answer can go wrong becomes one of a few kinds the screens know how to word.
 
 export class AdminApiError extends Error {
   constructor(kind, message) {
@@ -16,6 +16,7 @@ const WORDS = {
   not_admin: 'This account is not an administrator.',
   locked: 'Too many wrong tries from here. Wait a few minutes and try again.',
   missing: 'That is not there any more.',
+  conflict: 'That alert is already resolved.',
   down: 'The admin service could not read that. Try again in a moment.',
   offline: 'Could not reach the admin service. Check your connection and try again.',
   bad: 'That request was not understood.'
@@ -29,13 +30,14 @@ function failureOf(status, body) {
   if (status === 403 && body?.code === 'ADMIN_ONLY') return failure('not_admin');
   if (status === 429) return failure('locked');
   if (status === 404 && body?.code === 'NOT_FOUND') return failure('missing');
+  if (status === 409) return failure('conflict');
   if (status === 400 && typeof body?.error === 'string' && body.error.length <= 200) return failure('bad', body.error);
   return failure('down');
 }
 
 const requestId = () => (globalThis.crypto?.randomUUID?.() ?? `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
 
-const QUERY_KEYS = [['restaurant', 'restaurant_id'], ['type', 'type'], ['source', 'source'], ['from', 'from'], ['to', 'to'], ['before', 'before'], ['limit', 'limit']];
+const QUERY_KEYS = [['state', 'state'], ['restaurant', 'restaurant_id'], ['type', 'type'], ['source', 'source'], ['from', 'from'], ['to', 'to'], ['before', 'before'], ['limit', 'limit']];
 function queryOf(filters = {}) {
   const parts = [];
   for (const [key, name] of QUERY_KEYS) {
@@ -55,14 +57,15 @@ const fileNameOf = response => {
 export function createAdminApi({ baseUrl, getToken, fetchImpl = (...args) => fetch(...args) }) {
   const base = String(baseUrl).replace(/\/+$/, '');
 
-  async function send(path, { method = 'GET' } = {}) {
+  async function send(path, { method = 'GET', body } = {}) {
     let token;
     try { token = await getToken(); } catch { throw failure('denied'); }
     if (!token) throw failure('denied');
     try {
       return await fetchImpl(`${base}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-Request-Id': requestId() },
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-Request-Id': requestId(), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         credentials: 'omit',
         cache: 'no-store',
         referrerPolicy: 'no-referrer',
@@ -87,6 +90,9 @@ export function createAdminApi({ baseUrl, getToken, fetchImpl = (...args) => fet
     fleet: () => json('/api/fleet'),
     tenant: id => json(`/api/tenants/${encodeURIComponent(id)}`),
     audit: filters => json(`/api/audit${queryOf(filters)}`),
+    alerts: filters => json(`/api/alerts${queryOf(filters)}`),
+    acknowledgeAlert: (id, reason) => json(`/api/alerts/${encodeURIComponent(String(id))}/ack`, { method: 'POST', body: { reason: String(reason) } }),
+    resolveAlert: (id, reason) => json(`/api/alerts/${encodeURIComponent(String(id))}/resolve`, { method: 'POST', body: { reason: String(reason) } }),
     verify: restaurant => json(`/api/audit/verify${restaurant ? `?restaurant_id=${encodeURIComponent(restaurant)}` : ''}`),
     async auditCsv(filters) {
       const response = await send(`/api/audit.csv${queryOf(filters)}`);

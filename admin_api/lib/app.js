@@ -4,12 +4,14 @@ import { verifyJwt, JwtError } from './jwt.js';
 import { SECURITY_HEADERS, corsHeaders, ipAllowed, createLimiter, requestIdFrom } from './security.js';
 import { toCsv } from './csv.js';
 import { OPS_LIMITS, shapeTenant, fleetSummary, attentionList, rankTenants, shapeEvent, shapeSubscription } from '../../common/opsRules.js';
+import { ALERT_DEFAULTS, alertWords, rankAlerts } from '../../common/alertEngine.js';
 
-// The admin API (Phase 1, P1-3 / P1-5 / P1-6): what the console's web page talks to.
+// The admin API (Phase 1, P1-3 / P1-5 / P1-6; the alerts inbox, Phase 2, P2-4): what the console's web page talks to.
 //
 // It is DEFAULT-DENY. Every route it has is in ROUTES below, a test pins that list, and anything else, signed in or not, is "not here". There is
-// no route that changes a restaurant: in Phase 1 the only write is the record that a founder signed in. It never holds the service key (the
-// config refuses to start with one) and reaches the database only as `kullina_admin`, through the admin_* functions, which check the caller again.
+// no route that changes a restaurant. Three things are written: the record that a founder signed in, and an alert being acknowledged or resolved,
+// each with a reason in a person's words. It never holds the service key (the config refuses to start with one) and reaches the database only as
+// `kullina_admin`, through the admin_* functions, which check the caller again.
 //
 // What it will not do: believe a token it cannot verify, accept one in a URL, say WHY a token was refused (the log knows, the caller does not),
 // show a figure without the moment it was read (invariant I8), or show the last answer when a read fails.
@@ -23,7 +25,10 @@ export const ROUTES = Object.freeze([
   'GET /api/audit.csv',
   'GET /api/audit/verify',
   'GET /api/fleet',
-  'GET /api/tenants/:id'
+  'GET /api/tenants/:id',
+  'GET /api/alerts',
+  'POST /api/alerts/:id/ack',
+  'POST /api/alerts/:id/resolve'
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,6 +38,13 @@ const MAX_AUDIT = 500;
 const WRONG_TRIES = { max: 10, windowMs: 15 * 60 * 1000 };
 
 const NOT_FOUND = { success: false, code: 'NOT_FOUND', error: 'Not found.' };
+
+const ALERT_ID = /^[1-9]\d{0,15}$/;
+const ALERT_STATES = ['active', 'open', 'acked', 'resolved'];
+const MAX_ALERTS = 500;
+const REASON = { min: 10, max: 500 };   // invariant I4: a reason in a person's words, ten characters at least
+const BODY_LIMIT = '4kb';
+const badRequest = error => ({ success: false, code: 'BAD_REQUEST', error });
 
 const bearer = req => (String(req.headers.authorization || '').match(/^Bearer\s+(\S+)$/i) ?? [])[1] ?? '';
 const iso = value => { const t = value instanceof Date ? value.getTime() : Date.parse(value); return Number.isFinite(t) ? new Date(t).toISOString() : null; };
@@ -84,6 +96,64 @@ const shapeAudit = row => ({
   chain_seq: Number(row.chain_seq),
   row_hash: row.row_hash
 });
+
+/** The inbox's state and limit, from a query string: each checked, or a message saying which one is wrong. */
+export function alertQuery(query) {
+  const get = name => { const v = one(query[name]); return v === undefined || v === '' ? null : String(v); };
+  const state = get('state') ?? 'active';
+  if (!ALERT_STATES.includes(state)) return { error: `state is one of ${ALERT_STATES.join(', ')}.` };
+  const raw = get('limit');
+  if (raw !== null && (!/^\d{1,6}$/.test(raw) || Number(raw) < 1)) return { error: 'limit is a number from 1 to 500.' };
+  return { state, limit: raw === null ? 100 : Math.min(Number(raw), MAX_ALERTS) };
+}
+
+/** What a person is told about the reason, or null if it will do: counted in characters, after trimming. */
+export function reasonProblem(reason) {
+  if (typeof reason !== 'string') return 'Give a reason, in your own words.';
+  const length = [...reason.trim()].length;
+  if (length < REASON.min) return `Give a reason of at least ${REASON.min} characters, in your own words.`;
+  if (length > REASON.max) return `The reason can be at most ${REASON.max} characters.`;
+  return null;
+}
+
+// Only what each rule's words need, by name (the same closed list the pages use), and nothing that ever lands in an alert's details beyond it.
+const detailOf = detail => {
+  const d = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
+  const out = {};
+  if (Number.isInteger(d.count) && d.count >= 0) out.count = d.count;
+  if (Number.isFinite(d.silent_ms) && d.silent_ms >= 0) out.silent_ms = d.silent_ms;
+  const seen = iso(d.last_seen_at);
+  if (typeof d.last_seen_at === 'string' && seen !== null) out.last_seen_at = seen;
+  return out;
+};
+
+const shapeAlert = row => {
+  const detail = detailOf(row.detail);
+  const { what, text } = alertWords(row.rule_key, detail);
+  return {
+    id: Number(row.id),
+    restaurant_id: row.restaurant_id ?? null,
+    restaurant_name: row.restaurant_name ?? null,
+    rule_key: row.rule_key,
+    severity: row.severity,
+    state: row.state,
+    what,
+    text,
+    detail,
+    opened_at: iso(row.opened_at),
+    acked_at: iso(row.acked_at),
+    acked_by_email: row.acked_by_email ?? null,
+    ack_reason: row.ack_reason ?? null,
+    resolved_at: iso(row.resolved_at),
+    // Who closed it, as a kind and never an id: a person did, or the worker did because the condition cleared.
+    resolved_by: row.state === 'resolved' ? (row.resolved_by ? 'person' : 'system') : null,
+    resolve_reason: row.resolve_reason ?? null,
+    escalation_level: Number(row.escalation_level),
+    reminders: ALERT_DEFAULTS.reminders,
+    last_notified_at: iso(row.last_notified_at),
+    unattended_at: iso(row.unattended_at)
+  };
+};
 
 const AUDIT_SQL = 'SELECT * FROM public.admin_list_events($1::uuid, $2::text, $3::text, $4::uuid, $5::timestamptz, $6::timestamptz, $7::bigint, $8::integer)';
 const auditArgs = f => [f.restaurant, f.type, f.source, f.actor, f.from, f.to, f.before, f.limit];
@@ -149,6 +219,8 @@ export function createAdminApp({ db, keys, config, now = Date.now, log = console
         return res.status(403).json({ success: false, code: 'ADMIN_ONLY', error: 'This is for the administrators.' });
       }
       if (err?.code === '22023') return res.status(400).json({ success: false, code: 'BAD_REQUEST', error: 'That request was not understood.' });
+      if (err?.code === 'P0002') return res.status(404).json(NOT_FOUND);
+      if (err?.code === '55000') return res.status(409).json({ success: false, code: 'CONFLICT', error: 'That alert is already resolved.' });
       log.error?.(`[admin_api] ${res.locals.requestId} the database did not answer: ${err?.message}`);
       return res.status(502).json({ success: false, code: 'DATABASE', error: 'The database did not answer. Try again in a moment.' });
     }
@@ -228,6 +300,49 @@ export function createAdminApp({ db, keys, config, now = Date.now, log = console
       events: events.map(shapeEvent)
     });
   }));
+
+  // --- the alerts inbox (P2-4) -------------------------------------------------------------------------------------------------------
+
+  app.get('/api/alerts', asAdmin(async (req, res, run) => {
+    const parsed = alertQuery(req.query);
+    if (parsed.error) return res.status(400).json(badRequest(parsed.error));
+    const { state, limit } = parsed;
+    const ask = Math.min(limit + 1, MAX_ALERTS);   // one more than shown, to know whether the list was cut
+    const lists = await run(async q => {
+      const out = [];
+      for (const s of state === 'active' ? ['open', 'acked'] : [state]) out.push((await q('SELECT * FROM public.admin_alerts($1::text, $2::integer)', [s, ask])).rows);
+      return out;
+    });
+    const all = rankAlerts(lists.flat().map(shapeAlert));
+    return res.json({
+      ...stamp(),
+      truncated: all.length > limit || (limit === MAX_ALERTS && lists.some(l => l.length === MAX_ALERTS)),
+      counts: {
+        open: all.filter(a => a.state === 'open').length,
+        acked: all.filter(a => a.state === 'acked').length,
+        unattended: all.filter(a => a.state === 'open' && a.unattended_at !== null).length
+      },
+      alerts: all.slice(0, limit)
+    });
+  }));
+
+  // The body of a write is read here, after the caller is known to be an administrator and never before, and only as JSON of a few kilobytes.
+  const parseJson = express.json({ limit: BODY_LIMIT, type: 'application/json' });
+  const readJson = (req, res) => new Promise(resolve => parseJson(req, res, err => resolve(err ?? null)));
+
+  /** Acknowledge or resolve: an administrator's action on one alert, with a reason in words. The database checks everything again. */
+  const alertAction = action => asAdmin(async (req, res, run) => {
+    if (!ALERT_ID.test(req.params.id)) return res.status(404).json(NOT_FOUND);
+    await run(q => q('SELECT * FROM public.admin_whoami()'));   // who is asking, before anything they sent is read
+    if (await readJson(req, res)) return res.status(400).json(badRequest('The request body must be JSON with a reason.'));
+    const reason = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body.reason : undefined;
+    const problem = reasonProblem(reason);
+    if (problem) return res.status(400).json(badRequest(problem));
+    const done = (await run(q => q(`SELECT * FROM public.admin_${action}_alert($1::bigint, $2::text)`, [req.params.id, reason.trim()]))).rows[0];
+    return res.json({ ...stamp(), alert: { id: Number(done.id), state: done.state }, event_id: done.event_id === null ? null : Number(done.event_id) });
+  });
+  app.post('/api/alerts/:id/ack', alertAction('ack'));
+  app.post('/api/alerts/:id/resolve', alertAction('resolve'));
 
   // Anything else is not here, signed in or not.
   app.use((req, res) => res.status(404).json(NOT_FOUND));

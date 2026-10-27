@@ -220,3 +220,66 @@ describe('one restaurant', () => {
     expect(await screen.findByRole('heading', { name: /sign in to the admin console/i })).toBeInTheDocument();
   });
 });
+
+describe('the alerts place', () => {
+  it('is a place of its own, between the fleet and the audit log, and says which one it is on', async () => {
+    const { user } = await open();
+    const nav = screen.getByRole('navigation');
+    expect(within(nav).getAllByRole('button').map(b => b.textContent.trim())).toEqual(['Fleet', 'Alerts', 'Audit log']);
+    await user.click(within(nav).getByRole('button', { name: /^alerts$/i }));
+    expect(await screen.findByRole('heading', { name: /^alerts$/i })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: /^alerts$/i })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).getByRole('button', { name: /^fleet$/i })).not.toHaveAttribute('aria-current');
+  });
+
+  it('shows the alerts the API sent, as of when they were read, in the time zone it was given', async () => {
+    const { user, api } = await open();
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    expect((await screen.findAllByRole('article')).length).toBe(3);
+    expect(api.alerts).toHaveBeenCalledWith({ state: 'active' });
+    expect(screen.getAllByText(/as of 10:00/i).length).toBeGreaterThan(0);
+  });
+
+  it('Refresh reads the alerts again, and not the fleet, while that is where you are', async () => {
+    const { user, api } = await open();
+    await screen.findAllByText('Spice Route');
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    await screen.findAllByRole('article');
+    const alerts = api.alerts.mock.calls.length;
+    const fleets = api.fleet.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /^refresh$/i }));
+    await waitFor(() => expect(api.alerts.mock.calls.length).toBe(alerts + 1));
+    expect(api.fleet.mock.calls.length).toBe(fleets);
+  });
+
+  it('a session that ends while reading them goes back to signing in, with the reason said', async () => {
+    const api = fakeApi({ alerts: vi.fn(async () => { throw apiError('denied', 'Your session is not accepted any more. Sign in again.'); }) });
+    const { user } = await open(api);
+    await screen.findAllByText('Spice Route');
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    expect(await screen.findByText(/your session ended/i)).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).toBeNull();
+  });
+
+  it('what a person can do here is acknowledge or resolve an alert, and nothing about a restaurant, a plan or a person', async () => {
+    const { user } = await open();
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    await screen.findAllByRole('article');
+    const labels = screen.getAllByRole('button').map(b => (b.getAttribute('aria-label') ?? b.textContent).trim().toLowerCase());
+    for (const label of labels) expect(label).not.toMatch(/delete|remove|suspend|extend|save|edit|void|refund|impersonate|log in as/);
+    expect(labels.some(l => l.startsWith('acknowledge'))).toBe(true);
+    expect(labels.some(l => l.startsWith('resolve'))).toBe(true);
+  });
+
+  it('leaving it and coming back reads the alerts afresh, with nothing left over from before', async () => {
+    const { user, api } = await open();
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    await user.click(await screen.findByRole('button', { name: /^acknowledge orders shelved/i }));
+    expect(screen.getByRole('form')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^fleet$/i }));
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    await screen.findAllByRole('article');
+    expect(screen.queryByRole('form')).toBeNull();
+    expect(api.alerts.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});

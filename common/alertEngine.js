@@ -103,13 +103,20 @@ const WORDS = {
 };
 
 /**
- * The words of one page: a one-line title and a short body. Only what the rule needs from `detail` is used, by name, so nothing else that ever lands
- * there (a phone number, a token) can reach a phone. `level` is 0 for the first page and 1..n for reminders.
+ * What an alert is and what is wrong, in words: the same words a page uses and the inbox shows. Only what the rule needs from `detail` is used, by name,
+ * so nothing else that ever lands there (a phone number, a token) can reach a phone or a screen. A rule it has no words for says which rule it is.
+ */
+export function alertWords(ruleKey, detail) {
+  const known = WORDS[ruleKey];
+  const d = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
+  return known ? known(d) : { what: String(ruleKey), text: `Rule ${ruleKey} is firing.` };
+}
+
+/**
+ * The words of one page: a one-line title and a short body. `level` is 0 for the first page and 1..n for reminders.
  */
 export function describeAlert(alert, level, config = ALERT_DEFAULTS) {
-  const known = WORDS[alert.rule_key];
-  const detail = alert.detail && typeof alert.detail === 'object' ? alert.detail : {};
-  const { what, text } = known ? known(detail) : { what: alert.rule_key, text: `Rule ${alert.rule_key} is firing.` };
+  const { what, text } = alertWords(alert.rule_key, alert.detail);
   const opened = readTime(alert.opened_at);
   const since = opened === null ? '' : ` Open since ${clockIn(opened, config.quiet.timeZone)}.`;
   const lead = level > 0 ? `Reminder ${level} of ${config.reminders}: ` : '';
@@ -117,4 +124,24 @@ export function describeAlert(alert, level, config = ALERT_DEFAULTS) {
     title: oneLine(`[${alert.severity}] ${lead}${alert.restaurant_name ?? 'Kullina'}: ${what}`),
     body: `${text}${since}`
   };
+}
+
+const STATE_RANK = { open: 0, acked: 1, resolved: 2 };
+const SEVERITY_RANK = { P1: 0, P2: 1, P3: 2 };
+
+/**
+ * The inbox's order. What is waiting for an answer comes first, then what somebody has taken on, then what is closed. Among those waiting: what nobody has
+ * answered after every reminder first, then the worse, then the one that has waited longest. Closed ones: the most recently closed first. A steady order
+ * (by id) when everything else ties, so the list does not shuffle between reads. The list it is given is not changed.
+ */
+export function rankAlerts(alerts) {
+  const at = value => readTime(value) ?? 0;
+  const rank = (map, key) => map[key] ?? Object.keys(map).length;
+  return [...alerts].sort((a, b) => {
+    const state = rank(STATE_RANK, a.state) - rank(STATE_RANK, b.state);
+    if (state) return state;
+    if (a.state === 'resolved') return at(b.resolved_at) - at(a.resolved_at) || a.id - b.id;
+    const unattended = (readTime(b.unattended_at) !== null) - (readTime(a.unattended_at) !== null);
+    return unattended || rank(SEVERITY_RANK, a.severity) - rank(SEVERITY_RANK, b.severity) || at(a.opened_at) - at(b.opened_at) || a.id - b.id;
+  });
 }

@@ -67,6 +67,30 @@ export const auditPayload = (events, over = {}) => ({
   success: true, generated_at: iso(0), events, next_before: null, ...over
 });
 
+/** An alert as the API sends it (a closed list of fields, the words already said). */
+export const alertRow = (id, over = {}) => ({
+  id, restaurant_id: A_ID, restaurant_name: 'Spice Route', rule_key: 'orders_shelved', severity: 'P1', state: 'open',
+  what: 'orders shelved', text: '2 orders were shelved and have not reached the cloud.', detail: { count: 2 },
+  opened_at: iso(-30 * MIN), acked_at: null, acked_by_email: null, ack_reason: null, resolved_at: null, resolved_by: null, resolve_reason: null,
+  escalation_level: 0, reminders: 3, last_notified_at: iso(-29 * MIN), unattended_at: null, ...over
+});
+
+export const alertsPayload = (alerts, over = {}) => ({
+  success: true, generated_at: iso(0), truncated: false,
+  counts: {
+    open: alerts.filter(a => a.state === 'open').length,
+    acked: alerts.filter(a => a.state === 'acked').length,
+    unattended: alerts.filter(a => a.state === 'open' && a.unattended_at).length
+  },
+  alerts, ...over
+});
+
+export const defaultAlerts = () => [
+  alertRow(1),
+  alertRow(2, { rule_key: 'sync_backlog', severity: 'P2', restaurant_id: B_ID, restaurant_name: 'Chai Corner', what: 'bills waiting to sync', text: '60 bills are waiting to reach the cloud.', detail: { count: 60 }, last_notified_at: null }),
+  alertRow(3, { rule_key: 'payment_past_due', severity: 'P2', state: 'acked', what: 'payment overdue', text: 'Payment is overdue.', detail: {}, acked_at: iso(-10 * MIN), acked_by_email: 'darshil@example.test', ack_reason: 'ringing the owner now' })
+];
+
 export const ME = { success: true, generated_at: iso(0), user: { id: 'f1', email: 'aman@example.test', display_name: 'Aman', role: 'founder' } };
 
 /** A fake of the API client: every method is a mock, with sensible good answers that a test can replace. */
@@ -78,6 +102,9 @@ export function fakeApi(over = {}) {
     tenant: vi.fn(async (id) => tenantPayload(id, id === B_ID ? 'Chai Corner' : 'Spice Route')),
     audit: vi.fn(async () => auditPayload([auditEvent(3), auditEvent(2), auditEvent(1)])),
     auditCsv: vi.fn(async () => ({ blob: new Blob(['x']), filename: 'kullina-audit-2026-10-26.csv' })),
+    alerts: vi.fn(async () => alertsPayload(defaultAlerts())),
+    acknowledgeAlert: vi.fn(async id => ({ success: true, generated_at: iso(0), alert: { id, state: 'acked' }, event_id: 41 })),
+    resolveAlert: vi.fn(async id => ({ success: true, generated_at: iso(0), alert: { id, state: 'resolved' }, event_id: 42 })),
     verify: vi.fn(async (restaurant) => ({ success: true, generated_at: iso(0), restaurant_id: restaurant ?? null, ok: true, checked: 12, broken_at: null, reason: null })),
     ...over
   };

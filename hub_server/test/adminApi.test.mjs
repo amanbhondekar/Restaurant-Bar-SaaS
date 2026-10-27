@@ -24,6 +24,7 @@ let cloud;
 let T;
 let server;
 let base;
+let sweepAlertId;
 
 const b64 = v => Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)).toString('base64url');
 function token(sub, over = {}, secret = SECRET) {
@@ -61,6 +62,14 @@ const q = (sql, params) => cloud.pg.query(sql, params);
 const rows = async (sql, params) => (await q(sql, params)).rows;
 const spineCount = async () => (await rows(`SELECT count(*)::int AS n FROM public.tenant_events`))[0].n;
 
+/** An alert, opened the way the worker opens one (as the database's owner here: the worker's own door is tested in alertsSchema and alertWorker). */
+const openAlert = async (rule, restaurant, detail = {}, severity = { orders_shelved: 'P1', hub_silent_service: 'P1', sync_backlog: 'P2', payment_past_due: 'P2', service_hours_missing: 'P3' }[rule]) => {
+  const item = { restaurant_id: restaurant, rule_key: rule, severity, dedupe_key: `${rule}:${restaurant}`, detail };
+  const out = (await q(`SELECT public.alert_apply($1::jsonb, '[]'::jsonb, '[]'::jsonb, 'api-test') AS r`, [JSON.stringify([item])])).rows[0].r;
+  return out.opened[0] ?? null;
+};
+const clearAlerts = () => q(`DELETE FROM public.alerts`);
+
 before(async () => {
   cloud = await cloudDb();
   await q(`DELETE FROM public.restaurants WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222')`);
@@ -74,6 +83,7 @@ before(async () => {
   await q(`SELECT public.deactivate_admin_user('darshil@example.test', 'left the company, access removed')`);
   await q(`SELECT public.seed_admin_user('gone@example.test', 'Gone')`);
   await q(`SELECT public.deactivate_admin_user('gone@example.test', 'only here to be inactive')`);
+  sweepAlertId = (await openAlert('orders_shelved', T.A.restaurant, { count: 1 })).id;
   const served = await serve(createAdminApp({ db: realDb(), keys: hsKeys(SECRET), config: config(), now: () => clock, log: quiet }));
   server = served.server;
   base = served.url;
@@ -84,7 +94,7 @@ after(async () => { if (server) await stop(server); await cloud?.close(); });
 const NEW_WINDOW = 16 * 60 * 1000;
 beforeEach(() => { clock += NEW_WINDOW; });
 
-const API = ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', '/api/fleet', `/api/tenants/${'a0a0a0a0-0000-4000-8000-000000000001'}`];
+const API = ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', '/api/fleet', `/api/tenants/${'a0a0a0a0-0000-4000-8000-000000000001'}`, '/api/alerts'];
 
 // --- who gets in ---------------------------------------------------------------------------------------------------------------
 
@@ -256,12 +266,14 @@ test('the health check needs no token and no database', async () => {
 
 test('the routes are exactly the pinned list', () => {
   assert.deepEqual([...ROUTES], [
-    'GET /healthz', 'GET /api/me', 'POST /api/session', 'GET /api/audit', 'GET /api/audit.csv', 'GET /api/audit/verify', 'GET /api/fleet', 'GET /api/tenants/:id'
+    'GET /healthz', 'GET /api/me', 'POST /api/session', 'GET /api/audit', 'GET /api/audit.csv', 'GET /api/audit/verify', 'GET /api/fleet', 'GET /api/tenants/:id',
+    'GET /api/alerts', 'POST /api/alerts/:id/ack', 'POST /api/alerts/:id/resolve'
   ]);
 });
 
 test('every route the app really has is on the list, and nothing else answers', async () => {
-  const sample = p => p.replace(':id', 'a0a0a0a0-0000-4000-8000-000000000001');
+  // A restaurant's id is a UUID and an alert's is a number, so each route is asked about the kind of thing it is about.
+  const sample = p => p.replace(':id', p.startsWith('/api/alerts') ? String(sweepAlertId) : 'a0a0a0a0-0000-4000-8000-000000000001');
   for (const entry of ROUTES) {
     const [method, path] = entry.split(' ');
     const r = await call(method, sample(path), { tok: founder() });
@@ -302,7 +314,7 @@ test('a token must be for the audience the API was set up with', async () => {
   } finally { await stop(s.server); }
 });
 
-test('the only thing any route writes is the record that a founder signed in', async () => {
+test('reading changes nothing; the writes are the record that a founder signed in and an alert being acknowledged or resolved, and no restaurant\'s data moves', async () => {
   const before = await spineCount();
   const tok = founder();
   for (const entry of ROUTES.filter(r => r.startsWith('GET') && !r.includes('healthz'))) {
@@ -554,7 +566,11 @@ test('(I8) when the database does not answer the caller gets an error and no dat
     const again = await get('/api/fleet', { url: s.url, tok });
     assert.equal(again.status, 502, 'a read that worked a moment ago is not shown when this one fails');
     assert.equal(again.json.tenants, undefined);
-    for (const path of ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', `/api/tenants/${T.A.restaurant}`]) assert.equal((await get(path, { url: s.url, tok })).status, 502, path);
+    for (const path of ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', `/api/tenants/${T.A.restaurant}`, '/api/alerts']) assert.equal((await get(path, { url: s.url, tok })).status, 502, path);
+    for (const path of [`/api/alerts/${sweepAlertId}/ack`, `/api/alerts/${sweepAlertId}/resolve`]) {
+      const r = await call('POST', path, { url: s.url, tok, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'a perfectly good reason' }) });
+      assert.deepEqual([r.status, r.json.code], [502, 'DATABASE'], path);
+    }
   } finally { await stop(s.server); }
 });
 
@@ -576,4 +592,329 @@ test('the caller\'s claims, not their token, are what the database is given: the
     await get('/api/me', { url: s.url, tok: founder({ role: 'service_role', email: 'x@y.z', app_metadata: { admin: true } }) });
     assert.deepEqual(seen, { sub: F1, aal: 'aal2' });
   } finally { await stop(s.server); }
+});
+
+// --- the alerts inbox (Phase 2, P2-4) -----------------------------------------------------------------------------------------------------
+
+const json = { 'Content-Type': 'application/json' };
+const post = (path, body, { tok = founder(), headers = json, raw } = {}) => call('POST', path, { tok, headers, body: raw ?? JSON.stringify(body) });
+const ack = (id, reason, opts) => post(`/api/alerts/${id}/ack`, { reason }, opts);
+const resolve = (id, reason, opts) => post(`/api/alerts/${id}/resolve`, { reason }, opts);
+const stateOf = async id => (await rows(`SELECT state, acked_by, ack_reason, resolved_by, resolve_reason FROM public.alerts WHERE id = $1`, [id]))[0];
+const eventsOf = (id, type) => rows(`SELECT * FROM public.tenant_events WHERE type = $2 AND (payload ->> 'alert_id')::bigint = $1 ORDER BY id`, [id, type]);
+const GOOD = 'the owner is ringing them back';
+
+test('the inbox lists what is waiting and what somebody has taken on, worst and longest-waiting first, with the restaurant named and the words said', async () => {
+  await clearAlerts();
+  const low = await openAlert('sync_backlog', T.B.restaurant, { count: 60 });
+  const high = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  const taken = await openAlert('payment_past_due', T.A.restaurant);
+  await ack(taken.id, GOOD);
+  const r = await get('/api/alerts', { tok: founder() });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.generated_at, new Date(clock).toISOString());
+  assert.deepEqual(r.json.alerts.map(a => a.id), [high.id, low.id, taken.id], 'waiting first (the worse first), then taken on');
+  const a = r.json.alerts[0];
+  assert.equal(a.restaurant_name, 'Restaurant A');
+  assert.equal(a.what, 'orders shelved');
+  assert.match(a.text, /^2 orders were shelved/);
+  assert.deepEqual([a.severity, a.state, a.rule_key], ['P1', 'open', 'orders_shelved']);
+  assert.deepEqual(r.json.counts, { open: 2, acked: 1, unattended: 0 });
+  assert.equal(r.json.truncated, false);
+});
+
+test('an alert is shown by a closed list of fields: nothing else that ever lands in its details reaches the page', async () => {
+  await clearAlerts();
+  const o = await openAlert('hub_silent_service', T.A.restaurant, { last_seen_at: new Date(clock - 3600000).toISOString(), silent_ms: 3600000, phone: '9822012345', token: 'sk_live_x', note: 'private' });
+  const [a] = (await get('/api/alerts', { tok: founder() })).json.alerts;
+  assert.equal(a.id, o.id);
+  assert.deepEqual(Object.keys(a).sort(), [
+    'ack_reason', 'acked_at', 'acked_by_email', 'detail', 'escalation_level', 'id', 'last_notified_at', 'opened_at', 'reminders', 'resolve_reason', 'resolved_at',
+    'resolved_by', 'restaurant_id', 'restaurant_name', 'rule_key', 'severity', 'state', 'text', 'unattended_at', 'what'
+  ]);
+  assert.deepEqual(Object.keys(a.detail).sort(), ['last_seen_at', 'silent_ms']);
+  const text = JSON.stringify(a);
+  for (const leak of ['9822012345', 'sk_live_x', 'private']) assert.ok(!text.includes(leak), leak);
+  assert.equal(a.reminders, 3, 'how many reminders there are, so "reminder 2 of 3" can be said');
+});
+
+test('who acknowledged is the person, by email; who resolved is "person" or "system", never an id', async () => {
+  await clearAlerts();
+  const a = await openAlert('orders_shelved', T.A.restaurant, { count: 1 });
+  const b = await openAlert('sync_backlog', T.A.restaurant, { count: 60 });
+  await ack(a.id, GOOD);
+  await q(`SELECT public.alert_apply('[]'::jsonb, $1::jsonb, '[]'::jsonb, 'x')`, [JSON.stringify([{ id: b.id, reason: 'condition_cleared' }])]);
+  const taken = (await get('/api/alerts?state=acked', { tok: founder() })).json.alerts;
+  assert.equal(taken[0].acked_by_email, 'aman@example.test');
+  const closed = (await get('/api/alerts?state=resolved', { tok: founder() })).json.alerts;
+  assert.equal(closed[0].resolved_by, 'system');
+  assert.equal(closed[0].resolve_reason, 'condition_cleared');
+  await resolve(a.id, 'fixed by the owner today');
+  const both = (await get('/api/alerts?state=resolved', { tok: founder() })).json.alerts;
+  assert.deepEqual(both.map(x => [x.id, x.resolved_by]), [[a.id, 'person'], [b.id, 'system']], 'most recently closed first');
+  assert.ok(!JSON.stringify(both).includes(F1));
+});
+
+test('the state filter: active (the default), open, acked, resolved; anything else is a 400 that says what is understood', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 1 });
+  const t = await openAlert('sync_backlog', T.A.restaurant, { count: 60 });
+  const d = await openAlert('payment_past_due', T.A.restaurant);
+  await ack(t.id, GOOD);
+  await resolve(d.id, 'dealt with by the owner');
+  const ids = async s => (await get(`/api/alerts${s}`, { tok: founder() })).json.alerts.map(a => a.id);
+  assert.deepEqual(await ids(''), [o.id, t.id]);
+  assert.deepEqual(await ids('?state=active'), [o.id, t.id]);
+  assert.deepEqual(await ids('?state=open'), [o.id]);
+  assert.deepEqual(await ids('?state=acked'), [t.id]);
+  assert.deepEqual(await ids('?state=resolved'), [d.id]);
+  const bad = await get('/api/alerts?state=snoozed', { tok: founder() });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /state is one of/);
+  assert.deepEqual(await ids('?state=open&state=resolved'), [d.id], 'a repeated parameter uses the last, as the audit log does');
+});
+
+test('the limit: a number from 1 to 500, defaulting to 100; anything else is a 400, and a cap that cut the list is said', async () => {
+  await clearAlerts();
+  for (const rule of ['orders_shelved', 'sync_backlog', 'payment_past_due']) await openAlert(rule, T.A.restaurant, { count: 1 });
+  const two = (await get('/api/alerts?limit=2', { tok: founder() })).json;
+  assert.equal(two.alerts.length, 2);
+  assert.equal(two.truncated, true, 'a cap is a cap, and it is said');
+  assert.equal((await get('/api/alerts?limit=3', { tok: founder() })).json.truncated, false);
+  assert.equal((await get('/api/alerts?limit=100000', { tok: founder() })).status, 200, 'over the cap is the cap');
+  assert.equal((await get('/api/alerts?limit=', { tok: founder() })).status, 200, 'an empty one is not given');
+  for (const bad of ['0', '-1', 'x', '1.5']) assert.equal((await get(`/api/alerts?limit=${bad}`, { tok: founder() })).status, 400, bad);
+});
+
+test('the counts are of what is waiting, what is taken on, and what nobody answered after every reminder; the unattended one is first', async () => {
+  await clearAlerts();
+  const a = await openAlert('sync_backlog', T.A.restaurant, { count: 60 });
+  await openAlert('orders_shelved', T.A.restaurant, { count: 1 });
+  await q(`SELECT public.alert_apply('[]'::jsonb, '[]'::jsonb, $1::jsonb, 'x')`, [JSON.stringify([a.id])]);
+  const r = (await get('/api/alerts', { tok: founder() })).json;
+  assert.deepEqual(r.counts, { open: 2, acked: 0, unattended: 1 });
+  assert.equal(r.alerts[0].id, a.id, 'even though it is the lesser alert');
+  assert.ok(r.alerts[0].unattended_at);
+});
+
+test('the inbox asks who is asking: a tenant\'s owner, a deactivated founder and nobody are refused, and no second factor is told to use one', async () => {
+  assert.equal((await get('/api/alerts')).status, 401);
+  assert.equal((await get('/api/alerts', { tok: founder({ aal: 'aal1' }) })).json.code, 'MFA_REQUIRED');
+  for (const sub of [OWNER_A, GONE, F2]) {
+    clock += NEW_WINDOW;
+    const r = await get('/api/alerts', { tok: token(sub) });
+    assert.deepEqual([r.status, r.json.code], [403, 'ADMIN_ONLY'], sub);
+  }
+});
+
+// --- acknowledging and resolving ---------------------------------------------------------------------------------------------------------
+
+test('acknowledging records who and why, answers with the event, and moves no restaurant\'s data', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  const tables = ['invoices', 'orders', 'menu_items', 'reconciliations', 'restaurants', 'subscriptions'];
+  const counts = async () => Promise.all(tables.map(async t => (await rows(`SELECT count(*)::int AS n FROM public.${t}`))[0].n));
+  const before = await counts();
+  const r = await ack(o.id, `  ${GOOD}  `);
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.json).sort(), ['alert', 'event_id', 'generated_at', 'success']);
+  assert.deepEqual(r.json.alert, { id: o.id, state: 'acked' });
+  assert.equal(r.json.generated_at, new Date(clock).toISOString());
+  const s = await stateOf(o.id);
+  assert.deepEqual([s.state, s.acked_by, s.ack_reason], ['acked', F1, GOOD]);
+  const [e] = await eventsOf(o.id, 'alert.acked');
+  assert.equal(Number(e.id), r.json.event_id);
+  assert.deepEqual([e.source, e.actor_type, e.actor_id], ['admin', 'admin', F1]);
+  assert.deepEqual(await counts(), before);
+});
+
+test('acknowledging twice is harmless: the second says so, changes nothing and records nothing; two at once record one', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  const [x, y] = await Promise.all([ack(o.id, GOOD), ack(o.id, 'a second founder, a second later')]);
+  assert.deepEqual([x.status, y.status], [200, 200]);
+  assert.equal((await eventsOf(o.id, 'alert.acked')).length, 1);
+  assert.equal((await stateOf(o.id)).state, 'acked');
+  const again = await ack(o.id, 'and once more, for luck, please');
+  assert.equal(again.status, 200);
+  assert.equal(again.json.event_id, null, 'no new event');
+  assert.equal((await eventsOf(o.id, 'alert.acked')).length, 1);
+});
+
+test('resolving records who and why, from open or acknowledged, and a person is named as the one who closed it', async () => {
+  await clearAlerts();
+  const a = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  const b = await openAlert('sync_backlog', T.A.restaurant, { count: 60 });
+  await ack(b.id, GOOD);
+  for (const id of [a.id, b.id]) {
+    const r = await resolve(id, 'the owner restarted the hub');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.alert, { id, state: 'resolved' });
+    const s = await stateOf(id);
+    assert.deepEqual([s.state, s.resolved_by, s.resolve_reason], ['resolved', F1, 'the owner restarted the hub']);
+    const [e] = await eventsOf(id, 'alert.resolved');
+    assert.deepEqual([e.actor_id, e.payload.by], [F1, 'admin']);
+  }
+});
+
+test('an alert that is already resolved cannot be acknowledged or resolved again: a 409 that says so; one that does not exist is a 404', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  await resolve(o.id, 'done, thank you very much');
+  for (const act of [ack, resolve]) {
+    const r = await act(o.id, 'a good enough reason here');
+    assert.deepEqual([r.status, r.json.code], [409, 'CONFLICT']);
+    assert.match(r.json.error, /already resolved/i);
+  }
+  assert.equal((await eventsOf(o.id, 'alert.resolved')).length, 1);
+  for (const act of [ack, resolve]) {
+    const r = await act(999999, 'a good enough reason here');
+    assert.deepEqual([r.status, r.json.code], [404, 'NOT_FOUND']);
+  }
+});
+
+test('an id that is not an alert id is simply not found, with no reading of the body and no trip to the database', async () => {
+  const spy = [];
+  const s = await serve(createAdminApp({ db: { asAdmin: async (...a) => { spy.push(a); return realDb().asAdmin(...a); } }, keys: hsKeys(SECRET), config: config(), now: () => clock, log: quiet }));
+  try {
+    for (const id of ['0', '-1', 'x', '1.5', '01', '1e3', '99999999999999999', 'a0a0a0a0-0000-4000-8000-000000000001', '%20', '1%2F2']) {
+      for (const action of ['ack', 'resolve']) {
+        const r = await call('POST', `/api/alerts/${id}/${action}`, { url: s.url, tok: founder(), headers: json, body: JSON.stringify({ reason: GOOD }) });
+        assert.deepEqual([r.status, r.json?.code], [404, 'NOT_FOUND'], `${id} ${action}`);
+      }
+    }
+    assert.equal(spy.length, 0);
+  } finally { await stop(s.server); }
+});
+
+test('the reason: a person\'s words of at least ten characters (after trimming) and at most five hundred; anything else is a 400 that says so, and nothing changes', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  const before = await spineCount();
+  const bads = [
+    ['no body', { raw: '' }], ['not json', { raw: '{nope' }], ['an array', { raw: '[1,2]' }], ['null', { raw: 'null' }], ['a bare string', { raw: '"a good enough reason"' }],
+    ['no reason', { raw: '{}' }], ['reason null', { raw: '{"reason":null}' }], ['reason a number', { raw: '{"reason":1234567890123}' }],
+    ['reason a list', { raw: '{"reason":["a good enough reason"]}' }], ['too short', { raw: '{"reason":"123456789"}' }],
+    ['too short once trimmed', { raw: '{"reason":"   123456789   "}' }], ['blank', { raw: '{"reason":"          "}' }], ['too long', { raw: JSON.stringify({ reason: 'a'.repeat(501) }) }],
+    ['a body far too large', { raw: JSON.stringify({ reason: GOOD, padding: 'x'.repeat(50000) }) }]
+  ];
+  for (const action of ['ack', 'resolve']) {
+    for (const [label, opts] of bads) {
+      const r = await post(`/api/alerts/${o.id}/${action}`, null, opts);
+      assert.equal(r.status, 400, `${action}: ${label}`);
+      assert.equal(r.json.code, 'BAD_REQUEST', `${action}: ${label}`);
+      assert.ok(r.json.error.length > 10 && r.json.error.length <= 200, `${action}: ${label}`);
+    }
+    const short = await post(`/api/alerts/${o.id}/${action}`, null, { raw: '{"reason":"123456789"}' });
+    assert.match(short.json.error, /at least 10 characters/, 'it says what is wanted');
+    const long = await post(`/api/alerts/${o.id}/${action}`, null, { raw: JSON.stringify({ reason: 'a'.repeat(501) }) });
+    assert.match(long.json.error, /500/);
+  }
+  assert.equal((await stateOf(o.id)).state, 'open');
+  assert.equal(await spineCount(), before, 'nothing was recorded');
+  const wrongType = await post(`/api/alerts/${o.id}/ack`, null, { raw: JSON.stringify({ reason: GOOD }), headers: { 'Content-Type': 'text/plain' } });
+  assert.equal(wrongType.status, 400, 'a body that is not declared as JSON is not read');
+  assert.equal((await stateOf(o.id)).state, 'open');
+  for (const [label, reason] of [['ten', '1234567890'], ['five hundred', 'a'.repeat(500)]]) {
+    const fresh = await openAlert('payment_past_due', T.A.restaurant);
+    assert.equal((await ack(fresh.id, reason)).status, 200, label);
+    await q(`DELETE FROM public.alerts WHERE id = $1`, [fresh.id]);
+  }
+});
+
+test('the administrator is asked before the body is read: a tenant or a founder without MFA gets a refusal, never a hint about the reason', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  for (const action of ['ack', 'resolve']) {
+    assert.equal((await post(`/api/alerts/${o.id}/${action}`, { reason: GOOD }, { tok: null })).status, 401);
+    assert.equal((await post(`/api/alerts/${o.id}/${action}`, { reason: GOOD }, { tok: founder({ aal: 'aal1' }) })).json.code, 'MFA_REQUIRED');
+    for (const sub of [OWNER_A, GONE, F2]) {
+      clock += NEW_WINDOW;
+      for (const opts of [{ raw: JSON.stringify({ reason: GOOD }) }, { raw: '{nope' }, { raw: '{}' }, { raw: '' }]) {
+        const r = await post(`/api/alerts/${o.id}/${action}`, null, { tok: token(sub), ...opts });
+        assert.deepEqual([r.status, r.json.code], [403, 'ADMIN_ONLY'], `${sub} ${action} ${opts.raw}`);
+      }
+    }
+  }
+  assert.equal((await stateOf(o.id)).state, 'open', 'and nothing happened');
+});
+
+test('a body is read only on these two routes, and only as JSON of a few kilobytes: the sign-in route still reads none', async () => {
+  const r = await call('POST', '/api/session', { tok: founder(), headers: json, body: JSON.stringify({ x: 'y'.repeat(200000) }) });
+  assert.equal(r.status, 200);
+});
+
+test('the database\'s answers on these routes: not allowed is a 403, not there a 404, already resolved a 409, anything else a 502 with no data', async () => {
+  const fake = code => ({ asAdmin: () => Promise.reject(Object.assign(new Error('x'), { code })) });
+  for (const [code, status, body] of [['42501', 403, 'ADMIN_ONLY'], ['P0002', 404, 'NOT_FOUND'], ['55000', 409, 'CONFLICT'], ['57P01', 502, 'DATABASE']]) {
+    const s = await serve(createAdminApp({ db: fake(code), keys: hsKeys(SECRET), config: config(), now: () => clock, log: quiet }));
+    try {
+      const r = await call('POST', '/api/alerts/5/ack', { url: s.url, tok: founder(), headers: json, body: JSON.stringify({ reason: GOOD }) });
+      assert.deepEqual([r.status, r.json.code], [status, body], code);
+    } finally { await stop(s.server); }
+  }
+});
+
+// --- details the mutation check pointed at ------------------------------------------------------------------------------------------------
+
+test('the reason is judged on what it says, in the API\'s own words: padding does not count, and a character is a character however it is written', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  for (const action of ['ack', 'resolve']) {
+    for (const raw of ['{"reason":"   123456789   "}', JSON.stringify({ reason: '😀😀😀😀😀' })]) {
+      const r = await post(`/api/alerts/${o.id}/${action}`, null, { raw });
+      assert.equal(r.status, 400, `${action} ${raw}`);
+      assert.match(r.json.error, /at least 10 characters/, 'the API says it, not a generic refusal from the database');
+    }
+  }
+  const fresh = await openAlert('payment_past_due', T.A.restaurant);
+  assert.equal((await ack(fresh.id, '😀'.repeat(10))).status, 200, 'ten emoji are ten characters');
+});
+
+test('a body that is not JSON is told so, in words, for both actions', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  for (const action of ['ack', 'resolve']) {
+    const r = await post(`/api/alerts/${o.id}/${action}`, null, { raw: '{nope' });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /must be JSON/);
+  }
+});
+
+test('with no limit given the inbox returns up to a hundred: seven alerts all come back', async () => {
+  await clearAlerts();
+  for (let i = 0; i < 7; i++) {
+    const item = { restaurant_id: T.A.restaurant, rule_key: 'sync_backlog', severity: 'P2', dedupe_key: `sync_backlog:${T.A.restaurant}:${i}`, detail: { count: 60 } };
+    await q(`SELECT public.alert_apply($1::jsonb, '[]'::jsonb, '[]'::jsonb, 'many')`, [JSON.stringify([item])]);
+  }
+  const r = (await get('/api/alerts', { tok: founder() })).json;
+  assert.equal(r.alerts.length, 7);
+  assert.equal(r.truncated, false);
+  assert.equal(r.counts.open, 7);
+});
+
+test('an alert that was flagged unattended and then acknowledged is no longer counted as unattended', async () => {
+  await clearAlerts();
+  const o = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  await q(`SELECT public.alert_apply('[]'::jsonb, '[]'::jsonb, $1::jsonb, 'x')`, [JSON.stringify([o.id])]);
+  assert.equal((await get('/api/alerts', { tok: founder() })).json.counts.unattended, 1);
+  await ack(o.id, GOOD);
+  const r = (await get('/api/alerts', { tok: founder() })).json;
+  assert.deepEqual(r.counts, { open: 0, acked: 1, unattended: 0 });
+  assert.ok(r.alerts[0].unattended_at, 'it is still marked as having been flagged');
+});
+
+test('nobody is named as having closed an alert that is not closed', async () => {
+  await clearAlerts();
+  const a = await openAlert('orders_shelved', T.A.restaurant, { count: 2 });
+  const b = await openAlert('sync_backlog', T.A.restaurant, { count: 60 });
+  await ack(b.id, GOOD);
+  const list = (await get('/api/alerts', { tok: founder() })).json.alerts;
+  assert.equal(list.length, 2);
+  for (const alert of list) {
+    assert.equal(alert.resolved_by, null, alert.state);
+    assert.equal(alert.resolved_at, null);
+    assert.equal(alert.resolve_reason, null);
+  }
+  assert.ok([a.id, b.id].every(id => list.some(x => x.id === id)));
 });
