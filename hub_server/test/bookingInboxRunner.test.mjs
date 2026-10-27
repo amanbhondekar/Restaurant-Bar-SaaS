@@ -85,12 +85,21 @@ test('once a check is over the next one runs, even after a failure', async () =>
 });
 
 test('a wait is the answer if it comes in time, and nothing if it does not', async () => {
-  assert.equal(await withinMs(Promise.resolve('answer'), 1000), 'answer');
-  assert.equal(await withinMs(new Promise(() => {}), 30), null);
-  const slow = new Promise(resolve => setTimeout(() => resolve('late'), 200));
-  const started = Date.now();
-  assert.equal(await withinMs(slow, 30), null);
-  assert.ok(Date.now() - started < 150, 'it gave up at the limit, not when the answer came');
+  // withinMs's own timer is unref'd ON PURPOSE (a slow cloud must never hold the hub open), which means that while this test waits on it alone,
+  // nothing keeps the event loop alive. Some Node versions' test runners happen to (Node 24 on Windows did), and CI's Node 20 and 22 on Linux
+  // do not: the loop empties, the process ends with this test still waiting, and the runner cancels it and every test after it in the file
+  // ("Promise resolution is still pending but the event loop has already resolved"). So the test holds the process open itself while it waits.
+  const hold = setInterval(() => {}, 1000);
+  try {
+    assert.equal(await withinMs(Promise.resolve('answer'), 1000), 'answer');
+    assert.equal(await withinMs(new Promise(() => {}), 30), null);
+    const slow = new Promise(resolve => setTimeout(() => resolve('late'), 200));
+    const started = Date.now();
+    assert.equal(await withinMs(slow, 30), null);
+    assert.ok(Date.now() - started < 150, 'it gave up at the limit, not when the answer came');
+  } finally {
+    clearInterval(hold);
+  }
 });
 
 test('a wait that was answered in time leaves no timer behind to hold the process open', async () => {
