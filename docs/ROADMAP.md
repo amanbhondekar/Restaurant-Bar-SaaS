@@ -66,7 +66,7 @@ guest ordering, repeat-visit recognition, reservations with staff-sent reminders
 a public page where a guest asks for a table, and a reward for coming back that the
 restaurant sets itself.
 
-Automated coverage is **2041 hub tests across 98 files** (pure rules plus live
+Automated coverage is **2198 hub tests across 102 files** (pure rules plus live
 hub fixtures that boot a real server against a throwaway data directory) and
 **1277 frontend tests** (Vitest + Testing Library in jsdom; 165 of them on the admin console's page) on the diner page and
 its basket, the booking page a guest asks for a table on, the station screens, device enrolment, every reception admin tab
@@ -289,7 +289,7 @@ drives a real browser in CI.
   `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/pilot-report-template.md` (§4.10).
 - ✅ Timestamped audit log in `Darshil_docs/reports/` (per-change what/why
   + test cases; every change lands with a report).
-- ✅ Hub regression suite (2041 tests at the last count, §1): fixtures on
+- ✅ Hub regression suite (2198 tests at the last count, §1): fixtures on
   hub-chosen ports with a stale-hub guard. Safety rules are mutation-checked:
   each is broken on purpose and the suite must notice.
 - ✅ CI (GitHub Actions): `npm test` + `npm run build` on Node 20/22 for
@@ -942,8 +942,9 @@ both phones within about 15 minutes and can be acknowledged; every plan change, 
 timeline; no code path lets an admin alter a tenant's bills; every number shows how fresh it is; and every claim in the docs says whether it was
 proven against a hosted project or only a stand-in.
 - 🟡 Phase 0 gates: hosted Supabase and Razorpay test-mode credentials are being set up by Aman (2026-10-26), so G0-1 and G0-2 have not run; ❌ decisions D1-D5 wait on people; ✅ the GST audit and the ledger analysis (read-only).
-- 🟡 Phase 1: the database spine (migration 023), the admin API and the page (`admin_web`) are built and proven on a real Postgres engine and stand-ins, and the page was looked at in a real browser; none of it has met a hosted project. 🚧 Phases 2-7 as in
-  the table in §4.9a; Phase 5 invoicing is ❌ on a CA's answer.
+- 🟡 Phase 1: the database spine (migration 023), the admin API and the page (`admin_web`) are built and proven on a real Postgres engine and stand-ins, and the page was looked at in a real browser; none of it has met a hosted project.
+- 🟡 Phase 2 (alerting), started 2026-10-27: **P2-2, the alert engine, is ✅** (`Darshil_docs/reports/report_2026-10-27_120000_alert_engine.md`): six rules, the open/acknowledged/resolved lifecycle, escalation (every 10 minutes, three times, then flagged), quiet hours (a P2 never pages 22:00-08:00 India time), migration 024 with the worker's own database role, and the worker's pass; on a real Postgres engine and stand-ins only. **Nothing sends a message yet and there is no entry point to run the worker** (P2-3); P2-1, P2-3, P2-4 and P2-5 are 🚧. Open question for P2-3: a one-tap acknowledge link has no room for the 10-character reason invariant I4 requires.
+- 🚧 Phases 3-7 as in the table in §4.9a; Phase 5 invoicing is ❌ on a CA's answer.
 
 ---
 

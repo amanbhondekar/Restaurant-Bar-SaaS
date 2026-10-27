@@ -4,7 +4,7 @@
 
 Status legend: ✅ built · 🟡 partial · 🚧 planned · ❌ blocked.
 
-## 1. Where it stands (Phase 1, started 2026-10-26)
+## 1. Where it stands (Phase 1 built 2026-10-26; Phase 2 started 2026-10-27)
 
 | Task | What | Status |
 |---|---|---|
@@ -14,6 +14,16 @@ Status legend: ✅ built · 🟡 partial · 🚧 planned · ❌ blocked.
 | P1-4 | Ingest: subscription events and hub changes land on the spine as they happen; a backfill for older events | ✅ on PGlite |
 | P1-5 | Audit log: the API (filter, page, CSV, chain check) and the page | ✅ |
 | P1-6 | Port the `/ops` read views | 🟡 The page shows the same fleet and restaurant views, from the same rules and the same screens (`common/opsRules.js`, `src/ops/`), served by `admin_api`. **`OPS_TOKEN` is not retired**: it stays as the break-glass until the page has run against a real project |
+
+### Phase 2: alerting
+
+| Task | What | Status |
+|---|---|---|
+| P2-1 | Tenant timeline page over the spine | 🚧 |
+| P2-2 | The alert engine: the rules (`common/alertRules.js`), the lifecycle and escalation (`common/alertEngine.js`), the database (migration `024_alerts.sql`), and the worker's pass (`alert_worker/`) | ✅ on PGlite and stand-ins. **Nothing sends a message yet and there is no entry point to run the worker**; both arrive with P2-3 |
+| P2-3 | A push channel (Telegram or ntfy) and the signed acknowledge link | 🚧 next |
+| P2-4 | The alerts inbox in the page, and the API routes to acknowledge and resolve | 🚧 (the database functions exist) |
+| P2-5 | A watcher for the watcher: the worker reports to an outside uptime monitor | 🚧 |
 
 Phase 1's acceptance, "two named founders sign in with MFA; every action is attributed", is **built but not yet proven**: everything it needs exists (the page enrols and answers a second factor, the API and the database each refuse a session without one, every sign-in is recorded), and every piece is tested, but none of it has met a hosted Supabase project, so no real founder has signed in.
 
@@ -28,6 +38,10 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
         │  connects as the Postgres role `kullina_admin`, never the service key
         │  per request: BEGIN; SET LOCAL ROLE kullina_admin; set the caller's claims; call admin_* ; COMMIT
    Postgres ── admin_* functions ─► spine_assert_admin() ─► tenant_events (hash chain)
+        ▲
+   alert_worker (alert_worker/; its own deploy and credentials)   ✅ the pass; ⬜ entry point and channel (P2-3)
+        connects as the Postgres role `kullina_alerts`: four functions, no table
+        a pass: read the fleet ─► which conditions are true ─► open / resolve / flag alerts ─► page whoever is due
 ```
 
 * **The service key never reaches `admin_api`** (invariant I2). It refuses to start if a variable named like a service key, or holding a service-role token, is in its environment, and it refuses a database login that is not `kullina_admin`.
@@ -37,7 +51,7 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
 
 ## 3. Setting it up (a human, once, in the Supabase SQL editor)
 
-1. Run migrations `004`-`023` (gate G0-1). `023` creates the role `kullina_admin` with no ability to log in.
+1. Run migrations `004`-`024` (gate G0-1). `023` creates the role `kullina_admin` and `024` the role `kullina_alerts`, neither with the ability to log in.
 2. Give the two founders accounts in **Supabase Auth** (Dashboard → Authentication → Users), with TOTP multi-factor enabled for the project.
 3. Put them on the allowlist, from the editor (it runs as the database's owner; nothing else can):
    ```sql
@@ -65,6 +79,13 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
 
    `npm run admin` (that is `node admin_api/server.js`). It prints every problem it finds and exits rather than start with one.
 7. Build and host the page (see "The page" above) with `VITE_ADMIN_API_URL` set to the API's address and `ADMIN_WEB_ORIGIN` on the API set to the page's.
+8. **For alerts (Phase 2):** tell the console when each restaurant is open, or it cannot tell a silent hub from a shut restaurant. From the editor, for each restaurant (time zone an IANA name; each day a list of `[open, close]`; a close before the open runs past midnight; a day left out is shut):
+   ```sql
+   select public.set_tenant_service_hours('<restaurant id>', 'Asia/Kolkata',
+     '{"mon":[["11:00","15:00"],["18:00","23:30"]],"tue":[["11:00","23:30"]],"wed":[["11:00","23:30"]],"thu":[["11:00","23:30"]],"fri":[["11:00","23:30"]],"sat":[["11:00","23:59"]],"sun":[["11:00","23:30"]]}'::jsonb);
+   ```
+   It refuses hours it cannot read and a time zone the worker could not, and leaves an event. A restaurant with no readable hours is **flagged "service hours missing"** and is never paged about a silent hub (the rule does not guess).
+9. Give the alert worker's role a password the same way (`alter role kullina_alerts login password '...';`, by hand, never in the repository). Its entry point and channel settings arrive with P2-3.
 
 ### The page (`admin_web/`)
 
@@ -80,7 +101,7 @@ A static page with its own build and its own host (invariant I10). It reuses the
 
 **Building and hosting:** `npm run build:admin` makes `admin_web/dist` (the page and the product's fonts, and nothing else of the product). `admin_web/vercel.json` is the host's side: a Vercel project with its root directory set to `admin_web` and "include source files outside the root directory" on, which adds the headers a page like this needs (no framing, no sniffing, no referrer, HSTS, a permissions policy, never cached). `npm run admin:web` runs it for development on :5174; `ADMIN_WEB_ORIGIN` on the API must be that origin.
 
-**Tested** by 165 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which has been looked at on two pages only.
+**Tested** by 165 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which was then looked at in a real browser on every screen that loads the stylesheet (see the same report: only the operator console's "Open console" and the station sound toggle change visibly).
 
 The settings are in `admin_web/.env.example`. **Mutation-checked:** 179 mutants of the page's code, the build config and the stylesheet, all caught after the survivors were closed.
 
@@ -127,6 +148,36 @@ Behaviour worth knowing:
 * **Every figure says when it was read** (`generated_at`), and **a failed read is an error with no data** (`502 DATABASE`), never the last answer (invariant I8).
 * Only `ADMIN_WEB_ORIGIN` may read an answer. No cookies are used.
 
+## 5a. Alerts (Phase 2)
+
+An alert is a condition that is true now, kept as one row that moves **open → acknowledged → resolved**. The worker looks every minute or so (the interval is set when the entry point arrives), and every change leaves an event on the restaurant's own chain.
+
+**The rules built** (all in `common/alertRules.js`, reusing the operator console's own thresholds, so a hub the console calls "live" is never one an alert calls silent):
+
+| Rule | True when | Severity |
+|---|---|---|
+| `hub_silent_service` | the hub has said nothing for **more than 15 minutes** while the restaurant is open (counted from the restaurant's opening if the hub last spoke before it, so a hub switched on at opening time is not "silent") | P1 |
+| `orders_shelved` | one or more orders are shelved (taken but not accepted by the cloud), whatever the plan | P1 |
+| `hub_silent_long` | no word for more than 36 hours, any hour | P2 |
+| `sync_backlog` | 50 or more bills waiting to reach the cloud | P2 |
+| `payment_past_due` | the plan status is `past_due` | P2 |
+| `service_hours_missing` | the restaurant's hub reports but its hours are not set or not readable | P3: shown, never sent |
+
+A cancelled restaurant's hub is meant to be off, so only `orders_shelved` and `payment_past_due` apply to it. The build sheet says "3 missed reports (≥15 min)"; this reads it as "**more than** 15", the same line the console already draws between "live" and "quiet", so the two never disagree. **Not built, because the data does not exist yet:** webhook signature failures, the operator service or the worker being down, repeated failed admin sign-ins, and the hosted schema being behind the repository. The console's other attention items (trial ending, cancel requested, clock skew, never seen) stay on the screen and are not paged.
+
+**Who is paged and when (decisions D3 and D4):** both founders at once. If nobody has acknowledged it ten minutes after the last page, a reminder at higher urgency, every ten minutes, **three** times; ten minutes after the third it is flagged **unattended** in the console. An acknowledged alert is never paged again. A **P2 never pages between 22:00 and 08:00 India time** (the founders' clock, not the restaurant's): it waits, visible in the console, and goes out when they wake as a first page. A P1 pages at any hour. A page carries the restaurant's name, the rule in words, and how long, never a secret or a guest (invariant I9): only the fields a rule names are used.
+
+**What can go wrong, said plainly**
+* **Paging is at-least-once.** A page that went out but could not be recorded is sent again on the next pass: better twice than never.
+* A page that could not be sent is recorded as failed (at most once in ten minutes per alert, and only the *kind* of failure, never the channel's message, which can carry a token), is not marked sent, and is tried again on the next pass.
+* **A pass that cannot see the whole fleet resolves nothing**, and one that cannot read the database does nothing, so a truncated or failed read is never mistaken for a healthy fleet.
+* **Resolving by hand an alert whose condition is still true opens a fresh one on the next pass.** Acknowledge is the way to say "I know".
+* Detection of a dead hub is no faster than the 15 minutes plus the worker's interval.
+* The alert's details are as they were when it opened (a count that has grown since is on the restaurant's page, not the alert).
+* **Never run on a hosted project**, with no channel to send through yet.
+
+**Runbook (alert response):** an alert is paged → open the console → the alert's restaurant → acknowledge it with a reason of at least ten characters (that stops the paging and records who) → look at the restaurant → when it is dealt with the alert resolves by itself once the condition clears. If the page said the hub is silent and the restaurant is open, ring them first.
+
 ## 6. Invariants and where each is pinned
 
 | | Invariant | Pinned by |
@@ -134,13 +185,13 @@ Behaviour worth knowing:
 | I1 | No admin path touches a tenant's bills, menu, orders, guests | The role holds no table privilege; the runnable-function list; a scan of every admin function's text; the route sweep that counts tenant rows |
 | I2 | The service key never leaves the operator service | `loadConfig` refuses to start with one, by name or by what a value is; the connection must be `kullina_admin` |
 | I3 | Every admin action is attributed | A CHECK on the spine |
-| I4 | Every admin write needs a reason of 10+ characters and an event in the same transaction | Applies from Phase 3, when there are writes. Today: `deactivate_admin_user` needs a reason; sign-in writes its event in its own transaction |
+| I4 | Every admin write needs a reason of 10+ characters and an event in the same transaction | `admin_ack_alert` and `admin_resolve_alert` refuse a reason under 10 characters (after trimming) and write their event in the same transaction; `deactivate_admin_user` the same; the worker's own writes are the system's and say so. Sign-in writes its event in its own transaction |
 | I5 | Events are append-only | Triggers and privileges, tested for every role |
 | I6 | An action on a hub is a request until the hub acknowledges | Phase 4 |
 | I7 | Never block a restaurant | The two ingest hooks cannot fail what they watch |
 | I8 | No silent staleness | `generated_at` on every answer; a failed read returns no data |
-| I9 | Counts and times only | The ingest keeps no Razorpay payload; the fleet carries no pairing code, secret hash, settings or payment link |
-| I10 | Separate surface | `admin_api/` is its own entry point and refuses the service key |
+| I9 | Counts and times only | The ingest keeps no Razorpay payload; the fleet carries no pairing code, secret hash, settings or payment link; the worker reads six columns of the fleet and sends a page made of a closed list of fields (tested with a phone number and a token planted in the row) |
+| I10 | Separate surface | `admin_api/` is its own entry point and refuses the service key; `alert_worker/` connects as its own role and never holds one |
 
 ## 7. Break-glass
 
@@ -148,8 +199,10 @@ The operator console (`/ops` on the operator service, behind `OPS_TOKEN`) still 
 
 ## 8. Not built yet
 
-Everything in Phases 2-7 of the build sheet (alerting, tenant writes, hub commands, billing operations, onboarding, the compliance desk); running any of it on a hosted project.
+From Phase 2: the tenant timeline (P2-1), a channel to page through and the worker's entry point (P2-3), the alerts inbox and the API routes for acknowledging and resolving (P2-4), the watcher for the watcher (P2-5). Phases 3-7 of the build sheet (tenant writes, hub commands, billing operations, onboarding, the compliance desk). Running any of it on a hosted project.
 
 ## 9. Decisions recorded
 
 Confirmed by Aman on 2026-10-26: **D1** the admin API uses a dedicated database role and functions, not the service key; **D2** hubs report counts, times and versions only; **D3** the first alert channel is Telegram or ntfy; **D4** both founders are paged (re-notified every 10 minutes). D3 and D4 take effect in Phase 2. **D5** (Kullina's own GST facts) is still open and blocks Phase 5 invoicing.
+
+**Made while building P2-2, for Aman to confirm or change:** (1) the alert worker connects as its own database role, `kullina_alerts`, on the same reasoning as D1 (no table privilege, four functions), rather than reusing `kullina_admin` or the service key; (2) quiet hours are 22:00 to 08:00 on the **founders'** clock (India), not each restaurant's; (3) "three missed reports" is read as more than 15 minutes, matching the console. **Open question for P2-3:** the build sheet asks for a "signed one-tap acknowledge link", and invariant I4 asks for a reason of at least ten characters on every admin write. A one-tap link cannot ask for a reason. The simplest honest answer is that the link supplies a fixed, visible reason ("Acknowledged from the alert link") attributed to the founder the signed link names; that satisfies the letter of I4 but not its spirit, so it needs a decision.

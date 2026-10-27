@@ -217,3 +217,6 @@ export function shapeSubscription(row) {
     created_at: iso(row.created_at)
   };
 }
+
+// The two readers above, for the alert rules (common/alertRules.js) to share rather than copy: a date only if it is written as one, a count only if it is a whole number.
+export { time as readTime, whole as readCount };
