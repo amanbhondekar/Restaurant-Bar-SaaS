@@ -307,3 +307,37 @@ describe('the alerts', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe('the timeline', () => {
+  const timeline = { restaurant: { id: 'r', name: 'R' }, kind: null, events: [], next_before: null };
+
+  it('reads one restaurant\'s timeline with GET, the id encoded in the address', async () => {
+    const { api, fetchImpl } = make(ok(timeline));
+    await api.timeline('a/b?c', {});
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/tenants/a%2Fb%3Fc/timeline`);
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('turns the filters into a query, leaving out what is empty, and encodes what is given', async () => {
+    const { api, fetchImpl } = make(ok(timeline));
+    await api.timeline('r', { kind: 'alerts', before: 120, limit: 25 });
+    await api.timeline('r', { kind: '', before: undefined, limit: null });
+    await api.timeline('r');
+    await api.timeline('r', { kind: 'a&b=c' });
+    expect(fetchImpl.mock.calls.map(c => c[0])).toEqual([
+      `${BASE}/api/tenants/r/timeline?kind=alerts&before=120&limit=25`, `${BASE}/api/tenants/r/timeline`, `${BASE}/api/tenants/r/timeline`, `${BASE}/api/tenants/r/timeline?kind=a%26b%3Dc`
+    ]);
+  });
+
+  it('a restaurant that is not there is "missing", a 400 says what was wrong, and the token is never in the address', async () => {
+    await expect(make(() => reply(404, { success: false, code: 'NOT_FOUND' })).api.timeline('r', {})).rejects.toMatchObject({ kind: 'missing' });
+    const e = await make(() => reply(400, { success: false, code: 'BAD_REQUEST', error: 'kind is one of billing, hub, alerts, admin.' })).api.timeline('r', { kind: 'x' }).catch(x => x);
+    expect([e.kind, e.message]).toEqual(['bad', 'kind is one of billing, hub, alerts, admin.']);
+    const { api, fetchImpl } = make(ok(timeline));
+    await api.timeline('r', { kind: 'hub' });
+    expect(fetchImpl.mock.calls[0][0]).not.toContain(TOKEN);
+  });
+});

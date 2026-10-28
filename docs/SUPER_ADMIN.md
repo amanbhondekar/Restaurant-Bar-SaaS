@@ -19,7 +19,7 @@ Status legend: ✅ built · 🟡 partial · 🚧 planned · ❌ blocked.
 
 | Task | What | Status |
 |---|---|---|
-| P2-1 | Tenant timeline page over the spine | 🚧 |
+| P2-1 | One restaurant's timeline: migration `025` (`admin_tenant_timeline`), `GET /api/tenants/:id/timeline`, the words (`common/eventWords.js`) and the page's Timeline under a restaurant | ✅ on PGlite and stand-ins, and looked at in a real browser (desktop, phone, dark). Never met a real Supabase project |
 | P2-2 | The alert engine: the rules (`common/alertRules.js`), the lifecycle and escalation (`common/alertEngine.js`), the database (migration `024_alerts.sql`), and the worker's pass (`alert_worker/`) | ✅ on PGlite and stand-ins. **Nothing sends a message yet and there is no entry point to run the worker**; both arrive with P2-3 |
 | P2-3 | A push channel (Telegram or ntfy) and the signed acknowledge link | 🚧 next |
 | P2-4 | The alerts inbox: the API routes (`GET /api/alerts`, acknowledge, resolve) and the page's **Alerts** place | ✅ on PGlite and stand-ins, and looked at in a real browser (desktop, phone, dark). Never met a real Supabase project |
@@ -51,7 +51,7 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
 
 ## 3. Setting it up (a human, once, in the Supabase SQL editor)
 
-1. Run migrations `004`-`024` (gate G0-1). `023` creates the role `kullina_admin` and `024` the role `kullina_alerts`, neither with the ability to log in.
+1. Run migrations `004`-`025` (gate G0-1). `023` creates the role `kullina_admin` and `024` the role `kullina_alerts`, neither with the ability to log in; `025` adds one read-only function for the timeline.
 2. Give the two founders accounts in **Supabase Auth** (Dashboard → Authentication → Users), with TOTP multi-factor enabled for the project.
 3. Put them on the allowlist, from the editor (it runs as the database's owner; nothing else can):
    ```sql
@@ -91,7 +91,7 @@ Founder's browser ── Supabase Auth (password + TOTP) ──► JWT with aal2
 
 A static page with its own build and its own host (invariant I10). It reuses the product's design tokens and fonts (Cabinet Grotesk, Instrument Sans) and two screens of the operator console, so it looks like the same product.
 
-**What a founder sees, in order:** sign in with an email and password; set up an authenticator app (first time: a QR code and a setup key) or enter a code; the API is asked who they are and whether they are an administrator (if not: "This account is not an administrator", and nothing else); the sign-in is recorded; and only then the console, with **Fleet** (every restaurant, ranked by the same ten rules, read again every minute) and **Audit log** (filter by restaurant, event type, source and dates; page back; export a CSV; check that the history has not been tampered with). One restaurant opens from the fleet. **Alerts** (what is waiting, what somebody has taken on, what is closed; each can be acknowledged or resolved with a reason). **The only controls on the page that change anything are those two actions on an alert: nothing about a restaurant, a plan or a person can be changed from it.**
+**What a founder sees, in order:** sign in with an email and password; set up an authenticator app (first time: a QR code and a setup key) or enter a code; the API is asked who they are and whether they are an administrator (if not: "This account is not an administrator", and nothing else); the sign-in is recorded; and only then the console, with **Fleet** (every restaurant, ranked by the same ten rules, read again every minute) and **Audit log** (filter by restaurant, event type, source and dates; page back; export a CSV; check that the history has not been tampered with). One restaurant opens from the fleet, or from an alert's restaurant name in the inbox, and shows its state and its **Timeline** (below). **Alerts** (what is waiting, what somebody has taken on, what is closed; each can be acknowledged or resolved with a reason). **The only controls on the page that change anything are those two actions on an alert: nothing about a restaurant, a plan or a person can be changed from it.**
 
 **What it keeps:** nothing. The session lives in the page's memory (no storage, no cookie, nothing in the address), so a refresh asks for the password and a code again. A password or a code is held only while it is being typed and is cleared after a failure.
 
@@ -101,7 +101,7 @@ A static page with its own build and its own host (invariant I10). It reuses the
 
 **Building and hosting:** `npm run build:admin` makes `admin_web/dist` (the page and the product's fonts, and nothing else of the product). `admin_web/vercel.json` is the host's side: a Vercel project with its root directory set to `admin_web` and "include source files outside the root directory" on, which adds the headers a page like this needs (no framing, no sniffing, no referrer, HSTS, a permissions policy, never cached). `npm run admin:web` runs it for development on :5174; `ADMIN_WEB_ORIGIN` on the API must be that origin.
 
-**Tested** by 240 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which was then looked at in a real browser on every screen that loads the stylesheet (see the same report: only the operator console's "Open console" and the station sound toggle change visibly).
+**Tested** by 286 tests of the page (Vitest and Testing Library), 13 build-level tests that run the real production build and look at what comes out (it is styled; no inline script; the exact policy; the right fonts; no other page of the product; no service key), and a look at it in a real browser, because the unit tests run without CSS and cannot see styling. That look found a real fault in the product's design system, not in the page: a base reset for `button` sat outside Tailwind's `base` layer and so beat every Tailwind utility, which left the default `Button` (and the existing operator console's "Open console") unfilled. It is fixed at the source, in its own commit with its own test and report (`report_2026-10-26_190000_design_system_button_layer.md`); it changes default buttons across the product, which was then looked at in a real browser on every screen that loads the stylesheet (see the same report: only the operator console's "Open console" and the station sound toggle change visibly).
 
 The settings are in `admin_web/.env.example`. **Mutation-checked:** 179 mutants of the page's code, the build config and the stylesheet, all caught after the survivors were closed.
 
@@ -139,6 +139,7 @@ Default-deny. These are all the routes there are (pinned by a test); any other p
 | `GET /api/audit/verify` | Checks a hash chain (`restaurant_id`, or the global chain) |
 | `GET /api/fleet` | Every restaurant, ranked by the same ten rules as the operator console (`common/opsRules.js`) |
 | `GET /api/tenants/:id` | One restaurant: its state, subscriptions and events |
+| `GET /api/tenants/:id/timeline` | One restaurant's history on the spine, newest first. `kind` (`billing`, `hub`, `alerts` or `admin`, filtered in the database), `before` (an event id), `limit` (1-500, default 50). Names the restaurant; a full page says where the next begins (`next_before`) |
 | `GET /api/alerts` | The inbox: `state` (`active`, the default, is waiting plus taken on; or `open`, `acked`, `resolved`), `limit` (1-500, default 100). Ranked: what nobody answered after every reminder, then the worse, then the longest-waiting. Each alert says what is wrong in words, names its restaurant and carries a closed list of fields. `truncated` says when the list was cut |
 | `POST /api/alerts/:id/ack` | Acknowledge ("I know": stops the paging). Body `{ "reason": "..." }`, 10 to 500 characters after trimming. A second acknowledgement changes nothing and says so |
 | `POST /api/alerts/:id/resolve` | Resolve ("it is dealt with"). Same body. `409` if it is already resolved, `404` if there is no such alert |
@@ -185,6 +186,14 @@ The console's **Alerts** place lists what is waiting, what somebody has taken on
 
 **Runbook (alert response):** an alert is paged → open the console → **Alerts** → acknowledge it with a reason of at least ten characters (that stops the paging and records who) → look at the restaurant → when it is dealt with the alert resolves by itself once the condition clears. Use **Resolve** only when it is truly done: resolving an alert whose problem is still there opens a fresh one within a minute or so. If the page said the hub is silent and the restaurant is open, ring them first.
 
+### The timeline (P2-1)
+
+A restaurant's page ends with its **Timeline**: what happened to it, in words, newest first, grouped by day (Today, Yesterday, then the date with its year, in the viewer's time zone). It is the spine's history of that one restaurant, the same events the audit log lists, said for a person: "Subscription halted: the payment could not be collected", "The hub was updated (From 1.4.2 to 1.5.0)", "Alert acknowledged by someone@example.com (orders shelved): “ringing the owner now”". Each event has its time and a chip for its kind, and its raw details in an expander for an administrator.
+
+* **Kinds**, filtered in the database (migration 025) so that a filtered page is a page of that kind and paging stays in it: *Billing* (Razorpay's events), *Hub* (first report, a new version, a restart, shelved orders changing), *Alerts* (everything `alert.*`, even an alert a person acknowledged), *Admin actions* (`admin.*`, such as service hours being set). They do not overlap, and a test pins that the database's kinds and the words' kinds agree on real events.
+* **Going back in time** with "Show older events": no event twice, none lost; the kind is kept. A read that comes by itself (every minute, or Refresh) puts what is new above what is shown and keeps what was paged back to, unless more than a page happened meanwhile, in which case the list starts again from the newest page rather than show a gap as if there were none.
+* **What is not on it:** heartbeats (only changes worth knowing), restaurant data of any kind (invariant I1), and notes (Phase 3). A type of event it has no words for is shown as `Event “type”`: it says what it is rather than guessing.
+
 ## 6. Invariants and where each is pinned
 
 | | Invariant | Pinned by |
@@ -206,7 +215,7 @@ The operator console (`/ops` on the operator service, behind `OPS_TOKEN`) still 
 
 ## 8. Not built yet
 
-From Phase 2: the tenant timeline (P2-1), a channel to page through and the worker's entry point (P2-3), the watcher for the watcher (P2-5). Phases 3-7 of the build sheet (tenant writes, hub commands, billing operations, onboarding, the compliance desk). Running any of it on a hosted project.
+From Phase 2: a channel to page through and the worker's entry point (P2-3), the watcher for the watcher (P2-5). Phases 3-7 of the build sheet (tenant writes, hub commands, billing operations, onboarding, the compliance desk). Running any of it on a hosted project.
 
 ## 9. Decisions recorded
 

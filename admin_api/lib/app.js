@@ -28,7 +28,8 @@ export const ROUTES = Object.freeze([
   'GET /api/tenants/:id',
   'GET /api/alerts',
   'POST /api/alerts/:id/ack',
-  'POST /api/alerts/:id/resolve'
+  'POST /api/alerts/:id/resolve',
+  'GET /api/tenants/:id/timeline'
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,6 +43,7 @@ const NOT_FOUND = { success: false, code: 'NOT_FOUND', error: 'Not found.' };
 const ALERT_ID = /^[1-9]\d{0,15}$/;
 const ALERT_STATES = ['active', 'open', 'acked', 'resolved'];
 const MAX_ALERTS = 500;
+const TIMELINE_KINDS = ['billing', 'hub', 'alerts', 'admin'];
 const REASON = { min: 10, max: 500 };   // invariant I4: a reason in a person's words, ten characters at least
 const BODY_LIMIT = '4kb';
 const badRequest = error => ({ success: false, code: 'BAD_REQUEST', error });
@@ -105,6 +107,18 @@ export function alertQuery(query) {
   const raw = get('limit');
   if (raw !== null && (!/^\d{1,6}$/.test(raw) || Number(raw) < 1)) return { error: 'limit is a number from 1 to 500.' };
   return { state, limit: raw === null ? 100 : Math.min(Number(raw), MAX_ALERTS) };
+}
+
+/** A restaurant's timeline: which kind, from where, how many. Each checked, or a message saying which one is wrong. */
+export function timelineQuery(query) {
+  const get = name => { const v = one(query[name]); return v === undefined || v === '' ? null : String(v); };
+  const kind = get('kind');
+  if (kind !== null && !TIMELINE_KINDS.includes(kind)) return { error: `kind is one of ${TIMELINE_KINDS.join(', ')}.` };
+  const before = get('before');
+  if (before !== null && !/^[1-9]\d{0,15}$/.test(before)) return { error: 'before is an event id.' };
+  const limit = get('limit');
+  if (limit !== null && (!/^\d{1,6}$/.test(limit) || Number(limit) < 1)) return { error: 'limit is a number from 1 to 500.' };
+  return { kind, before, limit: limit === null ? 50 : Math.min(Number(limit), MAX_AUDIT) };
 }
 
 /** What a person is told about the reason, or null if it will do: counted in characters, after trimming. */
@@ -298,6 +312,31 @@ export function createAdminApp({ db, keys, config, now = Date.now, log = console
       tenant: shapeTenant(tenant, at),
       subscriptions: subscriptions.map(shapeSubscription),
       events: events.map(shapeEvent)
+    });
+  }));
+
+  // One restaurant's history on the spine, newest first, filtered by kind in the database (migration 025). Read-only.
+  app.get('/api/tenants/:id/timeline', asAdmin(async (req, res, run) => {
+    const { id } = req.params;
+    if (!UUID.test(id)) return res.status(404).json(NOT_FOUND);
+    const parsed = timelineQuery(req.query);
+    if (parsed.error) return res.status(400).json(badRequest(parsed.error));
+    const { kind, before, limit } = parsed;
+    const restaurant = id.toLowerCase();
+    const { tenant, rows } = await run(async q => {
+      const found = (await q('SELECT * FROM public.admin_tenant($1::uuid)', [restaurant])).rows[0];
+      if (!found) return { tenant: null, rows: [] };
+      const events = (await q('SELECT * FROM public.admin_tenant_timeline($1::uuid, $2::text, $3::bigint, $4::integer)', [restaurant, kind, before, limit])).rows;
+      return { tenant: found, rows: events };
+    });
+    if (!tenant) return res.status(404).json(NOT_FOUND);
+    const events = rows.map(row => shapeAudit({ ...row, restaurant_id: restaurant, restaurant_name: tenant.name }));
+    return res.json({
+      ...stamp(),
+      restaurant: { id: restaurant, name: tenant.name },
+      kind,
+      events,
+      next_before: events.length === limit ? events[events.length - 1].id : null
     });
   }));
 

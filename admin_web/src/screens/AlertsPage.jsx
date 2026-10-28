@@ -10,7 +10,8 @@ import { asOf, when } from '../lib/format';
 // words, and a person can do one of two things about it: acknowledge it ("I know", which stops the paging) or resolve it ("it is dealt with"), each with
 // a reason in their own words (at least ten characters, the console's rule for every write).
 //
-// Everything shown is what the API sent, as text, in the order the API ranked it. A read that fails never leaves an old list looking current; a search
+// Everything shown is what the API sent, as text, in the order the API ranked it. A restaurant's name opens that restaurant's page, when the console gives a
+// way to. A read that fails never leaves an old list looking current; a search
 // that is superseded by a newer one is dropped when it arrives; a write is sent once however many times the button is tapped, and when it is refused
 // the words the person typed are kept.
 
@@ -64,14 +65,18 @@ function Outcome({ alert, now }) {
   return null;
 }
 
-function Row({ alert, now, timeZone, acting, onAct }) {
+function Row({ alert, now, timeZone, acting, onAct, onOpen }) {
   const [tone, label] = STATE[alert.state] ?? ['muted', alert.state];
   const where = alert.restaurant_name ?? 'a restaurant';
   return (
     <article aria-label={`${alert.what} at ${where}`} className="flex flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <Chip tone={SEVERITY[alert.severity] ?? 'muted'}>{alert.severity}</Chip>
-        <span className="font-semibold">{alert.restaurant_name ?? 'A restaurant'}</span>
+        {onOpen && alert.restaurant_id ? (
+          <button type="button" aria-label={`Open ${where}`} onClick={() => onOpen(alert.restaurant_id, where)} className="text-left font-semibold underline-offset-2 hover:underline">{where}</button>
+        ) : (
+          <span className="font-semibold">{alert.restaurant_name ?? 'A restaurant'}</span>
+        )}
         <Chip tone={tone}>{label}</Chip>
         {alert.state === 'open' && alert.unattended_at && <Chip tone="bad">Nobody has answered</Chip>}
       </div>
@@ -129,7 +134,7 @@ function ReasonForm({ alert, action, state, onChange, onSubmit, onCancel }) {
   );
 }
 
-export function AlertsPage({ api, clock, timeZone, pollMs = 60000, nonce = 0, onLeave }) {
+export function AlertsPage({ api, clock, timeZone, pollMs = 60000, nonce = 0, onLeave, onOpenRestaurant }) {
   const [filter, setFilter] = useState('active');
   const [data, setData] = useState(null);
   const [problem, setProblem] = useState(null);
@@ -250,7 +255,7 @@ export function AlertsPage({ api, clock, timeZone, pollMs = 60000, nonce = 0, on
           <ul role="list" className="flex flex-col gap-3">
             {data.alerts.map(alert => (
               <li key={alert.id} className="flex flex-col gap-2">
-                <Row alert={alert} now={now} timeZone={timeZone} acting={Boolean(open && open.id === alert.id)} onAct={(id, action) => setForm({ id, action, reason: '', busy: false, error: null })} />
+                <Row alert={alert} now={now} timeZone={timeZone} acting={Boolean(open && open.id === alert.id)} onOpen={onOpenRestaurant} onAct={(id, action) => setForm({ id, action, reason: '', busy: false, error: null })} />
                 {open && open.id === alert.id && (
                   <ReasonForm
                     alert={alert}

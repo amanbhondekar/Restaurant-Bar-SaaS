@@ -283,3 +283,55 @@ describe('the alerts place', () => {
     expect(api.alerts.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('one restaurant\'s timeline', () => {
+  it('is under the restaurant when it is opened, and gone when you go back to the fleet', async () => {
+    const { user, api } = await open();
+    const [name] = await screen.findAllByRole('button', { name: 'Spice Route' });
+    await user.click(name);
+    expect(await screen.findByRole('heading', { level: 2, name: /^timeline$/i })).toBeInTheDocument();
+    expect(api.timeline).toHaveBeenCalledWith(A_ID, {});
+    expect(await screen.findByText('Alert acknowledged by aman@example.test (orders shelved)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^fleet$/i }));
+    expect(screen.queryByRole('heading', { name: /^timeline$/i })).toBeNull();
+  });
+
+  it('is not there on the fleet itself: it belongs to one restaurant', async () => {
+    const { api } = await open();
+    await screen.findAllByText('Spice Route');
+    expect(screen.queryByRole('heading', { name: /^timeline$/i })).toBeNull();
+    expect(api.timeline).not.toHaveBeenCalled();
+  });
+
+  it('is read again, with the restaurant, when Refresh is pressed', async () => {
+    const { user, api } = await open();
+    const [name] = await screen.findAllByRole('button', { name: 'Spice Route' });
+    await user.click(name);
+    await screen.findByText('Alert acknowledged by aman@example.test (orders shelved)');
+    api.timeline.mockClear();
+    api.tenant.mockClear();
+    await user.click(screen.getByRole('button', { name: /^refresh$/i }));
+    await waitFor(() => expect(api.timeline).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.tenant).toHaveBeenCalledTimes(1));
+  });
+
+  it('a session that ends while reading it goes back to signing in, with the reason said', async () => {
+    const api = fakeApi({ timeline: vi.fn(async () => { throw apiError('denied', 'Your session is not accepted any more. Sign in again.'); }) });
+    const { user } = await open(api);
+    const [name] = await screen.findAllByRole('button', { name: 'Spice Route' });
+    await user.click(name);
+    expect(await screen.findByText(/your session ended/i)).toBeInTheDocument();
+  });
+
+  it('opens from an alert in the inbox: the alert\'s restaurant, on the fleet place, with its timeline', async () => {
+    const { user, api } = await open();
+    await user.click(screen.getByRole('button', { name: /^alerts$/i }));
+    const [link] = await screen.findAllByRole('button', { name: /^open spice route$/i });
+    await user.click(link);
+    expect(await screen.findByRole('heading', { name: 'Spice Route' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: /^timeline$/i })).toBeInTheDocument();
+    expect(api.timeline).toHaveBeenCalledWith(A_ID, {});
+    expect(screen.getByRole('button', { name: /^fleet$/i })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: /^alerts$/i })).not.toHaveAttribute('aria-current');
+  });
+});

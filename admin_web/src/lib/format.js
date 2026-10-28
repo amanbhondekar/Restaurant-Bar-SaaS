@@ -36,3 +36,22 @@ export function plainRequestId(id) {
   if (typeof id !== 'string' || !id || !/^[A-Za-z0-9._-]+$/.test(id)) return NONE;
   return /^[0-9a-f]{8}-/i.test(id) ? id.slice(0, 8) : id.slice(0, 16);
 }
+
+/** The time of day, to the minute, in the viewer's own zone unless one is given: "09:55". Something that is not a time is "—". */
+export function timeOf(iso, timeZone) {
+  const t = moment(iso);
+  return t === null ? NONE : hhmm(t, timeZone);
+}
+
+/**
+ * The heading of a day on a timeline: "Today" and "Yesterday" as of `now`, otherwise the date with its year, so an old day is never mistaken for a recent one.
+ * Days are the viewer's own (or the zone given), not the server's.
+ */
+export function dayHeading(iso, timeZone, now) {
+  const t = moment(iso);
+  if (t === null) return NONE;
+  const day = dayKey(t, timeZone);
+  if (day === dayKey(now, timeZone)) return 'Today';
+  if (day === dayKey(now - 24 * 60 * 60 * 1000, timeZone)) return 'Yesterday';
+  return new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', ...(timeZone ? { timeZone } : {}) });
+}

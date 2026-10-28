@@ -94,7 +94,7 @@ after(async () => { if (server) await stop(server); await cloud?.close(); });
 const NEW_WINDOW = 16 * 60 * 1000;
 beforeEach(() => { clock += NEW_WINDOW; });
 
-const API = ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', '/api/fleet', `/api/tenants/${'a0a0a0a0-0000-4000-8000-000000000001'}`, '/api/alerts'];
+const API = ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', '/api/fleet', `/api/tenants/${'a0a0a0a0-0000-4000-8000-000000000001'}`, '/api/alerts', `/api/tenants/${'a0a0a0a0-0000-4000-8000-000000000001'}/timeline`];
 
 // --- who gets in ---------------------------------------------------------------------------------------------------------------
 
@@ -267,7 +267,7 @@ test('the health check needs no token and no database', async () => {
 test('the routes are exactly the pinned list', () => {
   assert.deepEqual([...ROUTES], [
     'GET /healthz', 'GET /api/me', 'POST /api/session', 'GET /api/audit', 'GET /api/audit.csv', 'GET /api/audit/verify', 'GET /api/fleet', 'GET /api/tenants/:id',
-    'GET /api/alerts', 'POST /api/alerts/:id/ack', 'POST /api/alerts/:id/resolve'
+    'GET /api/alerts', 'POST /api/alerts/:id/ack', 'POST /api/alerts/:id/resolve', 'GET /api/tenants/:id/timeline'
   ]);
 });
 
@@ -566,7 +566,7 @@ test('(I8) when the database does not answer the caller gets an error and no dat
     const again = await get('/api/fleet', { url: s.url, tok });
     assert.equal(again.status, 502, 'a read that worked a moment ago is not shown when this one fails');
     assert.equal(again.json.tenants, undefined);
-    for (const path of ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', `/api/tenants/${T.A.restaurant}`, '/api/alerts']) assert.equal((await get(path, { url: s.url, tok })).status, 502, path);
+    for (const path of ['/api/me', '/api/audit', '/api/audit.csv', '/api/audit/verify', `/api/tenants/${T.A.restaurant}`, `/api/tenants/${T.A.restaurant}/timeline`, '/api/alerts']) assert.equal((await get(path, { url: s.url, tok })).status, 502, path);
     for (const path of [`/api/alerts/${sweepAlertId}/ack`, `/api/alerts/${sweepAlertId}/resolve`]) {
       const r = await call('POST', path, { url: s.url, tok, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'a perfectly good reason' }) });
       assert.deepEqual([r.status, r.json.code], [502, 'DATABASE'], path);
@@ -917,4 +917,157 @@ test('nobody is named as having closed an alert that is not closed', async () =>
     assert.equal(alert.resolve_reason, null);
   }
   assert.ok([a.id, b.id].every(id => list.some(x => x.id === id)));
+});
+
+// --- one restaurant's timeline (Phase 2, P2-1) ---------------------------------------------------------------------------------------------
+
+const rec = (restaurant, source, type, actorType = 'system', actor = null, payload = {}) =>
+  q(`SELECT public.record_tenant_event($1, $2, $3, $4, $5, NULL, $6::jsonb) AS id`, [restaurant, source, type, actorType, actor, JSON.stringify(payload)]).then(r => Number(r.rows[0].id));
+const timeline = (id, query = '', opts = { tok: founder() }) => get(`/api/tenants/${id}/timeline${query}`, opts);
+let tl;   // the two restaurants made for these tests (so what earlier tests wrote to the others is not in their history) and the ids of the events seeded, by what they are
+
+test('(timeline setup) a restaurant has a history of each kind, and another restaurant has one of its own', async () => {
+  const make = async (name, slug, code) => (await q(`INSERT INTO public.restaurants (name, slug, city, pairing_code) VALUES ($1, $2, 'Nagpur', $3) RETURNING id`, [name, slug, code])).rows[0].id;
+  const R = await make('Timeline One', 'timeline-one', 'PC-TL1');
+  const R2 = await make('Timeline Two', 'timeline-two', 'PC-TL2');
+  const A = R;
+  tl = {
+    R, R2,
+    activated: await rec(A, 'razorpay', 'subscription.activated', 'webhook', null, { event: 'subscription.activated', applied_plan_status: 'active', razorpay_subscription_id: 'sub_X' }),
+    first: await rec(A, 'hub', 'hub.first_report', 'hub', null, { version: '1.0.0' }),
+    opened: await rec(A, 'system', 'alert.opened', 'system', null, { alert_id: 1, rule_key: 'orders_shelved', severity: 'P1', detail: { count: 2 } }),
+    acked: await rec(A, 'admin', 'alert.acked', 'admin', F1, { alert_id: 1, rule_key: 'orders_shelved', reason: 'looking at it now' }),
+    halted: await rec(A, 'razorpay', 'subscription.halted', 'webhook', null, { event: 'subscription.halted', applied_plan_status: 'past_due' }),
+    hours: await rec(A, 'system', 'admin.service_hours_set', 'system', null, { timezone: 'Asia/Kolkata' }),
+    other: await rec(A, 'support', 'support.note', 'system', null, {})
+  };
+  tl.theirs = await rec(tl.R2, 'hub', 'hub.first_report', 'hub', null, { version: '9.9.9' });
+  assert.ok(tl.activated > 0);
+});
+
+test('a restaurant\'s timeline is its own events newest first, with the restaurant named and when it was read', async () => {
+  const r = await timeline(tl.R);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.generated_at, new Date(clock).toISOString());
+  assert.deepEqual(r.json.restaurant, { id: tl.R, name: 'Timeline One' });
+  assert.equal(r.json.kind, null);
+  const ids = r.json.events.map(e => e.id);
+  assert.deepEqual(ids.slice(0, 7), [tl.other, tl.hours, tl.halted, tl.acked, tl.opened, tl.first, tl.activated]);
+  assert.ok(!ids.includes(tl.theirs), 'nobody else\'s history');
+  assert.ok(r.json.events.every(e => e.restaurant_id === tl.R && e.restaurant_name === 'Timeline One'));
+});
+
+test('an event is shown by a closed list of fields, with the person named by email', async () => {
+  const r = await timeline(tl.R);
+  const acked = r.json.events.find(e => e.id === tl.acked);
+  assert.deepEqual(Object.keys(acked).sort(), ['actor_email', 'actor_id', 'actor_type', 'chain_seq', 'id', 'occurred_at', 'payload', 'request_id', 'restaurant_id', 'restaurant_name', 'row_hash', 'source', 'type']);
+  assert.equal(acked.actor_email, 'aman@example.test');
+  assert.equal(acked.occurred_at, new Date(acked.occurred_at).toISOString());
+});
+
+test('the kinds each return only their own events, and the four together are everything but "other"', async () => {
+  const idsOf = async kind => (await timeline(tl.R, `?kind=${kind}`)).json.events.map(e => e.id);
+  assert.deepEqual(await idsOf('billing'), [tl.halted, tl.activated]);
+  assert.deepEqual(await idsOf('hub'), [tl.first]);
+  assert.deepEqual(await idsOf('alerts'), [tl.acked, tl.opened]);
+  assert.deepEqual(await idsOf('admin'), [tl.hours]);
+  const filtered = (await timeline(tl.R, '?kind=alerts')).json;
+  assert.equal(filtered.kind, 'alerts');
+});
+
+test('the database\'s kinds and the words\' kinds agree on every event: what the filter returns is what describeEvent calls it', async () => {
+  const { eventKind } = await import('../../common/eventWords.js');
+  const all = (await timeline(tl.R, '?limit=500')).json.events;
+  const seen = new Set();
+  for (const kind of ['billing', 'hub', 'alerts', 'admin']) {
+    for (const e of (await timeline(tl.R, `?kind=${kind}&limit=500`)).json.events) {
+      assert.equal(eventKind(e), kind, `${e.type} (${e.source})`);
+      seen.add(e.id);
+    }
+  }
+  assert.deepEqual(all.filter(e => !seen.has(e.id)).map(e => eventKind(e)), ['other'], 'and what no filter returns is "other"');
+});
+
+test('it pages: a full page says where the next begins, and a short one says there is none', async () => {
+  const first = (await timeline(tl.R, '?limit=3')).json;
+  assert.equal(first.events.length, 3);
+  assert.equal(first.next_before, first.events[2].id);
+  const second = (await timeline(tl.R, `?limit=3&before=${first.next_before}`)).json;
+  assert.ok(second.events.every(e => e.id < first.next_before));
+  assert.deepEqual(first.events.map(e => e.id).filter(id => second.events.some(x => x.id === id)), [], 'no event twice');
+  const all = (await timeline(tl.R, '?limit=500')).json;
+  assert.equal(all.next_before, null, 'fewer than a full page: nothing more');
+});
+
+test('the limit defaults to fifty and is capped at five hundred, and a repeated parameter uses the last', async () => {
+  const many = [];
+  for (let i = 0; i < 60; i++) many.push(await rec(tl.R2, 'hub', 'hub.restarted', 'hub', null, { started_at: new Date(clock + i).toISOString() }));
+  const r = (await timeline(tl.R2)).json;
+  assert.equal(r.events.length, 50);
+  assert.equal(r.next_before, r.events[49].id);
+  assert.equal((await timeline(tl.R2, '?limit=500')).json.events.length, many.length + 1);
+  assert.equal((await timeline(tl.R2, '?limit=100000')).status, 200, 'over the cap is the cap');
+  assert.equal((await timeline(tl.R2, '?kind=billing&kind=hub&limit=1&limit=2')).json.events.length, 2);
+});
+
+test('what is not understood is a 400 that names it, and nothing is guessed', async () => {
+  const cases = [['?kind=all', /kind is one of/], ['?kind=ALERTS', /kind is one of/], ['?kind=billing%20', /kind is one of/], ['?limit=0', /limit/], ['?limit=-1', /limit/], ['?limit=x', /limit/], ['?before=0', /before/], ['?before=-3', /before/], ['?before=x', /before/], ['?before=1.5', /before/]];
+  for (const [query, pattern] of cases) {
+    const r = await timeline(tl.R, query);
+    assert.equal(r.status, 400, query);
+    assert.equal(r.json.code, 'BAD_REQUEST');
+    assert.match(r.json.error, pattern, query);
+  }
+  assert.equal((await timeline(tl.R, '?kind=')).status, 200, 'an empty one is not given');
+});
+
+test('an unknown restaurant, or a malformed id, is simply not found', async () => {
+  assert.deepEqual([(await timeline('99999999-9999-4999-8999-999999999999')).status, (await timeline('99999999-9999-4999-8999-999999999999')).json.code], [404, 'NOT_FOUND']);
+  for (const bad of ['x', '1', 'a0a0a0a0-0000-4000-8000', 'a0a0a0a0-0000-4000-8000-00000000000g']) assert.equal((await timeline(bad)).status, 404, bad);
+});
+
+test('the timeline asks who is asking: nobody, a tenant\'s owner, a deactivated founder, and no second factor are all refused', async () => {
+  assert.equal((await timeline(tl.R, '', {})).status, 401);
+  assert.equal((await timeline(tl.R, '', { tok: founder({ aal: 'aal1' }) })).json.code, 'MFA_REQUIRED');
+  for (const sub of [OWNER_A, GONE, F2]) {
+    clock += NEW_WINDOW;
+    const r = await timeline(tl.R, '', { tok: token(sub) });
+    assert.deepEqual([r.status, r.json.code], [403, 'ADMIN_ONLY'], sub);
+  }
+});
+
+test('reading a timeline writes nothing', async () => {
+  const before = await spineCount();
+  await timeline(tl.R); await timeline(tl.R, '?kind=alerts');
+  assert.equal(await spineCount(), before);
+});
+
+test('(I8) when the database does not answer the caller gets an error and no history', async () => {
+  const s = await serve(createAdminApp({ db: { asAdmin: () => Promise.reject(new Error('connection to 10.0.0.5 reset')) }, keys: hsKeys(SECRET), config: config(), now: () => clock, log: quiet }));
+  try {
+    const r = await timeline(tl.R, '', { url: s.url, tok: founder() });
+    assert.deepEqual([r.status, r.json.code], [502, 'DATABASE']);
+    assert.equal(r.json.events, undefined);
+    assert.doesNotMatch(r.text, /10\.0\.0\.5/);
+  } finally { await stop(s.server); }
+});
+
+test('what a timeline carries is what is on the spine and nothing else: no tenant data moves into it', async () => {
+  const text = JSON.stringify((await timeline(tl.R, '?limit=500')).json);
+  for (const leak of ['9822012345', 'invoice', 'guest']) assert.ok(!text.includes(leak), leak);
+});
+
+test('the limit is five hundred at most: over that, a full page of five hundred still says there is more', async () => {
+  const R = (await q(`INSERT INTO public.restaurants (name, slug, city, pairing_code) VALUES ('Busy API', 'busy-api', 'Nagpur', 'PC-BAPI') RETURNING id`)).rows[0].id;
+  await q(`SELECT public.record_tenant_event($1, 'hub', 'hub.restarted', 'hub', NULL, NULL, '{}'::jsonb) FROM generate_series(1, 510)`, [R]);
+  const r = (await timeline(R, '?limit=100000')).json;
+  assert.equal(r.events.length, 500);
+  assert.equal(r.next_before, r.events[499].id, 'a full page of the most there can be: there may be more');
+});
+
+test('the restaurant is named by its id in lower case, however the address wrote it', async () => {
+  const r = await timeline(tl.R.toUpperCase());
+  assert.equal(r.status, 200);
+  assert.equal(r.json.restaurant.id, tl.R);
+  assert.ok(r.json.events.every(e => e.restaurant_id === tl.R));
 });

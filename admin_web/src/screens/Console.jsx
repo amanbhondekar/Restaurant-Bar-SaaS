@@ -8,6 +8,7 @@ import { relative } from '@/ops/lib/format';
 import { asOf } from '../lib/format';
 import { AlertsPage } from './AlertsPage';
 import { AuditPage } from './AuditPage';
+import { Timeline } from './Timeline';
 import { ConsoleShell } from './parts';
 
 // The console once someone is in: the fleet (read again every minute), one restaurant, the alerts inbox and the audit log. The only things it changes are
@@ -79,6 +80,8 @@ export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, on
     else refresh();
   };
   const go = id => { setPlace(id); setOpen(null); };
+  // A restaurant named somewhere else (an alert in the inbox) opens on the fleet place, where restaurants are.
+  const openRestaurant = (id, name) => { setPlace('fleet'); setOpen({ id, name }); };
 
   const nav = (
     <nav aria-label="Console" className="flex gap-1 pt-1">
@@ -100,7 +103,7 @@ export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, on
 
   let body;
   if (place === 'alerts') {
-    body = <AlertsPage api={api} clock={clock} timeZone={timeZone} pollMs={pollMs} nonce={alertsNonce} onLeave={onLeave} />;
+    body = <AlertsPage api={api} clock={clock} timeZone={timeZone} pollMs={pollMs} nonce={alertsNonce} onLeave={onLeave} onOpenRestaurant={openRestaurant} />;
   } else if (place === 'audit') {
     body = <AuditPage api={api} tenants={fleet?.tenants ?? []} clock={clock} timeZone={timeZone} download={download} onLeave={onLeave} />;
   } else if (!fleet) {
@@ -122,16 +125,19 @@ export function Console({ api, me, clock, pollMs, tickMs, timeZone, download, on
           <Notice tone="warning">Only the first {fleet.tenants.length} restaurants are shown. There are more than this page can hold.</Notice>
         )}
         {open ? (
-          <TenantView
-            api={tenantApi}
-            token=""
-            target={open}
-            known={known}
-            fallbackNow={Date.parse(fleet.generated_at)}
-            nonce={nonce}
-            onBack={() => setOpen(null)}
-            onLeave={() => onLeave(ENDED)}
-          />
+          <>
+            <TenantView
+              api={tenantApi}
+              token=""
+              target={open}
+              known={known}
+              fallbackNow={Date.parse(fleet.generated_at)}
+              nonce={nonce}
+              onBack={() => setOpen(null)}
+              onLeave={() => onLeave(ENDED)}
+            />
+            <Timeline api={api} restaurantId={open.id} clock={clock} timeZone={timeZone} pollMs={pollMs} nonce={nonce} onLeave={onLeave} />
+          </>
         ) : (
           <FleetView fleet={fleet} filters={filters} onFilters={setFilters} onOpen={(id, name) => setOpen({ id, name })} />
         )}

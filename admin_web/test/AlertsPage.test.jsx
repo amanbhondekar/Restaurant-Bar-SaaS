@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AlertsPage } from '../src/screens/AlertsPage.jsx';
@@ -662,5 +662,32 @@ describe('the way out the console gave most recently', () => {
     view.rerender(<AlertsPage api={api} clock={clock} timeZone="UTC" pollMs={60000} nonce={1} onLeave={second} />);
     await waitFor(() => expect(second).toHaveBeenCalledWith('Your session ended. Sign in again.'));
     expect(first).not.toHaveBeenCalled();
+  });
+});
+
+describe('the restaurant is a way to its page', () => {
+  it('opens that restaurant when its name is pressed, by id and name, and says it does', async () => {
+    const onOpenRestaurant = vi.fn();
+    const { user } = await show(fakeApi(), { onOpenRestaurant });
+    await user.click(within(rowOf(/2 orders were shelved/)).getByRole('button', { name: /^open spice route$/i }));
+    expect(onOpenRestaurant).toHaveBeenCalledWith(A_ID, 'Spice Route');
+  });
+
+  it('is the same on a closed alert, and on one somebody has taken on', async () => {
+    const onOpenRestaurant = vi.fn();
+    const { user } = await show(fakeApi(), { onOpenRestaurant });
+    await user.click(within(rowOf('Payment is overdue.')).getByRole('button', { name: /^open spice route$/i }));
+    expect(onOpenRestaurant).toHaveBeenCalledTimes(1);
+  });
+
+  it('is plain text when nothing can open it, and when the alert names no restaurant', async () => {
+    await show();
+    expect(screen.queryByRole('button', { name: /^open /i })).toBeNull();
+    const onOpenRestaurant = vi.fn();
+    const api = fakeApi({ alerts: vi.fn(async () => alertsPayload([alertRow(1, { restaurant_id: null, restaurant_name: null })])) });
+    cleanup();
+    await show(api, { onOpenRestaurant });
+    expect(screen.getByText('A restaurant')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^open /i })).toBeNull();
   });
 });

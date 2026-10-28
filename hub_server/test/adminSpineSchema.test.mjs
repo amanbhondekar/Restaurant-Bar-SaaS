@@ -23,9 +23,10 @@ const OWNER_A = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 // The whole surface the admin API is allowed to call. A function added to this list is a decision; one that appears without it fails the pin below.
 const ADMIN_RPCS = [
-  // (migration 024 added the three for alerts: admin_ack_alert, admin_alerts, admin_resolve_alert; their own tests are in alertsSchema.test.mjs)
+  // (migration 024 added the three for alerts: admin_ack_alert, admin_alerts, admin_resolve_alert; their own tests are in alertsSchema.test.mjs. Migration 025 added
+  // admin_tenant_timeline, tested in tenantTimelineSchema.test.mjs.)
   'admin_ack_alert', 'admin_alerts', 'admin_fleet', 'admin_list_events', 'admin_ops_events', 'admin_record_signin', 'admin_resolve_alert',
-  'admin_tenant', 'admin_tenant_subscriptions', 'admin_verify_chain', 'admin_whoami'
+  'admin_tenant', 'admin_tenant_subscriptions', 'admin_tenant_timeline', 'admin_verify_chain', 'admin_whoami'
 ];
 // Not callable by anyone but the database's owner (and, where stated, the operator service): they are how the rest is built.
 const OWNER_ONLY = ['spine_assert_admin', 'record_tenant_event', 'tenant_events_verify', 'seed_admin_user', 'deactivate_admin_user'];

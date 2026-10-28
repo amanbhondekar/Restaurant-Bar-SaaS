@@ -37,7 +37,7 @@ function failureOf(status, body) {
 
 const requestId = () => (globalThis.crypto?.randomUUID?.() ?? `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
 
-const QUERY_KEYS = [['state', 'state'], ['restaurant', 'restaurant_id'], ['type', 'type'], ['source', 'source'], ['from', 'from'], ['to', 'to'], ['before', 'before'], ['limit', 'limit']];
+const QUERY_KEYS = [['kind', 'kind'], ['state', 'state'], ['restaurant', 'restaurant_id'], ['type', 'type'], ['source', 'source'], ['from', 'from'], ['to', 'to'], ['before', 'before'], ['limit', 'limit']];
 function queryOf(filters = {}) {
   const parts = [];
   for (const [key, name] of QUERY_KEYS) {
@@ -89,6 +89,7 @@ export function createAdminApi({ baseUrl, getToken, fetchImpl = (...args) => fet
     recordSession: () => json('/api/session', { method: 'POST' }),
     fleet: () => json('/api/fleet'),
     tenant: id => json(`/api/tenants/${encodeURIComponent(id)}`),
+    timeline: (id, filters) => json(`/api/tenants/${encodeURIComponent(id)}/timeline${queryOf(filters)}`),
     audit: filters => json(`/api/audit${queryOf(filters)}`),
     alerts: filters => json(`/api/alerts${queryOf(filters)}`),
     acknowledgeAlert: (id, reason) => json(`/api/alerts/${encodeURIComponent(String(id))}/ack`, { method: 'POST', body: { reason: String(reason) } }),

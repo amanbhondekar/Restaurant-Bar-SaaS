@@ -91,6 +91,24 @@ export const defaultAlerts = () => [
   alertRow(3, { rule_key: 'payment_past_due', severity: 'P2', state: 'acked', what: 'payment overdue', text: 'Payment is overdue.', detail: {}, acked_at: iso(-10 * MIN), acked_by_email: 'darshil@example.test', ack_reason: 'ringing the owner now' })
 ];
 
+/** An event on one restaurant's timeline, as the API sends it. */
+export const timelineEvent = (id, type, over = {}) => ({
+  id, restaurant_id: A_ID, restaurant_name: 'Spice Route', occurred_at: iso(-id * MIN), source: 'system', type, actor_type: 'system', actor_id: null, actor_email: null,
+  request_id: null, payload: {}, chain_seq: id, row_hash: 'b'.repeat(64), ...over
+});
+
+export const timelinePayload = (events, over = {}) => ({
+  success: true, generated_at: iso(0), restaurant: { id: A_ID, name: 'Spice Route' }, kind: null, events, next_before: null, ...over
+});
+
+/** A restaurant with a history of each kind, newest first: an acknowledged alert, shelved orders, a halted subscription, and one from days ago. */
+export const defaultTimeline = () => [
+  timelineEvent(5, 'alert.acked', { source: 'admin', actor_type: 'admin', actor_id: 'f1', actor_email: 'aman@example.test', payload: { alert_id: 1, rule_key: 'orders_shelved', reason: 'ringing the owner now' } }),
+  timelineEvent(4, 'hub.shelved_changed', { source: 'hub', actor_type: 'hub', payload: { from: 0, to: 2 } }),
+  timelineEvent(3, 'subscription.halted', { source: 'razorpay', actor_type: 'webhook', occurred_at: iso(-26 * HOUR), payload: { event: 'subscription.halted', applied_plan_status: 'past_due', razorpay_subscription_id: 'sub_1' } }),
+  timelineEvent(2, 'subscription.activated', { source: 'razorpay', actor_type: 'webhook', occurred_at: iso(-3 * DAY), payload: { event: 'subscription.activated', applied_plan_status: 'active' } })
+];
+
 export const ME = { success: true, generated_at: iso(0), user: { id: 'f1', email: 'aman@example.test', display_name: 'Aman', role: 'founder' } };
 
 /** A fake of the API client: every method is a mock, with sensible good answers that a test can replace. */
@@ -102,6 +120,7 @@ export function fakeApi(over = {}) {
     tenant: vi.fn(async (id) => tenantPayload(id, id === B_ID ? 'Chai Corner' : 'Spice Route')),
     audit: vi.fn(async () => auditPayload([auditEvent(3), auditEvent(2), auditEvent(1)])),
     auditCsv: vi.fn(async () => ({ blob: new Blob(['x']), filename: 'kullina-audit-2026-10-26.csv' })),
+    timeline: vi.fn(async () => timelinePayload(defaultTimeline())),
     alerts: vi.fn(async () => alertsPayload(defaultAlerts())),
     acknowledgeAlert: vi.fn(async id => ({ success: true, generated_at: iso(0), alert: { id, state: 'acked' }, event_id: 41 })),
     resolveAlert: vi.fn(async id => ({ success: true, generated_at: iso(0), alert: { id, state: 'resolved' }, event_id: 42 })),
