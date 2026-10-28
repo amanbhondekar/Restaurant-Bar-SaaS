@@ -9,6 +9,10 @@ import { UserCircle2, KeyRound, RefreshCw, AlertTriangle } from 'lucide-react';
  * screen picks a *person* — the waiter whose name should be stamped on every
  * ticket coming from this handset. `onLogin(waiter)` fires once the hub has
  * verified the 4-digit PIN; the parent persists the choice to localStorage.
+ *
+ * It is also where someone new sets themselves up (§4.4). Reception adds them to the staff list
+ * and reads out an invite code; they type it here and choose their own PIN. Nobody else ever knows
+ * it -- which is the point, since a PIN reception typed for them is a PIN reception knows.
  */
 export const WaiterLogin = ({ hubUrl, onLogin, currentRestaurant }) => {
   const [waiters, setWaiters] = useState([]);
@@ -17,6 +21,8 @@ export const WaiterLogin = ({ hubUrl, onLogin, currentRestaurant }) => {
   const [selected, setSelected] = useState(null); // waiter | null
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
+  // Setting up from an invite: 'code' while they type it, then 'pin' while they choose one.
+  const [redeem, setRedeem] = useState(null);
 
   const cleanHub = (hubUrl || '').replace(/\/+$/, '');
 
@@ -51,6 +57,34 @@ export const WaiterLogin = ({ hubUrl, onLogin, currentRestaurant }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
+
+  /** Exchange an invite code and a chosen PIN for an account that can sign in. */
+  const submitInvite = async () => {
+    if (!redeem || redeem.pin.length !== 4) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await authFetch(`${cleanHub}/waiters/redeem-invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: redeem.code.trim().toUpperCase(), pin: redeem.pin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.waiter) {
+        // Straight onto the floor: they have just proved who they are twice over.
+        onLogin(data.waiter);
+        return;
+      }
+      // A bad PIN is their own typing and they stay on this step; a bad code means the code, so
+      // send them back to it rather than making them guess which half was wrong.
+      setRedeem(r => ({ ...r, pin: '', step: data.code === 'INVALID_INVITE' ? 'code' : 'pin' }));
+      setError(data.error || 'That did not work.');
+    } catch (err) {
+      setError(`Hub unreachable: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     if (!selected || pin.length !== 4) return;
@@ -98,7 +132,7 @@ export const WaiterLogin = ({ hubUrl, onLogin, currentRestaurant }) => {
         </div>
       )}
 
-      {!loading && !selected && (
+      {!loading && !selected && !redeem && (
         <div style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {waiters.map(w => (
             <button
@@ -116,6 +150,76 @@ export const WaiterLogin = ({ hubUrl, onLogin, currentRestaurant }) => {
               {w.name}
             </button>
           ))}
+          <button
+            onClick={() => { setRedeem({ step: 'code', code: '', pin: '' }); setError(''); }}
+            style={{
+              background: 'transparent', border: 'none', color: 'var(--color-muted)',
+              fontSize: 13, textDecoration: 'underline', cursor: 'pointer', padding: '10px 0'
+            }}
+          >
+            I have an invite code
+          </button>
+        </div>
+      )}
+
+      {!loading && redeem && (
+        <div style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+          <div style={{ fontSize: 13, color: 'var(--color-muted)', textAlign: 'center' }}>
+            {redeem.step === 'code'
+              ? 'Type the code reception gave you.'
+              : 'Now choose a 4-digit PIN. Only you will know it.'}
+          </div>
+          {redeem.step === 'code' ? (
+            <input
+              aria-label="Invite code"
+              autoFocus
+              autoCapitalize="characters"
+              autoComplete="off"
+              maxLength={6}
+              value={redeem.code}
+              onChange={e => setRedeem(r => ({ ...r, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))}
+              placeholder="ABC123"
+              style={{
+                width: 240, padding: '14px', textAlign: 'center',
+                fontSize: 24, letterSpacing: '10px', fontFamily: 'var(--font-mono)',
+                border: `1px solid ${error ? 'var(--status-rust-border)' : 'var(--color-hairline)'}`,
+                borderRadius: 'var(--radius-md)', color: 'var(--color-ink)', background: '#fff'
+              }}
+            />
+          ) : (
+            <input
+              aria-label="Choose a PIN"
+              type="password"
+              inputMode="numeric"
+              pattern="\d*"
+              maxLength={4}
+              autoFocus
+              value={redeem.pin}
+              onChange={e => setRedeem(r => ({ ...r, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+              placeholder="••••"
+              style={{
+                width: 200, padding: '14px', textAlign: 'center',
+                fontSize: 28, letterSpacing: '18px', fontFamily: 'var(--font-mono)',
+                border: `1px solid ${error ? 'var(--status-rust-border)' : 'var(--color-hairline)'}`,
+                borderRadius: 'var(--radius-md)', color: 'var(--color-ink)', background: '#fff'
+              }}
+            />
+          )}
+          <button
+            onClick={() => (redeem.step === 'code' ? setRedeem(r => ({ ...r, step: 'pin' })) : submitInvite())}
+            disabled={busy || (redeem.step === 'code' ? redeem.code.length < 6 : redeem.pin.length !== 4)}
+            className="btn btn-primary"
+            style={{ minHeight: 48, width: 240, opacity: busy ? 0.6 : 1 }}
+          >
+            {redeem.step === 'code' ? 'Next' : busy ? 'Setting up…' : 'Set my PIN'}
+          </button>
+          <button
+            onClick={() => { setRedeem(null); setError(''); }}
+            disabled={busy}
+            style={{ background: 'transparent', color: 'var(--color-muted)', border: 'none', fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            ← back to the name list
+          </button>
         </div>
       )}
 

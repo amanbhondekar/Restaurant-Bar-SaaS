@@ -13,22 +13,38 @@ const TOKEN_KEY = 'mejwani_hub_device_token';
 
 let cachedToken = null;
 
+// An enrollment code picked up from the URL, awaiting exchange for a token.
+let pendingEnrollmentCode = null;
+
 /**
- * Consumes a token handed over in the URL fragment (from a scanned QR), stores it
- * and strips it from the address bar so it does not linger in history or get
- * shared when someone copies the URL.
+ * Consumes credentials handed over in the URL fragment by a scanned QR and strips
+ * them from the address bar so they do not linger in history or get shared when
+ * someone copies the URL.
+ *
+ * Two shapes are accepted:
+ *   #t=<64-hex>  a device token directly (older QR codes still in circulation)
+ *   #e=<code>    an enrollment code, exchanged for a token on first connect
  */
 export function captureTokenFromUrl() {
   if (typeof window === 'undefined') return null;
 
   const hash = window.location.hash || '';
-  const match = hash.match(/[#&]t=([a-f0-9]{64})/i);
-  if (!match) return null;
+  const tokenMatch = hash.match(/[#&]t=([a-f0-9]{64})/i);
+  const codeMatch = hash.match(/[#&]e=([A-Z0-9]{4,12})/i);
 
-  const token = match[1];
-  setToken(token);
+  if (!tokenMatch && !codeMatch) return null;
 
-  const cleanedHash = hash.replace(/[#&]t=[a-f0-9]{64}/i, '');
+  let token = null;
+  if (tokenMatch) {
+    token = tokenMatch[1];
+    setToken(token);
+  } else if (codeMatch) {
+    pendingEnrollmentCode = codeMatch[1].toUpperCase();
+  }
+
+  const cleanedHash = hash
+    .replace(/[#&]t=[a-f0-9]{64}/i, '')
+    .replace(/[#&]e=[A-Z0-9]{4,12}/i, '');
   window.history.replaceState(
     null,
     '',
@@ -36,6 +52,13 @@ export function captureTokenFromUrl() {
   );
 
   return token;
+}
+
+/** Reads and clears an enrollment code captured from the URL. */
+export function consumePendingEnrollmentCode() {
+  const code = pendingEnrollmentCode;
+  pendingEnrollmentCode = null;
+  return code;
 }
 
 export function getToken() {
@@ -71,13 +94,18 @@ export function hasToken() {
   return Boolean(getToken());
 }
 
-/** Exchange the code shown on the Kitchen Display for a device token. */
-export async function enrollWithCode(hubUrl, enrollmentCode, deviceLabel = 'Waiter handset') {
+/**
+ * Exchange the code shown on the Kitchen Display for a device token.
+ *
+ * `scope: 'kitchen'` is for a screen at the pass: the token it gets can show tickets and mark them
+ * done, and nothing else. Left out, the device is a full handset, as it always was.
+ */
+export async function enrollWithCode(hubUrl, enrollmentCode, deviceLabel = 'Waiter handset', { scope } = {}) {
   const base = (hubUrl || '').replace(/\/+$/, '');
   const res = await fetch(`${base}/auth/device`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enrollment_code: enrollmentCode, device_label: deviceLabel })
+    body: JSON.stringify({ enrollment_code: enrollmentCode, device_label: deviceLabel, ...(scope ? { scope } : {}) })
   });
 
   const body = await res.json().catch(() => ({}));

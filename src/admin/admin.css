@@ -1,0 +1,18 @@
+/* Two global rules in design-system/css/components.css sit outside any cascade layer, so they beat every
+   Tailwind utility (utilities live in a layer, and an unlayered rule wins whatever its specificity):
+
+     button         { border: none; background: transparent; }
+     :focus-visible { outline: 2px solid ...; border-radius: var(--radius-xs); }
+
+   On this page they strip the shadcn buttons of their borders and fills (the primary buttons turn into plain
+   text) and squash the radius of any focused field. `revert-layer` hands those properties back to the layers
+   below, i.e. to the utility classes on each element. The selectors start at `body` because dialogs and sheets
+   render in a portal next to #root. Scoped to this page: only admin.html loads this file. */
+body button {
+  border: revert-layer;
+  background: revert-layer;
+}
+
+body :focus-visible {
+  border-radius: revert-layer;
+}

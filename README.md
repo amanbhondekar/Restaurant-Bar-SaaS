@@ -70,7 +70,9 @@ SAAS_Restaurant/
 │   ├── ARCHITECTURE.md               # LAN Topology & Sequence Diagrams
 │   ├── API_SPECIFICATION.md          # Hub Server REST & WebSocket API Specs
 │   ├── DEPLOYMENT_GUIDE.md           # Production Deployment & Pairing Guide
-│   └── mejwani-pos-progress-report.md # Historical Field Research & Progress Report
+│   ├── OWNER_VIEW.md                 # The remote, read-only owner view: runbook
+│   ├── ROADMAP.md                    # What is shipped, partial and not started
+│   └── pilot-report-template.md      # Template for the field report after a pilot
 ├── hub_server/                       # Node/Express + WebSocket Hub Gateway Core
 │   ├── data/                         # Local Persistent Disk Stores (tickets.json)
 │   ├── lib/                          # Hub Services (hubConfig, syncQueue, ticketStore, supabaseClient)

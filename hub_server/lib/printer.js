@@ -1,5 +1,6 @@
 import net from 'net';
 import * as escpos from './escpos.js';
+import { sendToUsbPrinter, sendToDevice } from './usbPrinter.js';
 
 /**
  * Receipt + KOT rendering, and TCP transport.
@@ -95,6 +96,13 @@ export function renderKot(ticket, tenant = {}, opts = {}) {
     ? [line(width, '-'), `Note: ${ticket.note}`]
     : [];
 
+  // Course service: a banner naming the course being fired, and a one-line reminder of what is still
+  // on hold so the kitchen knows more is coming. Both are absent on a normal ticket.
+  const courseBanner = opts && opts.course_label ? String(opts.course_label).toUpperCase() : '';
+  const heldNote = opts && opts.held_summary ? String(opts.held_summary) : '';
+  const courseLines = courseBanner ? [center(`*** ${courseBanner} ***`, width)] : [];
+  const heldLines = heldNote ? [line(width, '-'), heldNote] : [];
+
   const preview_lines = [
     line(width, '='),
     header,
@@ -102,8 +110,10 @@ export function renderKot(ticket, tenant = {}, opts = {}) {
     table,
     when,
     by,
+    ...courseLines,
     line(width, '-'),
     ...itemLines,
+    ...heldLines,
     ...noteLines,
     ''
   ];
@@ -122,11 +132,13 @@ export function renderKot(ticket, tenant = {}, opts = {}) {
     escpos.size(1, 1), escpos.bold(false),
     escpos.line(formatDate(ticket.created_at || Date.now())),
     escpos.line(`By: ${ticket.created_by_waiter || 'Waiter'}`),
+    ...(courseBanner ? [escpos.bold(true), escpos.size(2, 1), escpos.line(`*** ${courseBanner} ***`), escpos.size(1, 1), escpos.bold(false)] : []),
     escpos.alignLeft(),
     escpos.rule(width, '-'),
     escpos.bold(true),
     ...itemLines.map(l => escpos.line(l)),
     escpos.bold(false),
+    ...(heldNote ? [escpos.rule(width, '-'), escpos.line(heldNote)] : []),
     ...(ticket.note ? [escpos.rule(width, '-'), escpos.line(`Note: ${ticket.note}`)] : []),
     escpos.feed(3),
     escpos.cut()
@@ -281,6 +293,51 @@ export function renderReceipt(invoice, tenant = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Test page — printed from the admin screen to confirm a printer is wired up.
+// ---------------------------------------------------------------------------
+
+export function renderTestPage(printer = {}, tenant = {}) {
+  const width = RECEIPT_WIDTH;
+  const where = printer.transport === 'usb'
+    ? `USB: ${printer.system_name || ''}`
+    : printer.transport === 'device'
+      ? `Device: ${printer.device_path || ''}`
+      : `Network: ${printer.host || ''}:${printer.port || 9100}`;
+  const lines = [
+    line(width, '='),
+    center('PRINTER TEST', width),
+    line(width, '='),
+    `Tenant : ${tenant.name || 'Restaurant'}`,
+    `Printer: ${printer.name || printer.id || 'Printer'}`,
+    `Role   : ${printer.role === 'kot' ? 'Kitchen order tickets' : 'Customer receipts'}`,
+    where,
+    `Time   : ${formatDate(Date.now())}`,
+    line(width, '-'),
+    'If you can read this, the printer works.',
+    'Rs 1234.50   Qty x2   (Half)   [OK]',
+    line(width, '='),
+    ''
+  ];
+  const preview_text = lines.join('\n');
+
+  const escposBuf = escpos.build(
+    escpos.init(),
+    escpos.alignCenter(),
+    escpos.bold(true), escpos.size(2, 2), escpos.line('PRINTER TEST'),
+    escpos.size(1, 1), escpos.bold(false),
+    escpos.rule(width, '='),
+    escpos.alignLeft(),
+    ...lines.slice(3, 9).map(l => escpos.line(l)),
+    escpos.rule(width, '-'),
+    escpos.line('If you can read this, the printer works.'),
+    escpos.line('Rs 1234.50   Qty x2   (Half)   [OK]'),
+    escpos.feed(3),
+    escpos.cut()
+  );
+  return { escpos: escposBuf, preview_text };
+}
+
+// ---------------------------------------------------------------------------
 // TCP transport
 // ---------------------------------------------------------------------------
 
@@ -291,17 +348,32 @@ const WRITE_TIMEOUT_MS   = 4000;
  * Send a rendered job to a printer target.
  *
  * `target`:
- *   - `{ mode: 'preview' }` — never dials out; returns `{ ok: true, preview: true }`.
- *   - `{ host, port? }`     — raw TCP to `host:port` (default 9100).
+ *   - `{ mode: 'preview' }`                      — never dials out; returns `{ ok: true, preview: true }`.
+ *   - `{ host, port? }` / `{ transport: 'tcp' }` — raw TCP to `host:port` (default 9100).
+ *   - `{ transport: 'usb', system_name }`        — a USB printer through the OS print spooler
+ *                                                  (Windows winspool RAW, or `lp -o raw`).
+ *   - `{ transport: 'device', device_path }`     — a raw device node such as /dev/usb/lp0.
  *
- * Fail-soft on network errors — returns `{ ok: false, error, code }`;
+ * Fail-soft on errors — returns `{ ok: false, error, code }`;
  * caller decides whether that should be a 500 or an ignored best-effort.
  */
 export function sendToPrinter(job, target = { mode: 'preview' }) {
   if (!job || !Buffer.isBuffer(job.escpos)) {
     return Promise.resolve({ ok: false, error: 'renderer produced no bytes', code: 'INVALID_JOB' });
   }
-  if (!target || target.mode === 'preview' || !target.host) {
+  if (!target || target.mode === 'preview') {
+    return Promise.resolve({ ok: true, preview: true, sent_bytes: 0 });
+  }
+
+  if (target.transport === 'usb') {
+    return sendToUsbPrinter(job.escpos, target.system_name).then(r =>
+      r.ok ? { ok: true, preview: false, sent_bytes: r.sent_bytes } : r);
+  }
+  if (target.transport === 'device') {
+    return sendToDevice(job.escpos, target.device_path).then(r =>
+      r.ok ? { ok: true, preview: false, sent_bytes: r.sent_bytes } : r);
+  }
+  if (!target.host) {
     return Promise.resolve({ ok: true, preview: true, sent_bytes: 0 });
   }
 

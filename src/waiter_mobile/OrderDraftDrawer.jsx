@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { usePos } from '../context/PosContext';
 import { Send, Trash2, Edit3, Wifi, Armchair, Zap, AlertTriangle, Loader } from 'lucide-react';
 import { VegBadge } from '../components/VegBadge';
@@ -15,6 +15,7 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
   const [sentTicket, setSentTicket] = useState(null);
   const [sendError, setSendError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const lastAttempt = useRef(null); // { key, id } of the order last sent and not yet answered
 
   const currency = currentRestaurant?.currency || '₹';
   const table = tables.find(t => t.id === selectedTableId);
@@ -28,16 +29,21 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
   const subtotal = draftMenu.reduce((s, i) => s + i.price * i.qty, 0);
   const hasItems = draftMenu.length > 0;
 
+  // Serve in courses: starters first, mains and desserts held until the waiter fires them. Offered only
+  // when the order really spans more than one course (each menu item carries its course).
+  const [courseService, setCourseService] = useState(false);
+  const courseOfRow = row => Math.max(1, Math.floor(Number(menu.find(m => String(m.id) === String(row.item_id))?.course)) || 1);
+  const distinctCourses = [...new Set(draftMenu.map(courseOfRow))].sort((a, b) => a - b);
+  const canStageCourses = distinctCourses.length > 1;
+
   const handleSend = async () => {
     if (!hasItems || !selectedTableId || isSubmitting || !hubConnected) return;
     setSendError('');
     setIsSubmitting(true);
 
     const targetHub = (hubUrl || 'http://localhost:4000').replace(/\/+$/, '');
-    const orderRequestId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
-    const orderPayload = {
-      order_request_id: orderRequestId,
+    const orderBody = {
       table_id: selectedTableId,
       table_name: table ? table.name : `Table ${selectedTableId}`,
       items: draftMenu.map(i => ({
@@ -55,11 +61,23 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
           : {})
       })),
       note: note.trim(),
+      ...(courseService && canStageCourses ? { course_service: true } : {}),
       // Server ignores this string and stamps waiter.name from waiter_id, so
       // the value here is only a display fallback.
       created_by_waiter: waiter?.name ? `${waiter.name} (PWA)` : 'Waiter Handset (PWA)',
       waiter_id: waiter?.id || undefined
     };
+
+    // The hub remembers a request id for a minute and answers a repeat with the ticket it already made, so a
+    // waiter whose reply was lost on the WiFi cannot double-order by tapping again -- but only if the retry
+    // carries the SAME id. So an order keeps its id until it is answered; a draft that has changed since is a
+    // different order and gets a new one.
+    const key = JSON.stringify(orderBody);
+    const orderRequestId = lastAttempt.current?.key === key
+      ? lastAttempt.current.id
+      : 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    lastAttempt.current = { key, id: orderRequestId };
+    const orderPayload = { order_request_id: orderRequestId, ...orderBody };
 
     try {
       const res = await authFetch(`${targetHub}/orders`, {
@@ -70,10 +88,12 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
 
       if (res.ok) {
         const data = await res.json();
+        lastAttempt.current = null;   // answered: the next order is a new one
         setSentTicket(data.ticket);
         setSent(true);
         onClearDraft();
         setNote('');
+        setCourseService(false);
         if (navigator.vibrate) navigator.vibrate(200);
         setTimeout(() => {
           setSent(false);
@@ -239,6 +259,25 @@ export const OrderDraftDrawer = ({ selectedTableId, draftItems, onRemoveItem, on
               {currency}{subtotal}
             </div>
           </div>
+
+          {canStageCourses && (
+            <label
+              style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '4px', padding: '10px 12px', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-sm)', background: courseService ? 'var(--status-blue-bg)' : 'var(--color-surface-soft)', cursor: 'pointer' }}
+            >
+              <input
+                type="checkbox"
+                checked={courseService}
+                onChange={e => setCourseService(e.target.checked)}
+                style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
+              />
+              <span>
+                <span className="typography-caption" style={{ color: 'var(--color-ink)', fontWeight: 700 }}>Serve in courses</span>
+                <span className="typography-badge" style={{ display: 'block', color: 'var(--color-muted)', marginTop: '2px' }}>
+                  Course {distinctCourses[0]} goes to the kitchen now. {distinctCourses.length > 2 ? 'The rest wait' : 'Course ' + distinctCourses[1] + ' waits'} until you fire {distinctCourses.length > 2 ? 'them' : 'it'}.
+                </span>
+              </span>
+            </label>
+          )}
 
           {/* Kitchen Note */}
           <div style={{ marginTop: '4px' }}>

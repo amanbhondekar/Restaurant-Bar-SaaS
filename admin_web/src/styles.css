@@ -1,0 +1,4 @@
+/* The product's own stylesheet (tokens, typography, components, Tailwind) with the admin console's sources added: the console reuses screens that live in
+   ../../src, and Tailwind only writes the classes it finds, so it is told to look there too. Without this line those screens are built unstyled. */
+@import "../../src/index.css";
+@source "../../src";

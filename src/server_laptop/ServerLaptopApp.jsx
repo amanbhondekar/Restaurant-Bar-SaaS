@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
 import { KitchenKdsView } from './KitchenKdsView';
-import { WaitlistView } from './WaitlistView';
 import { SelfServeAdminView } from './SelfServeAdminView';
-import { SalesAnalyticsView } from './SalesAnalyticsView';
 import { LiveClock } from '../components/LiveClock';
 import { usePos } from '../context/PosContext';
 import {
   ChefHat, Users, Settings, BarChart3, LayoutGrid,
-  Lock, Sparkles, AlertTriangle
+  Lock, Sparkles, AlertTriangle, ExternalLink
 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -17,10 +15,27 @@ import { Card, CardContent } from '../components/ui/card';
 const TABS = [
   { id: 'kds',       icon: ChefHat,    label: 'Kitchen KDS' },
   { id: 'floor',     icon: LayoutGrid, label: 'Floor View' },
-  { id: 'waitlist',  icon: Users,      label: 'Waitlist' },
-  { id: 'analytics', icon: BarChart3,  label: 'Analytics' },
+  { id: 'waitlist',  icon: Users,      label: 'Bookings' },
+  { id: 'analytics', icon: BarChart3,  label: 'Sales' },
   { id: 'admin',     icon: Settings,   label: 'Admin Setup' },
 ];
+
+// Bookings, the walk-in queue and sales used to be drawn here from the browser's own storage, which shares nothing
+// with the hub: a restaurant that opened the wrong tab saw an empty list, or a total that added up every ticket
+// ever stored with no regard for voids or refunds. The real ones are in the admin console, so these tabs say so.
+const MovedToAdmin = ({ what, tab, where }) => (
+  <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-12 text-center">
+    <h2 className="typography-display-sm" style={{ color: 'var(--color-ink)' }}>{what} are in the admin console</h2>
+    <p className="typography-body-sm" style={{ color: 'var(--color-muted)' }}>{where}</p>
+    <a
+      href={`/admin#${tab}`}
+      className="inline-flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium"
+      style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}
+    >
+      Open the {tab === 'bookings' ? 'Bookings' : 'Sales'} tab <ExternalLink size={14} aria-hidden="true" />
+    </a>
+  </div>
+);
 
 const FloorOverview = () => {
   const { tables, currentRestaurant } = usePos();
@@ -115,13 +130,12 @@ const PlanUpgradeGate = ({ moduleTitle, requiredPlan, currentPlan, onUpgrade }) 
 export const ServerLaptopApp = () => {
   const [activeTab, setActiveTab] = useState('kds');
   const {
-    tables, tickets, waitlist, hubStatus,
+    tables, tickets, hubStatus,
     currentRestaurant, hasModuleAccess, changeRestaurantPlan, isMenuUninitialized
   } = usePos();
 
   const badges = {
     kds: tickets.filter(t => t.status === 'in_progress').length,
-    waitlist: waitlist.filter(w => w.status === 'waiting').length,
     floor: tables.filter(t => t.status === 'ready').length,
   };
 
@@ -224,8 +238,8 @@ export const ServerLaptopApp = () => {
           <>
             {activeTab === 'kds'       && <KitchenKdsView />}
             {activeTab === 'floor'     && <FloorOverview />}
-            {activeTab === 'waitlist'  && <WaitlistView />}
-            {activeTab === 'analytics' && <SalesAnalyticsView />}
+            {activeTab === 'waitlist'  && <MovedToAdmin what="Bookings and the walk-in queue" tab="bookings" where={'They are kept on the hub, so every screen sees the same list, and "your table is ready" goes out by WhatsApp from there.'} />}
+            {activeTab === 'analytics' && <MovedToAdmin what="Sales figures" tab="sales" where="They are worked out from the bill ledger, in the restaurant's local time, set against the period before." />}
             {activeTab === 'admin'     && <SelfServeAdminView />}
           </>
         )}

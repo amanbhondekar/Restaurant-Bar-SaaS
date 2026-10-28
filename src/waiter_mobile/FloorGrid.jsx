@@ -1,6 +1,6 @@
 import React from 'react';
 import { usePos } from '../context/PosContext';
-import { Users, Clock, Armchair } from 'lucide-react';
+import { Users, Clock, Armchair, Lock } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 
@@ -25,17 +25,29 @@ export const FloorGridSkeleton = () => (
   </div>
 );
 
-export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, onClearTableBill, isLoading = false, drafts = {}, onOpenPairing, hubConnected }) => {
+export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, sections: propSections, onClearTableBill, isLoading = false, drafts = {}, onOpenPairing, hubConnected, connStatus, isEnrolled }) => {
   const contextPos = usePos() || {};
   const tables = propTables || contextPos.tables || [];
   const clearTableBill = onClearTableBill || contextPos.clearTableBill;
   const [selectedSection, setSelectedSection] = React.useState('All');
-  const sections = ['All', 'Main Hall', 'AC Room', 'Family Room'];
+  // Section chips follow what the hub reports (reception can add or rename
+  // sections); fall back to the sections the tables themselves use.
+  const sectionNames = propSections && propSections.length > 0
+    ? propSections
+    : Array.from(new Set(tables.map(t => t.section).filter(Boolean)));
+  const sections = ['All', ...sectionNames];
+
+  // A section renamed or removed while selected would leave an empty grid.
+  React.useEffect(() => {
+    if (selectedSection !== 'All' && !sectionNames.includes(selectedSection)) setSelectedSection('All');
+  }, [sectionNames.join('|'), selectedSection]);
   const shown = selectedSection === 'All' ? tables : tables.filter(t => t.section === selectedSection);
 
   const [clearedTableIds, setClearedTableIds] = React.useState({});
 
   if (isLoading) return <FloorGridSkeleton />;
+
+  const isUnauthorized = connStatus === 'unauthorized' || isEnrolled === false;
 
   const handleClearClick = async (e, tableId) => {
     e.stopPropagation();
@@ -58,15 +70,27 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
       {shown.length === 0 && !isLoading && (
         <div className="text-center rounded-[var(--radius-md)] border border-dashed p-8"
           style={{ color: 'var(--color-muted)', borderColor: 'var(--color-hairline)', background: 'var(--color-canvas)' }}>
-          <Armchair size={32} className="mx-auto mb-2" style={{ color: 'var(--color-muted)' }} />
+          {isUnauthorized
+            ? <Lock size={32} className="mx-auto mb-2" style={{ color: 'var(--color-muted)' }} />
+            : <Armchair size={32} className="mx-auto mb-2" style={{ color: 'var(--color-muted)' }} />}
           <div className="font-bold mb-1" style={{ color: 'var(--color-ink)', fontFamily: 'var(--font-display)' }}>
-            {hubConnected === false ? 'No tables loaded' : 'No tables in this section'}
+            {isUnauthorized
+              ? 'Handset Not Enrolled'
+              : hubConnected === false
+                ? 'No tables loaded'
+                : 'No tables in this section'}
           </div>
           <div className="typography-body-sm mb-3" style={{ color: 'var(--color-muted)' }}>
-            {hubConnected === false ? 'Connect to the kitchen hub to load your floor plan.' : 'Try selecting a different section above.'}
+            {isUnauthorized
+              ? 'Enter the 6-character enrollment code shown on the Kitchen Display to view tables and take orders.'
+              : hubConnected === false
+                ? 'Connect to the kitchen hub to load your floor plan.'
+                : 'Try selecting a different section above.'}
           </div>
-          {hubConnected === false && onOpenPairing && (
-            <Button size="sm" onClick={onOpenPairing}>Connect to Hub</Button>
+          {(isUnauthorized || hubConnected === false) && onOpenPairing && (
+            <Button size="sm" onClick={onOpenPairing}>
+              {isUnauthorized ? 'Enter Enrollment Code' : 'Connect to Hub'}
+            </Button>
           )}
         </div>
       )}
@@ -77,7 +101,8 @@ export const FloorGrid = ({ selectedTable, onSelectTable, tables: propTables, on
           const st = STATUS[t.status] || STATUS.available;
           const sel = selectedTable === t.id;
           const mins = elapsed(t.occupiedSince);
-          const draftCount = drafts[t.id] ? Object.values(drafts[t.id]).reduce((s, q) => s + q, 0) : 0;
+          // A draft is { lineKey: row } and each row carries its own quantity (see WaiterApp), so add the quantities up.
+          const draftCount = drafts[t.id] ? Object.values(drafts[t.id]).reduce((sum, row) => sum + (Number(row?.qty) || 0), 0) : 0;
 
           return (
             <div key={t.id} onClick={() => onSelectTable(t.id)} className={`table-card${sel ? ' selected' : ''}`}>
