@@ -21,7 +21,8 @@ const TENANT = {
   pairing_code: 'SPG-4821',
   plan: 'pro',
   plan_status: 'trialing',
-  trial_ends_at: '2026-10-28T00:00:00.000Z',
+  // A live trial is one that ends in the future, whenever this runs: a fixed date here expired on 2026-10-28 and turned a "live trial" into a Starter overnight.
+  trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
   current_period_end: null
 };
 
